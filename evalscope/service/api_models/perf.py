@@ -83,6 +83,7 @@ class PerfDetailResponse(ApiResponseModel):
     engine: Optional[Literal['evalscope', 'aiperf']] = None
     executor_version: Optional[str] = None
     quality: Optional[Literal['complete', 'partial', 'invalid']] = None
+    node_analysis: Optional[NodeMetricsAnalysis] = None
     quality_reasons: List[str] = Field(default_factory=list)
 
 

@@ -21,7 +21,7 @@ from evalscope.perf.experiments.prefix_workload import (
 )
 from evalscope.perf.experiments.priming import PrimingResult, prime_prefixes
 from evalscope.perf.experiments.storage import write_experiment_json
-from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis, analyze_node_metrics
+from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis, analyze_node_metrics, covers_node_ids
 from evalscope.perf.integrations.aiperf.single_run import (
     AIPerfCancelled,
     _run_verified,
@@ -144,15 +144,7 @@ def run_cache_scenario(
     def missing_required_nodes(analysis: Optional[NodeMetricsAnalysis]) -> bool:
         if not arguments.telemetry.required:
             return False
-        if analysis is None or not arguments.telemetry.targets:
-            return True
-        covered = {
-            row.node_id
-            for row in analysis.series
-            if (row.statistic is not None and row.statistic.value is not None)
-            or (row.histogram is not None and row.histogram.count is not None)
-        }
-        return bool({target.node_id for target in arguments.telemetry.targets} - covered)
+        return not covers_node_ids(analysis, [target.node_id for target in arguments.telemetry.targets])
 
     publish()
     cancellation = _ScenarioCancellation(cancel_event)

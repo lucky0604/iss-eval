@@ -97,3 +97,28 @@ def test_archive_identity_symlink_and_running_delete_are_checked(archive, monkey
     assert client.get('/api/v1/perf/detail', query_string=params).status_code == 400
     assert client.delete('/api/v1/perf/run', query_string=params).status_code == 200
     assert outside.is_dir()
+
+
+def test_single_node_analysis_and_metrics_use_manifest_identity(archive) -> None:
+    from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis
+    from evalscope.perf.results.single_run import load_single_manifest
+
+    client, root, run = archive
+    analysis = NodeMetricsAnalysis(availability='missing', reason='no_samples', max_gap_ns=1_000_000_000)
+    (run / 'node_analysis.json').write_text(analysis.model_dump_json())
+    manifest = load_single_manifest(str(run)).model_copy(update={'quality': 'invalid',
+                                                                  'quality_reasons': ['required_telemetry_missing']})
+    write_single_manifest(str(run), manifest)
+    params = {'root_path': str(root), 'path': 'task/perf'}
+    detail = client.get('/api/v1/perf/detail', query_string=params)
+    assert detail.status_code == 200 and detail.json['quality'] == 'invalid'
+    assert detail.json['node_analysis']['availability'] == 'missing'
+    assert 'required_telemetry_missing' in detail.json['quality_reasons']
+    samples = client.get('/api/v1/perf/server-metrics', query_string=params)
+    assert samples.status_code == 200 and samples.json['total'] == 0
+    assert client.get('/api/v1/perf/server-metrics', query_string={**params, 'node_id': 'unknown'}).status_code == 404
+    (run / 'node_analysis.json').unlink()
+    outside = root.parent / 'foreign-single-analysis.json'
+    outside.write_text(analysis.model_dump_json())
+    (run / 'node_analysis.json').symlink_to(outside)
+    assert client.get('/api/v1/perf/detail', query_string=params).status_code == 400

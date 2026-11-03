@@ -164,3 +164,47 @@ def test_http_single_task_reaches_real_aiperf(tmp_path: Path, monkeypatch: pytes
         server.wait(timeout=5)
         if server.stdout:
             server.stdout.close()
+
+
+@pytest.mark.skipif(not os.environ.get('EVALSCOPE_TEST_AIPERF'), reason='requires isolated AIPerf 0.13.0')
+def test_http_single_run_exposes_authenticated_pd_metrics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    from evalscope.service.blueprints import perf, tasks
+    from tests.perf.test_prefix_priming import _server
+
+    root = tmp_path / 'outputs'
+    root.mkdir()
+    tokenizer_path = tmp_path / 'tokenizer'
+    backend = Tokenizer(models.WordLevel({'[UNK]': 0, 'first': 1, 'second': 2, 'prompt': 3}, unk_token='[UNK]'))
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    PreTrainedTokenizerFast(tokenizer_object=backend, unk_token='[UNK]').save_pretrained(tokenizer_path)
+    for module in (log, perf, tasks):
+        monkeypatch.setattr(module, 'OUTPUT_DIR', str(root))
+    app = create_app(outputs=str(root))
+    app.config['AIPERF_EXECUTABLE'] = os.environ['EVALSCOPE_TEST_AIPERF']
+    with _server(tmp_path / 'inference', 'slow_success') as (url, _), \
+         _server(tmp_path / 'p', 'success', 'pd_vllm', 'p-secret') as (prefill, _), \
+         _server(tmp_path / 'd', 'success', 'pd_sglang', 'd-secret') as (decode, _):
+        payload = _payload()
+        payload['aiperf'].update({'url': url, 'tokenizer_path': str(tokenizer_path), 'api_key': 'fixture-key',
+                                  'deployment_mode': 'pd', 'telemetry': {
+            'required': True, 'sample_interval_seconds': 0.1, 'max_scrape_gap_seconds': 1,
+            'targets': [
+                {'node_id': 'p', 'role': 'prefill', 'engine': 'vllm',
+                 'url': prefill.removesuffix('/v1') + '/metrics', 'headers': {'Authorization': 'Bearer p-secret'}},
+                {'node_id': 'd', 'role': 'decode', 'engine': 'sglang',
+                 'url': decode.removesuffix('/v1') + '/metrics', 'headers': {'Authorization': 'Bearer d-secret'}},
+            ],
+        }})
+        client = app.test_client()
+        result = client.post('/api/v1/perf/invoke', json=payload, headers={'EvalScope-Task-Id': 'single-pd'})
+    assert result.status_code == 200 and result.json['status'] == 'completed', result.json
+    params = {'root_path': str(root), 'path': 'single-pd/perf'}
+    detail = client.get('/api/v1/perf/detail', query_string=params)
+    assert detail.status_code == 200 and detail.json['quality'] == 'partial'
+    assert {row['node_id'] for row in detail.json['node_analysis']['series']} == {'p', 'd'}
+    samples = client.get('/api/v1/perf/server-metrics', query_string={**params, 'node_id': 'p'})
+    assert samples.status_code == 200 and samples.json['total'] > 0
+    assert 'p-secret' not in detail.get_data(as_text=True) and 'd-secret' not in detail.get_data(as_text=True)

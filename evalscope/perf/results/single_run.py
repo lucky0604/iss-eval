@@ -27,6 +27,8 @@ class SingleRunManifest(BaseArgument):
     planned_requests: StrictInt = Field(gt=0)
     output_token_limit: StrictInt = Field(gt=0)
     input_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    telemetry_sample_interval_seconds: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    telemetry_max_gap_seconds: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
     status: Literal['running', 'completed', 'stopped', 'error'] = 'running'
     artifact_status: Literal['available', 'partial', 'missing'] = 'missing'
     normalized: Optional[Literal['normalized']] = None

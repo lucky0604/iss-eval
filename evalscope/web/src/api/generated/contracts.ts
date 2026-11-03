@@ -852,6 +852,7 @@ export interface PerfDetailResponse {
   has_html: boolean;
   is_embedding: boolean;
   model: string;
+  node_analysis?: NodeMetricsAnalysis | null;
   num_runs: number;
   path: string;
   quality?: ("complete" | "partial" | "invalid") | null;

@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from evalscope.perf.integrations.aiperf.metrics import analyze_node_metrics, cache_lookup_ratios, project_node_metrics
+from evalscope.perf.integrations.aiperf.metrics import (
+    NodeMetricsAnalysis,
+    analyze_node_metrics,
+    cache_lookup_ratios,
+    covers_node_ids,
+    project_node_metrics,
+)
 from evalscope.perf.results.aiperf_import import import_aiperf_run, request_observation_bounds
 from evalscope.perf.results.models import AIPerfImportArguments, NodeMetricSample
 from evalscope.perf.results.telemetry import MetricWindow
@@ -85,6 +91,16 @@ def test_sglang_newer_transfer_histogram_is_not_treated_as_old_gauge() -> None:
     assert row.metric.upstream_version == '0.5.23' and row.metric.kind == 'histogram'
     assert row.histogram.count == 2 and row.histogram.mean == pytest.approx(0.005)
     assert row.histogram.buckets['0.01'] == 2
+
+
+def test_zero_histogram_observations_do_not_satisfy_required_node() -> None:
+    samples = [
+        _sample('vllm', 'p', 'prefill', 'request_prefill_time_seconds', 'histogram', t,
+                {'buckets': {'1': 2, '+Inf': 2}, 'count': 2, 'sum': 1}) for t in (10, 20)
+    ]
+    rows = project_node_metrics(samples, MetricWindow(start_ns=10, end_ns=20), 10, 'aiperf_phase')
+    analysis = NodeMetricsAnalysis(availability='partial', max_gap_ns=10, series=rows)
+    assert rows[0].histogram.count == 0 and not covers_node_ids(analysis, ['p'])
 
 
 def test_normalized_samples_use_phase_or_explicit_observed_request_bounds(tmp_path: Path) -> None:

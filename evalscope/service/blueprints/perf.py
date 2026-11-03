@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import time
 from functools import lru_cache
+from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, make_response, render_template_string, request, send_file
 from tabulate import tabulate
@@ -16,7 +17,9 @@ from evalscope.perf.executors.arguments import AIPerfArguments, parse_perf_task_
 from evalscope.perf.executors.external import supports_external_runner
 from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, ExternalRuntime
 from evalscope.perf.experiments.planner import plan_cache_experiment
+from evalscope.perf.experiments.storage import write_experiment_json
 from evalscope.perf.experiments.tokenizer import HuggingFacePrefixTokenizer
+from evalscope.perf.integrations.aiperf.metrics import analyze_node_metrics, covers_node_ids
 from evalscope.perf.integrations.aiperf.preflight import probe_nodes
 from evalscope.perf.integrations.aiperf.single_run import (
     AIPerfSingleRunRequest,
@@ -287,6 +290,39 @@ def get_cache_scenario_requests(task_id: str, subrun_id: str):
         return jsonify({'error': 'Invalid request page or scenario identity'}), 400
 
 
+def _node_metrics_page(path: str):
+    offset = int(request.args.get('offset', '0'))
+    limit = int(request.args.get('limit', '500'))
+    start = request.args.get('start_ns')
+    end = request.args.get('end_ns')
+    node_id = request.args.get('node_id')
+    metric_name = request.args.get('metric_name')
+    if node_id is not None or metric_name is not None:
+        count, _ = query_node_metrics(path, node_id=node_id, metric_name=metric_name, limit=1)
+        if not count:
+            return jsonify({'error': 'Node or metric not found in this scenario'}), 404
+    total, rows = query_node_metrics(
+        path,
+        node_id=node_id,
+        metric_name=metric_name,
+        start_ns=int(start) if start is not None else None,
+        end_ns=int(end) if end is not None else None,
+        offset=offset,
+        limit=limit,
+    )
+    return json_response(
+        CacheNodeMetricsResponse,
+        {
+            'total': total,
+            'offset': offset,
+            'limit': limit,
+            'samples': rows,
+            'aggregation': 'raw',
+            'downsample': 'none',
+        },
+    )
+
+
 @bp_perf.route('/experiments/<task_id>/runs/<subrun_id>/metrics', methods=['GET'])
 def get_cache_scenario_metrics(task_id: str, subrun_id: str):
     """Page raw node-window samples with explicitly unverified semantics."""
@@ -294,36 +330,7 @@ def get_cache_scenario_metrics(task_id: str, subrun_id: str):
 
     try:
         _, path = scenario_path(task_id, subrun_id)
-        offset = int(request.args.get('offset', '0'))
-        limit = int(request.args.get('limit', '500'))
-        start = request.args.get('start_ns')
-        end = request.args.get('end_ns')
-        node_id = request.args.get('node_id')
-        metric_name = request.args.get('metric_name')
-        if node_id is not None or metric_name is not None:
-            count, _ = query_node_metrics(path, node_id=node_id, metric_name=metric_name, limit=1)
-            if not count:
-                return jsonify({'error': 'Node or metric not found in this scenario'}), 404
-        total, rows = query_node_metrics(
-            path,
-            node_id=node_id,
-            metric_name=metric_name,
-            start_ns=int(start) if start is not None else None,
-            end_ns=int(end) if end is not None else None,
-            offset=offset,
-            limit=limit,
-        )
-        return json_response(
-            CacheNodeMetricsResponse,
-            {
-                'total': total,
-                'offset': offset,
-                'limit': limit,
-                'samples': rows,
-                'aggregation': 'raw',
-                'downsample': 'none',
-            },
-        )
+        return _node_metrics_page(path)
     except FileNotFoundError:
         return jsonify({'error': 'Scenario results not found'}), 404
     except (ValueError, OSError):
@@ -345,7 +352,13 @@ def get_server_metrics():
         if len(parts) != 2 or parts[1] != 'perf':
             raise ValueError('Invalid experiment path')
         validate_task_id(parts[0])
-        return get_cache_scenario_metrics(parts[0], subrun_id)
+        if subrun_id:
+            return get_cache_scenario_metrics(parts[0], subrun_id)
+        from ..perf_archive_aiperf import normalized_path
+
+        return _node_metrics_page(normalized_path(task_file_path(parts[0], 'perf')))
+    except PerfArchiveError as error:
+        return jsonify({'error': str(error)}), error.status
     except (OSError, ValueError):
         return jsonify({'error': 'Invalid experiment path or outputs root'}), 400
 
@@ -582,6 +595,14 @@ def _invoke_single_aiperf(arguments: AIPerfArguments, task_id: str, runtime: Ext
             planned_requests=arguments.load.request_count,
             output_token_limit=arguments.load.output_token_limit,
             input_sha256=input_hash.hexdigest(),
+            telemetry_sample_interval_seconds=arguments.telemetry.sample_interval_seconds
+            if arguments.telemetry.targets
+            else None,
+            telemetry_max_gap_seconds=(
+                arguments.telemetry.max_scrape_gap_seconds or 2 * arguments.telemetry.sample_interval_seconds
+            )
+            if arguments.telemetry.targets
+            else None,
         )
         write_single_manifest(output_dir, manifest)
         context = ExecutionContext(task_id=task_id, output_dir=output_dir, runtime=runtime)
@@ -625,8 +646,27 @@ def _invoke_single_aiperf(arguments: AIPerfArguments, task_id: str, runtime: Ext
                         )
                     )
                     normalized, quality, quality_reasons = 'normalized', result.quality, result.quality_reasons
+                    if arguments.telemetry.targets:
+                        gap = (
+                            arguments.telemetry.max_scrape_gap_seconds
+                            or 2 * arguments.telemetry.sample_interval_seconds
+                        )
+                        analysis = analyze_node_metrics(os.path.join(output_dir, 'normalized'), max(1, int(gap * 1e9)))
+                        write_experiment_json(Path(output_dir) / 'node_analysis.json', analysis.model_dump(mode='json'))
+                        if quality == 'complete':
+                            quality = 'partial'
+                        quality_reasons = [*quality_reasons, *analysis.quality_reasons]
+                        if arguments.telemetry.required and not covers_node_ids(
+                            analysis, [target.node_id for target in arguments.telemetry.targets]
+                        ):
+                            quality = 'invalid'
+                            quality_reasons.append('required_telemetry_missing')
                 except (OSError, ValueError):
-                    quality_reasons = ['result_import_failed']
+                    if normalized is None:
+                        quality_reasons = ['result_import_failed']
+                    else:
+                        quality_reasons = [*quality_reasons, 'node_analysis_failed']
+                        quality = 'invalid' if arguments.telemetry.required else 'partial'
             if status == 'completed' and (normalized is None or quality == 'invalid'):
                 status = 'error'
             final_manifest = manifest.model_copy(

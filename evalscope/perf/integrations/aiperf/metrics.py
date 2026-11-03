@@ -166,6 +166,19 @@ class NodeCacheRatio(BaseArgument):
     semantics: Literal['vllm_prefix_lookup_tokens'] = 'vllm_prefix_lookup_tokens'
 
 
+def covers_node_ids(analysis: Optional[NodeMetricsAnalysis], node_ids: Sequence[str]) -> bool:
+    """Check whether every configured node has at least one usable window value."""
+    if analysis is None or not node_ids:
+        return False
+    covered = {
+        row.node_id
+        for row in analysis.series
+        if (row.statistic is not None and row.statistic.value is not None)
+        or (row.histogram is not None and row.histogram.count is not None and row.histogram.count > 0)
+    }
+    return set(node_ids).issubset(covered)
+
+
 def _integer(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError('Histogram count is not finite')

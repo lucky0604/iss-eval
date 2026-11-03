@@ -3060,6 +3060,17 @@
         "model": {
           "type": "string"
         },
+        "node_analysis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeMetricsAnalysis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "num_runs": {
           "type": "integer"
         },

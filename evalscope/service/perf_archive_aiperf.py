@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from evalscope.metrics.semantics import resolve_perf_semantics
+from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis
 from evalscope.perf.results.aiperf_import import load_aiperf_run, observed_cache_usage, query_aiperf_requests
 from evalscope.perf.results.single_run import SingleRunManifest, load_single_manifest
 from evalscope.perf.utils.perf_constants import Metrics, PercentileMetrics
@@ -40,6 +41,31 @@ def _read(directory: str):
     except (ValueError, OSError):
         raise PerfArchiveError('Invalid AIPerf archive', 400) from None
     return manifest, result, normalized
+
+
+def normalized_path(directory: str) -> str:
+    """Resolve a manifest-owned normalized result directory."""
+    return str(_read(directory)[2])
+
+
+def _analysis(directory: str) -> Optional[NodeMetricsAnalysis]:
+    root = Path(directory).resolve(strict=True)
+    path = root / 'node_analysis.json'
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        resolved = path.resolve(strict=True)
+        if not resolved.is_relative_to(root) or not resolved.is_file() or resolved.stat().st_size > 16 * 1024 * 1024:
+            raise ValueError('Invalid node analysis path')
+        return NodeMetricsAnalysis.model_validate_json(resolved.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        raise PerfArchiveError('Invalid single-run node analysis', 400) from None
+
+
+def _quality(manifest: SingleRunManifest, result: Any) -> str:
+    priority = {'complete': 0, 'partial': 1, 'invalid': 2}
+    values = [value for value in (manifest.quality, result.quality) if value is not None]
+    return max(values, key=lambda value: priority[value])
 
 
 def _metric(result: Any, key: str, statistic: str = 'avg') -> Optional[float]:
@@ -79,7 +105,7 @@ def build_summary(rel_path: str, directory: str) -> dict:
         'concurrency': [manifest.concurrency] if manifest.concurrency is not None else None,
         'engine': 'aiperf',
         'executor_version': result.executor_version,
-        'quality': result.quality,
+        'quality': _quality(manifest, result),
     }
 
 
@@ -126,7 +152,7 @@ def build_detail(rel_path: str, directory: str) -> dict:
         'Engine': 'AIPerf',
         'Executor Version': result.executor_version,
         'Status': manifest.status,
-        'Quality': result.quality,
+        'Quality': _quality(manifest, result),
         'Total Requests': str(total),
         'Succeed Requests': str(result.profiling_successes),
         'Server Cache Reads': str(cache.ratio) if cache.ratio is not None else 'unavailable',
@@ -158,8 +184,9 @@ def build_detail(rel_path: str, directory: str) -> dict:
         'has_html': True,
         'engine': 'aiperf',
         'executor_version': result.executor_version,
-        'quality': result.quality,
-        'quality_reasons': result.quality_reasons,
+        'quality': _quality(manifest, result),
+        'quality_reasons': list(dict.fromkeys([*result.quality_reasons, *manifest.quality_reasons])),
+        'node_analysis': _analysis(directory),
     }
 
 
