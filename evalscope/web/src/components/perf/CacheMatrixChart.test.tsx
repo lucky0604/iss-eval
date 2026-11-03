@@ -22,3 +22,17 @@ it('shows only observed points for the selected load and repetition, without joi
   fireEvent.change(screen.getByLabelText('Load / repetition'), { target: { value: 'closed_loop:2:0' } })
   expect(chart.querySelectorAll('circle')).toHaveLength(1)
 })
+
+it('plots load only within a fixed ratio, load mode and repetition', () => {
+  const other = { ...base, subrun_id: 'b', load_point: { concurrency: 4 } }
+  const differentRatio = { ...base, subrun_id: 'c', target_ratio: .8, load_point: { concurrency: 2 } }
+  const missingLoad = { ...base, subrun_id: 'd', load_point: {} }
+  const scenarios = { a: result, b: { ...result, subrun_id: 'b' }, c: { ...result, subrun_id: 'c' }, d: { ...result, subrun_id: 'd', result: { ...result.result!, metrics: [{ ...result.result!.metrics![0], source: 'other' }] } } }
+  render(<LocaleProvider><CacheMatrixChart rows={[missingLoad, base, other, differentRatio]} scenarios={scenarios} /></LocaleProvider>)
+  fireEvent.change(screen.getByLabelText('Horizontal axis'), { target: { value: 'load' } })
+  const chart = screen.getByRole('img', { name: 'Load versus metric scatter plot' })
+  expect(chart.querySelectorAll('circle')).toHaveLength(2)
+  expect(screen.getByText('1 → 4 · load')).toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('Target ratio / mode / repetition'), { target: { value: '0.8:closed_loop:0' } })
+  expect(chart.querySelectorAll('circle')).toHaveLength(1)
+})
