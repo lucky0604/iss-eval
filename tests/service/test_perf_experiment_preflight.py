@@ -1,5 +1,6 @@
 """Cache experiment capability and side-effect-free plan endpoints."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -88,6 +89,95 @@ def test_live_metrics_use_current_planned_subrun_and_reject_redirected_files(cli
     state['current_subrun'] = 'r999-l999-n999'
     (root / 'experiment.json').write_text(json.dumps(state))
     assert client.get('/api/v1/perf/live/live-task').status_code == 400
+
+
+def test_html_streams_the_complete_matrix_with_node_provenance(client, tmp_path: Path) -> None:
+    from evalscope.perf.experiments.planner import plan_cache_experiment
+    from evalscope.perf.results.aiperf_import import import_aiperf_run
+    from evalscope.perf.results.models import AIPerfImportArguments
+
+    config = _config()
+    config.load.repetitions = 17
+    plan = plan_cache_experiment(config, 'full-report', 'tokenizer', 'template')
+    root = tmp_path / 'full-report' / 'perf'
+    first = plan.subruns[0]
+    run = root / 'runs' / first.subrun_id
+    run.mkdir(parents=True)
+    raw = run / 'raw'
+    raw.mkdir()
+    fixture = Path(__file__).parents[1] / 'perf' / 'fixtures' / 'aiperf' / 'profile_export.jsonl'
+    template = json.loads(fixture.read_text().splitlines()[1])
+    records = []
+    for cached, latency in ((0, 1), (2, 5)):
+        row = json.loads(json.dumps(template))
+        row['metrics']['usage_prompt_cache_read_tokens'] = {'unit': 'tokens', 'value': cached}
+        row['metrics']['request_latency']['value'] = latency
+        records.append(row)
+    (raw / 'profile_export.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in records))
+    import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(run / 'normalized')))
+    (root / 'experiment_plan.json').write_text(plan.model_dump_json())
+    state = {'schema_version': '1.0', 'plan_hash': plan.plan_hash, 'status': 'completed',
+             'completed_subruns': len(plan.subruns), 'total_subruns': len(plan.subruns), 'quality': 'partial',
+             'subruns': [{'subrun_id': row.subrun_id, 'status': 'completed',
+                          'scenario': f'runs/{row.subrun_id}/scenario.json' if row == first else None}
+                         for row in plan.subruns]}
+    (root / 'experiment.json').write_text(json.dumps(state))
+    (run / 'scenario.json').write_text(json.dumps({'status': 'completed', 'target_ratio': first.target_ratio,
+        'workload': {'total_input_tokens': 100, 'requests': [{'input_tokens': 100, 'shared_tokens': 0,
+                                                              'sha256': 'a' * 64}]},
+        'normalized': 'normalized', 'node_analysis': 'node_analysis.json',
+        'quality_reasons': ['test-window']}))
+    (run / 'node_analysis.json').write_text(json.dumps({'availability': 'partial', 'max_gap_ns': 10,
+        'window_source': 'observed_request_bounds', 'cache_ratios': [{'node_id': 'p', 'role': 'prefill',
+        'labels': {}, 'availability': 'available', 'hit_tokens': 8, 'lookup_tokens': 10, 'ratio': .8}]}))
+    api = client.get(f'/api/v1/perf/experiments/full-report/runs/{first.subrun_id}')
+    assert api.status_code == 200 and api.json['node_analysis']['cache_ratios'][0]['ratio'] == .8
+    assert api.json['input_tokens_per_request'] == 100
+    assert api.json['request_hashes_sha256'] == hashlib.sha256(('a' * 64).encode()).hexdigest()
+    groups = client.get(f'/api/v1/perf/experiments/full-report/runs/{first.subrun_id}/request-cache-groups')
+    assert groups.status_code == 200 and groups.json['groups'][1]['latency']['p99'] == .005
+    report = client.get('/api/v1/perf/experiments/full-report/report')
+    assert report.status_code == 200 and report.is_streamed
+    html = report.get_data(as_text=True)
+    assert len(plan.subruns) == 102 and plan.subruns[-1].subrun_id in html
+    assert 'lookup-token hit ratio:' in html and '0.8' in html and 'observed_request_bounds' in html
+    assert 'some_cached_tokens' in html and '0.005' in html and 'exact nearest-rank' in html
+    assert 'Request records (all phases)' in html and template['metadata']['x_request_id'] in html
+    assert api.json['request_hashes_sha256'] in html
+    assert 'Showing the first' not in html and 'not per-request P/D timings' in html
+
+
+def test_html_streams_request_records_beyond_one_page(client, tmp_path: Path) -> None:
+    from evalscope.perf.experiments.planner import plan_cache_experiment
+    from evalscope.perf.results.aiperf_import import import_aiperf_run
+    from evalscope.perf.results.models import AIPerfImportArguments
+
+    config = _config()
+    config.load.request_count = 502
+    plan = plan_cache_experiment(config, 'report-pages', 'tokenizer', 'template')
+    root = tmp_path / 'report-pages' / 'perf'
+    item = plan.subruns[0]
+    run = root / 'runs' / item.subrun_id
+    raw = run / 'raw'
+    raw.mkdir(parents=True)
+    fixture = Path(__file__).parents[1] / 'perf' / 'fixtures' / 'aiperf' / 'profile_export.jsonl'
+    row = json.loads(fixture.read_text().splitlines()[1])
+    with (raw / 'profile_export.jsonl').open('w') as file:
+        for index in range(502):
+            row['metadata']['x_request_id'] = f'page-record-{index}'
+            file.write(json.dumps(row) + '\n')
+    import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(run / 'normalized')))
+    (root / 'experiment_plan.json').write_text(plan.model_dump_json())
+    (root / 'experiment.json').write_text(json.dumps({'schema_version': '1.0', 'plan_hash': plan.plan_hash,
+        'status': 'stopped', 'completed_subruns': 0, 'total_subruns': len(plan.subruns), 'quality': 'partial',
+        'subruns': [{'subrun_id': value.subrun_id, 'status': 'error' if value == item else 'not_started',
+                     'scenario': f'runs/{value.subrun_id}/scenario.json' if value == item else None}
+                    for value in plan.subruns]}))
+    (run / 'scenario.json').write_text(json.dumps({'status': 'error', 'target_ratio': item.target_ratio,
+                                                    'workload': {'requests': []}, 'normalized': 'normalized'}))
+    report = client.get('/api/v1/perf/experiments/report-pages/report')
+    html = report.get_data(as_text=True)
+    assert report.status_code == 200 and 'page-record-0' in html and 'page-record-501' in html
 
 
 def test_invoke_uses_validated_plan_and_rejects_stale_preview(client, tmp_path: Path,

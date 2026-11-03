@@ -8,7 +8,13 @@ from evalscope.perf.experiments.planner import CacheExperimentPlan
 from evalscope.perf.integrations.aiperf.live import LiveNode
 from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis
 from evalscope.perf.integrations.aiperf.preflight import NodePreflight
-from evalscope.perf.results.models import CacheObservation, NodeMetricSample, PerfRequestRecord, PerfRunResult
+from evalscope.perf.results.models import (
+    CacheObservation,
+    CacheRequestGroup,
+    NodeMetricSample,
+    PerfRequestRecord,
+    PerfRunResult,
+)
 
 from .common import ApiResponseModel
 from .reports import MetricSemantics
@@ -228,6 +234,8 @@ class CacheScenarioResponse(ApiResponseModel):
     target_ratio: float
     generated_ratio: Optional[float] = None
     generated_count: int = Field(ge=0)
+    input_tokens_per_request: Optional[int] = None
+    request_hashes_sha256: Optional[str] = None
     cache: Optional[CacheObservation] = None
     result: Optional[PerfRunResult] = None
     node_analysis: Optional[NodeMetricsAnalysis] = None
@@ -239,6 +247,14 @@ class CacheRequestsResponse(ApiResponseModel):
     offset: int
     limit: int
     requests: List[PerfRequestRecord]
+
+
+class CacheRequestGroupsResponse(ApiResponseModel):
+    availability: Literal['available', 'unavailable']
+    reason: Optional[str] = None
+    successful_requests: Optional[int] = None
+    observed_requests: int = Field(ge=0)
+    groups: List[CacheRequestGroup] = Field(default_factory=list)
 
 
 class CacheNodeMetricsResponse(ApiResponseModel):

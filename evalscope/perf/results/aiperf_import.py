@@ -19,12 +19,15 @@ from evalscope.perf.executors.urls import normalize_metrics_url
 from evalscope.perf.results.models import (
     AIPerfImportArguments,
     CacheObservation,
+    CacheRequestGroup,
+    CacheRequestGroups,
     ImportManifest,
     MetricStatistics,
     MetricTargetReference,
     NodeMetricSample,
     PerfRequestRecord,
     PerfRunResult,
+    RequestLatencyDistribution,
     RequestObservationBounds,
 )
 from evalscope.utils.uri_utils import sanitize_endpoint
@@ -760,6 +763,76 @@ def observed_cache_usage(normalized_dir: str) -> CacheObservation:
         source='server_usage',
         availability='available',
     )
+
+
+def request_cache_groups(normalized_dir: str) -> CacheRequestGroups:
+    """Calculate exact nearest-rank latency distributions for verified request cache usage."""
+    coverage = observed_cache_usage(normalized_dir)
+    if coverage.availability != 'available':
+        return CacheRequestGroups(
+            availability='unavailable',
+            reason=coverage.reason,
+            successful_requests=coverage.successful_requests,
+            observed_requests=0,
+        )
+    if coverage.observed_requests > 200000:
+        return CacheRequestGroups(
+            availability='unavailable',
+            reason='request_group_budget_exceeded',
+            successful_requests=coverage.successful_requests,
+            observed_requests=coverage.observed_requests,
+        )
+    generation = _generation(normalized_dir)
+    database_path = _owned_file(generation, 'requests.db')
+    database = sqlite3.connect(f'file:{quote(str(database_path))}?mode=ro', uri=True)
+    valid = (
+        "phase='profiling' AND status='success' "
+        "AND json_extract(record_json, '$.prompt_tokens_source')='server_usage' "
+        "AND json_extract(record_json, '$.cached_tokens_source')='server_usage' "
+        "AND json_extract(record_json, '$.prompt_tokens')>0 "
+        "AND json_extract(record_json, '$.cached_tokens')>=0 "
+        "AND json_extract(record_json, '$.cached_tokens')<=json_extract(record_json, '$.prompt_tokens')"
+    )
+
+    def distribution(where: str, field: str) -> RequestLatencyDistribution:
+        expression = f"json_extract(record_json, '$.{field}')"
+        criterion = f"{where} AND json_type(record_json, '$.{field}') IN ('integer', 'real')"
+        count, mean = database.execute(f'SELECT COUNT(*), AVG({expression}) FROM requests WHERE {criterion}').fetchone()
+        values = []
+        for percentile in (0.5, 0.95, 0.99):
+            if not count:
+                values.append(None)
+                continue
+            index = max(0, math.ceil(percentile * count) - 1)
+            values.append(
+                database.execute(
+                    f'SELECT {expression} FROM requests WHERE {criterion} ORDER BY {expression} LIMIT 1 OFFSET ?',
+                    (index,),
+                ).fetchone()[0]
+            )
+        return RequestLatencyDistribution(count=count, mean=mean, p50=values[0], p95=values[1], p99=values[2])
+
+    try:
+        groups = []
+        for name, operator in (('no_cached_tokens', '='), ('some_cached_tokens', '>')):
+            where = f"{valid} AND json_extract(record_json, '$.cached_tokens'){operator}0"
+            count = database.execute(f'SELECT COUNT(*) FROM requests WHERE {where}').fetchone()[0]
+            groups.append(
+                CacheRequestGroup(
+                    group=name,
+                    count=count,
+                    latency=distribution(where, 'latency_seconds'),
+                    ttft=distribution(where, 'ttft_seconds'),
+                )
+            )
+        return CacheRequestGroups(
+            availability='available',
+            successful_requests=coverage.successful_requests,
+            observed_requests=coverage.observed_requests,
+            groups=groups,
+        )
+    finally:
+        database.close()
 
 
 def query_node_metrics(

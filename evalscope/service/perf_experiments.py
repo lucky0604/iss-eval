@@ -74,6 +74,13 @@ def scenario_path(task_id: str, subrun_id: str) -> Tuple[CacheSubrunPlan, str]:
     item = next((row for row in experiment.plan.subruns if row.subrun_id == subrun_id), None)
     if item is None:
         raise ValueError('Unknown subrun ID')
+    return item, _scenario_normalized_path(task_id, item)
+
+
+def _scenario_normalized_path(task_id: str, item: CacheSubrunPlan) -> str:
+    subrun_id = item.subrun_id
+    if not _SUBRUN.fullmatch(subrun_id):
+        raise ValueError('Invalid subrun ID')
     runs = task_file_path(task_id, 'perf/runs')
     if runs != os.path.join(task_file_path(task_id, 'perf'), 'runs'):
         raise ValueError('Scenario runs directory cannot be redirected')
@@ -81,12 +88,22 @@ def scenario_path(task_id: str, subrun_id: str) -> Tuple[CacheSubrunPlan, str]:
     normalized = task_file_path(task_id, f'perf/runs/{subrun_id}/normalized')
     if run != os.path.join(runs, subrun_id) or not normalized.startswith(run + os.sep):
         raise ValueError('Scenario path escapes its planned run')
-    return item, normalized
+    return normalized
 
 
 def load_scenario(task_id: str, subrun_id: str) -> CacheScenarioResponse:
     """Project generated reuse separately from server-observed cache usage."""
     item, normalized = scenario_path(task_id, subrun_id)
+    return _load_scenario(task_id, item, normalized)
+
+
+def _load_planned_scenario(task_id: str, item: CacheSubrunPlan) -> CacheScenarioResponse:
+    """Load an already validated plan item supplied by the server's report iterator."""
+    return _load_scenario(task_id, item, _scenario_normalized_path(task_id, item))
+
+
+def _load_scenario(task_id: str, item: CacheSubrunPlan, normalized: str) -> CacheScenarioResponse:
+    subrun_id = item.subrun_id
     scenario_file = task_file_path(task_id, f'perf/runs/{subrun_id}/scenario.json')
     if not scenario_file.startswith(os.path.dirname(normalized) + os.sep):
         raise ValueError('Scenario document escapes its planned run')
@@ -132,12 +149,21 @@ def load_scenario(task_id: str, subrun_id: str) -> CacheScenarioResponse:
     ratio = numerator / denominator if denominator else None
     if ratio is not None and not math.isfinite(ratio):
         raise ValueError('Invalid generated reuse ratio')
+    token_count = workload.get('total_input_tokens') if isinstance(workload, dict) else None
+    if type(token_count) is not int or token_count <= 0:
+        token_count = None
+    hashes = [row.get('sha256') for row in requests]
+    fingerprint = None
+    if hashes and all(isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) for value in hashes):
+        fingerprint = hashlib.sha256('\n'.join(hashes).encode()).hexdigest()
     return CacheScenarioResponse(
         subrun_id=subrun_id,
         status=str(state.get('status', 'unknown')),
         target_ratio=item.target_ratio,
         generated_ratio=ratio,
         generated_count=count,
+        input_tokens_per_request=token_count,
+        request_hashes_sha256=fingerprint,
         cache=cache,
         result=result,
         node_analysis=analysis,

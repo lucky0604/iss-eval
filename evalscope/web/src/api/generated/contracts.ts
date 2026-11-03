@@ -48,6 +48,7 @@ export interface WebApiContracts {
   cache_experiment_list_response: CacheExperimentListResponse;
   cache_experiment_response: CacheExperimentResponse;
   cache_node_metrics_response: CacheNodeMetricsResponse;
+  cache_request_groups_response: CacheRequestGroupsResponse;
   cache_requests_response: CacheRequestsResponse;
   cache_scenario_response: CacheScenarioResponse;
   chat_message: ChatMessage;
@@ -273,6 +274,33 @@ export interface NodeMetricSample {
   semantics?: "unverified";
   timestamp_ns: number;
 }
+export interface CacheRequestGroupsResponse {
+  availability: "available" | "unavailable";
+  groups?: CacheRequestGroup[];
+  observed_requests: number;
+  reason?: string | null;
+  successful_requests?: number | null;
+}
+/**
+ * A group defined only by the server's request-level cached token count.
+ */
+export interface CacheRequestGroup {
+  count: number;
+  group: "no_cached_tokens" | "some_cached_tokens";
+  latency: RequestLatencyDistribution;
+  ttft: RequestLatencyDistribution;
+}
+/**
+ * Exact nearest-rank percentiles for observed request latencies.
+ */
+export interface RequestLatencyDistribution {
+  count: number;
+  mean?: number | null;
+  p50?: number | null;
+  p95?: number | null;
+  p99?: number | null;
+  unit?: "seconds";
+}
 export interface CacheRequestsResponse {
   limit: number;
   offset: number;
@@ -306,8 +334,10 @@ export interface CacheScenarioResponse {
   cache?: CacheObservation | null;
   generated_count: number;
   generated_ratio?: number | null;
+  input_tokens_per_request?: number | null;
   node_analysis?: NodeMetricsAnalysis | null;
   quality_reasons?: string[];
+  request_hashes_sha256?: string | null;
   result?: PerfRunResult | null;
   status: string;
   subrun_id: string;

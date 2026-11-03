@@ -10,6 +10,7 @@ import { useScopedState } from '@/hooks/useScopedState'
 import { getPerfHistoryReportUrl, listPerfRuns, deletePerfRun } from '@/api/perf'
 import type { PerfRunSummary } from '@/api/types'
 import Skeleton from '@/components/ui/Skeleton'
+import CacheExperimentArchive from '@/components/perf/CacheExperimentArchive'
 import EmptyStateSystem, { type ResolvedEmptyStateAction } from '@/components/common/EmptyStateSystem'
 import SearchInput from '@/components/ui/SearchInput'
 import SelectionCheckbox from '@/components/ui/SelectionCheckbox'
@@ -252,6 +253,7 @@ export default function PerfReportsPage() {
 
   return (
     <div className="page-enter mx-auto flex w-full max-w-7xl flex-col gap-5">
+      <CacheExperimentArchive scanToken={scanToken} />
       {error && (
         <ErrorAlert>{error}</ErrorAlert>
       )}

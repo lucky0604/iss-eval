@@ -67,7 +67,7 @@ export default function PerfLiveMetricsPanel({ taskId, active }: Props) {
   return <section className="space-y-2 rounded border border-[var(--border)] p-3" aria-label={t('tasks.live.title')}>
     <h3 className="font-semibold">{t('tasks.live.title')}</h3>
     <p className="text-xs text-[var(--text-muted)]">{t('tasks.live.source')}</p>
-    {snapshot?.current_subrun && <p className="text-sm">{t('tasks.live.scenario')}: {snapshot.current_subrun} · {t('tasks.live.target')}: {snapshot.target_ratio == null ? '—' : `${snapshot.target_ratio * 100}%`} · {snapshot.load_mode === 'closed_loop' ? `${t('tasks.live.concurrency')}: ${snapshot.concurrency ?? '—'}` : `${t('tasks.live.rate')}: ${snapshot.rate ?? '—'}`} · {t('tasks.live.repetition')}: {snapshot.repetition ?? '—'}</p>}
+    {snapshot?.current_subrun && <p className="text-sm">{t('tasks.live.scenario')}: {snapshot.current_subrun} · {t('tasks.live.target')}: {snapshot.target_ratio == null ? '—' : `${snapshot.target_ratio * 100}%`} · {snapshot.load_mode === 'closed_loop' ? `${t('tasks.live.concurrency')}: ${snapshot.concurrency ?? '—'}` : `${t('tasks.live.rate')}: ${snapshot.rate ?? '—'}`} · {t('tasks.live.repetition')}: {snapshot.repetition == null ? '—' : snapshot.repetition + 1}</p>}
     <p className="text-sm">{t('tasks.live.requestCounts')}: —</p>
     {failed && <p role="status" className="text-sm text-[var(--yellow)]">{t('tasks.live.stale')}</p>}
     {!node ? <p className="text-sm">{t('tasks.live.waiting')}</p> : <>

@@ -953,6 +953,85 @@
       ],
       "type": "object"
     },
+    "CacheRequestGroup": {
+      "additionalProperties": false,
+      "description": "A group defined only by the server's request-level cached token count.",
+      "properties": {
+        "count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "group": {
+          "enum": [
+            "no_cached_tokens",
+            "some_cached_tokens"
+          ],
+          "type": "string"
+        },
+        "latency": {
+          "$ref": "#/$defs/RequestLatencyDistribution"
+        },
+        "ttft": {
+          "$ref": "#/$defs/RequestLatencyDistribution"
+        }
+      },
+      "required": [
+        "group",
+        "count",
+        "latency",
+        "ttft"
+      ],
+      "type": "object"
+    },
+    "CacheRequestGroupsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/CacheRequestGroup"
+          },
+          "type": "array"
+        },
+        "observed_requests": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "successful_requests": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "availability",
+        "observed_requests"
+      ],
+      "type": "object"
+    },
     "CacheRequestsResponse": {
       "additionalProperties": false,
       "properties": {
@@ -1009,6 +1088,17 @@
           ],
           "default": null
         },
+        "input_tokens_per_request": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "node_analysis": {
           "anyOf": [
             {
@@ -1025,6 +1115,17 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "request_hashes_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "result": {
           "anyOf": [
@@ -5124,6 +5225,69 @@
       ],
       "type": "object"
     },
+    "RequestLatencyDistribution": {
+      "additionalProperties": false,
+      "description": "Exact nearest-rank percentiles for observed request latencies.",
+      "properties": {
+        "count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mean": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p50": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p95": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p99": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unit": {
+          "const": "seconds",
+          "default": "seconds",
+          "type": "string"
+        }
+      },
+      "required": [
+        "count"
+      ],
+      "type": "object"
+    },
     "SamplePerfMetrics": {
       "additionalProperties": false,
       "properties": {
@@ -5690,6 +5854,9 @@
     "cache_node_metrics_response": {
       "$ref": "#/$defs/CacheNodeMetricsResponse"
     },
+    "cache_request_groups_response": {
+      "$ref": "#/$defs/CacheRequestGroupsResponse"
+    },
     "cache_requests_response": {
       "$ref": "#/$defs/CacheRequestsResponse"
     },
@@ -5858,6 +6025,7 @@
     "cache_experiment_list_response",
     "cache_scenario_response",
     "cache_requests_response",
+    "cache_request_groups_response",
     "cache_node_metrics_response",
     "perf_run_item",
     "perf_runs_list_response",

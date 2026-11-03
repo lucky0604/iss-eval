@@ -45,6 +45,7 @@ vi.mock('@/api/perf', () => ({
   listPerfRunDetails: vi.fn(),
   getPerfRequests: vi.fn(),
   listPerfRuns: vi.fn(),
+  listCacheExperiments: vi.fn().mockResolvedValue({ experiments: [], total: 0, offset: 0, limit: 50 }),
   getPerfChartUrl: vi.fn(() => '/api/v1/perf/chart'),
   getPerfHistoryReportUrl: vi.fn(() => '/api/v1/perf/history/report'),
 }))

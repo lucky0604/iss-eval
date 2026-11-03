@@ -20,6 +20,7 @@ from .perf import (
     CacheExperimentListResponse,
     CacheExperimentResponse,
     CacheNodeMetricsResponse,
+    CacheRequestGroupsResponse,
     CacheRequestsResponse,
     CacheScenarioResponse,
     DeletePerfRunResponse,
@@ -99,6 +100,7 @@ class WebApiContracts(BaseModel):
     cache_experiment_list_response: CacheExperimentListResponse
     cache_scenario_response: CacheScenarioResponse
     cache_requests_response: CacheRequestsResponse
+    cache_request_groups_response: CacheRequestGroupsResponse
     cache_node_metrics_response: CacheNodeMetricsResponse
     perf_run_item: PerfRunItem
     perf_runs_list_response: PerfRunsListResponse
@@ -123,6 +125,7 @@ __all__ = [
     'CacheExperimentListResponse',
     'CacheNodeMetricsResponse',
     'CacheRequestsResponse',
+    'CacheRequestGroupsResponse',
     'CacheScenarioResponse',
     'BenchmarksResponse',
     'ConfigResponse',

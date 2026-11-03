@@ -13,6 +13,7 @@ from evalscope.perf.results.aiperf_import import (
     observed_cache_usage,
     query_aiperf_requests,
     query_node_metrics,
+    request_cache_groups,
 )
 from evalscope.perf.results.models import AIPerfImportArguments
 
@@ -62,6 +63,8 @@ def test_missing_usage_stays_estimated_and_cache_unknown(tmp_path: Path) -> None
     assert all(record.cached_tokens is None and record.cached_tokens_source is None for record in records)
     observation = observed_cache_usage(str(output))
     assert observation.ratio is None and observation.availability == 'unavailable'
+    assert request_cache_groups(str(output)).availability == 'unavailable'
+    assert not request_cache_groups(str(output)).groups
 
 
 def test_error_only_and_mixed_failures_remain_partial(tmp_path: Path) -> None:
@@ -266,6 +269,40 @@ def test_actual_cache_usage_is_distinct_and_invalid_counts_degrade_quality(tmp_p
     invalid = import_aiperf_run(args)
     assert invalid.quality == 'partial' and 'invalid_cache_usage' in invalid.quality_reasons
     assert observed_cache_usage(str(output)).ratio is None
+
+
+def test_request_cache_group_percentiles_use_only_verified_server_usage(tmp_path: Path) -> None:
+    raw, output = tmp_path / 'raw', tmp_path / 'normalized'
+    raw.mkdir()
+    template = json.loads((FIXTURES / 'profile_export.jsonl').read_text().splitlines()[1])
+    records = []
+    for cached, latency in [(0, 1), (2, 3), (7, 5), (9, 7), (None, 9)]:
+        record = json.loads(json.dumps(template))
+        record['metrics']['request_latency']['value'] = latency
+        record['metrics']['time_to_first_token']['value'] = latency
+        if cached is not None:
+            record['metrics']['usage_prompt_cache_read_tokens'] = {'unit': 'tokens', 'value': cached}
+        records.append(record)
+    (raw / 'profile_export.jsonl').write_text(''.join(json.dumps(record) + '\n' for record in records))
+    import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(output)))
+    grouped = request_cache_groups(str(output))
+    assert grouped.availability == 'available' and grouped.observed_requests == 3 and grouped.successful_requests == 5
+    no_hit, hit = grouped.groups
+    assert no_hit.count == 1 and no_hit.latency.p50 == pytest.approx(.001)
+    assert hit.count == 2 and hit.latency.p50 == pytest.approx(.003) and hit.latency.p95 == pytest.approx(.005)
+    assert hit.ttft.count == 2 and hit.ttft.p99 == pytest.approx(.005)
+
+
+def test_request_cache_group_budget_preserves_coverage_without_fake_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    from evalscope.perf.results import aiperf_import
+    from evalscope.perf.results.models import CacheObservation
+
+    monkeypatch.setattr(aiperf_import, 'observed_cache_usage', lambda _: CacheObservation(
+        availability='available', observed_requests=200001, successful_requests=200002, ratio=.5,
+    ))
+    result = request_cache_groups('/unused')
+    assert result.availability == 'unavailable' and result.reason == 'request_group_budget_exceeded'
+    assert result.observed_requests == 200001 and not result.groups
 
 
 def test_result_generation_rejects_symlink_escape(tmp_path: Path) -> None:

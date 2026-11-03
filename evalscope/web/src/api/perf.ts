@@ -1,5 +1,5 @@
 import { apiDeleteValidated, apiPostValidated, apiValidated } from './client'
-import type { PerfEnginesResponse, PerfInvokeResponse, PerfLiveResponse, PerfPlanResponse } from './generated/contracts'
+import type { PerfEnginesResponse, PerfInvokeResponse, PerfLiveResponse, PerfPlanResponse, CacheExperimentResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse } from './generated/contracts'
 import type {
   DeletePerfRunResponse,
   ListPerfRunsResponse,
@@ -36,6 +36,35 @@ export function submitPerfExperiment(payload: Record<string, unknown>, taskId: s
   return validatePerfExperiment(payload, taskId).then((preview) => apiPostValidated('/api/v1/perf/invoke', payload, {
     headers: { 'EvalScope-Task-Id': taskId, 'EvalScope-Plan-Hash': preview.plan.plan_hash },
   }))
+}
+
+export function getCacheExperiment(taskId: string): Promise<CacheExperimentResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}`)
+}
+
+export function listCacheExperiments(offset = 0): Promise<CacheExperimentListResponse> {
+  return apiValidated('/api/v1/perf/experiments', { params: { offset, limit: 50 } })
+}
+
+export function getCacheScenario(taskId: string, subrunId: string): Promise<CacheScenarioResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}`)
+}
+
+export function getCacheNodeMetrics(taskId: string, subrunId: string, offset = 0,
+  filter?: { nodeId: string; metricName: string; signal?: AbortSignal }): Promise<CacheNodeMetricsResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/metrics`, {
+    params: { offset, limit: filter ? 500 : 100, node_id: filter?.nodeId, metric_name: filter?.metricName }, signal: filter?.signal,
+  })
+}
+
+export function getCacheRequests(taskId: string, subrunId: string, offset = 0): Promise<CacheRequestsResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/requests`, {
+    params: { offset, limit: 50 },
+  })
+}
+
+export function getCacheRequestGroups(taskId: string, subrunId: string, signal?: AbortSignal): Promise<CacheRequestGroupsResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/request-cache-groups`, { signal })
 }
 
 // ------------------------------------------------------------------ //

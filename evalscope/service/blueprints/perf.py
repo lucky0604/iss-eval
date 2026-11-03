@@ -3,12 +3,14 @@ import json
 import math
 import os
 import shutil
+import sqlite3
 import tempfile
 import time
 from functools import lru_cache
 from pathlib import Path
+from typing import Iterator, Optional
 
-from flask import Blueprint, current_app, jsonify, make_response, render_template_string, request, send_file
+from flask import Blueprint, current_app, jsonify, make_response, request, send_file, stream_template_string
 from tabulate import tabulate
 
 from evalscope.metrics.semantics import resolve_perf_semantics
@@ -16,7 +18,7 @@ from evalscope.perf.arguments import Arguments as PerfArguments
 from evalscope.perf.executors.arguments import AIPerfArguments, parse_perf_task_arguments
 from evalscope.perf.executors.external import supports_external_runner
 from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, ExternalRuntime
-from evalscope.perf.experiments.planner import plan_cache_experiment
+from evalscope.perf.experiments.planner import CacheSubrunPlan, plan_cache_experiment
 from evalscope.perf.experiments.storage import write_experiment_json
 from evalscope.perf.experiments.tokenizer import HuggingFacePrefixTokenizer
 from evalscope.perf.integrations.aiperf.live import LiveSnapshot
@@ -29,8 +31,13 @@ from evalscope.perf.integrations.aiperf.single_run import (
 )
 from evalscope.perf.plugin.api.base import ApiPluginBase
 from evalscope.perf.plugin.registry import ApiRegistry, DatasetRegistry
-from evalscope.perf.results.aiperf_import import import_aiperf_run, query_aiperf_requests, query_node_metrics
-from evalscope.perf.results.models import AIPerfImportArguments, MetricTargetReference
+from evalscope.perf.results.aiperf_import import (
+    import_aiperf_run,
+    query_aiperf_requests,
+    query_node_metrics,
+    request_cache_groups,
+)
+from evalscope.perf.results.models import AIPerfImportArguments, MetricTargetReference, PerfRequestRecord
 from evalscope.perf.results.single_run import SingleRunManifest, write_single_manifest
 from evalscope.perf.sla.sla_run import SLAResult, format_sla_tables
 from evalscope.perf.utils.benchmark_util import Metrics
@@ -39,6 +46,7 @@ from evalscope.service.api_models import (
     CacheExperimentListResponse,
     CacheExperimentResponse,
     CacheNodeMetricsResponse,
+    CacheRequestGroupsResponse,
     CacheRequestsResponse,
     CacheScenarioResponse,
     DeletePerfRunResponse,
@@ -259,44 +267,117 @@ def delete_cache_experiment(task_id: str):
 
 @bp_perf.route('/experiments/<task_id>/report', methods=['GET'])
 def get_cache_experiment_report(task_id: str):
-    """Render a bounded, standalone summary using the same projections as the API."""
-    from ..perf_experiments import load_experiment, load_scenario
+    """Stream a complete standalone report using the same projections as the API."""
+    from ..perf_experiments import _load_planned_scenario, _scenario_normalized_path, load_experiment
 
     try:
         experiment = load_experiment(task_id)
-        rows = []
-        for item, state in zip(experiment.plan.subruns[:100], experiment.state.subruns[:100]):
-            scenario = None
-            if state.scenario:
-                try:
-                    scenario = load_scenario(task_id, item.subrun_id)
-                except (OSError, ValueError):
-                    pass
-            rows.append((item, state, scenario))
-        html = render_template_string(
+
+        def rows() -> Iterator[tuple]:
+            for item, state in zip(experiment.plan.subruns, experiment.state.subruns):
+                scenario = None
+                request_groups = None
+                if state.scenario:
+                    try:
+                        scenario = _load_planned_scenario(task_id, item)
+                        if scenario.cache and scenario.cache.availability == 'available':
+                            request_groups = request_cache_groups(_scenario_normalized_path(task_id, item))
+                    except (OSError, ValueError, sqlite3.Error):
+                        pass
+
+                def request_rows(run: CacheSubrunPlan) -> Iterator[Optional[PerfRequestRecord]]:
+                    offset = 0
+                    try:
+                        path = _scenario_normalized_path(task_id, run)
+                        while True:
+                            total, records = query_aiperf_requests(path, offset=offset, limit=500)
+                            yield from records
+                            offset += len(records)
+                            if not records or offset >= total:
+                                return
+                    except (OSError, ValueError, sqlite3.Error):
+                        yield None
+
+                yield item, state, scenario, request_groups, request_rows(item) if scenario and scenario.result else ()
+
+        html = stream_template_string(
             """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Prefix cache experiment</title></head>
 <body><h1>Prefix cache experiment: {{ task_id }}</h1>
 <p>Status: {{ experiment.state.status }}; quality: {{ experiment.state.quality or 'unavailable' }};
 completed: {{ experiment.state.completed_subruns }}/{{ experiment.state.total_subruns }}</p>
 <p>Target reuse, generated reuse and server-reported cache reads are distinct. Missing values are unavailable.
-Node metric semantics, chat-template match and routing coverage are unverified.</p>
-{% if experiment.plan.subruns|length > rows|length %}<p>Showing the first {{ rows|length }} of
-{{ experiment.plan.subruns|length }} subruns. Use the Web report for the complete matrix.</p>{% endif %}
+Node windows include shared traffic and are not per-request P/D timings. Deployment metric semantics,
+chat-template match and routing coverage are unverified.</p>
+<p>Plan: {{ experiment.plan.plan_hash }}; configuration: {{ experiment.plan.configuration_hash }};
+tokenizer: {{ experiment.plan.tokenizer_id }}; template: {{ experiment.plan.template_id }}.</p>
 <table border="1"><thead><tr><th>Run</th><th>Load mode</th><th>Load</th><th>Repetition</th>
 <th>Status</th><th>Target reuse</th><th>Generated reuse</th><th>Server cache reads</th>
-<th>Observed requests</th><th>Quality reasons</th></tr></thead><tbody>
-{% for item, state, scenario in rows %}<tr><td>{{ item.subrun_id }}</td><td>{{ item.load_mode }}</td>
+<th>Observed requests</th><th>Quality reasons / client metrics / node windows</th></tr></thead><tbody>
+{% for item, state, scenario, request_groups, requests in rows %}<tr><td>{{ item.subrun_id }}</td><td>{{ item.load_mode }}</td>
 <td>{{ item.load_point.concurrency if item.load_point.concurrency is not none else item.load_point.rate }}</td>
-<td>{{ item.repetition }}</td><td>{{ state.status }}</td><td>{{ item.target_ratio }}</td>
+<td>{{ item.repetition + 1 }}</td><td>{{ state.status }}</td><td>{{ item.target_ratio }}</td>
 <td>{{ scenario.generated_ratio if scenario and scenario.generated_ratio is not none else 'unavailable' }}</td>
 <td>{{ scenario.cache.ratio if scenario and scenario.cache and scenario.cache.ratio is not none else 'unavailable' }}</td>
 <td>{{ scenario.cache.observed_requests ~ '/' ~ scenario.cache.successful_requests if scenario and scenario.cache and scenario.cache.successful_requests is not none else 'unavailable' }}</td>
-<td>{{ scenario.quality_reasons|join(', ') if scenario else 'unavailable' }}</td></tr>{% endfor %}
+<td>{{ scenario.quality_reasons|join(', ') if scenario else 'unavailable' }}
+<p>Execution order={{ item.order + 1 }}, seed={{ item.seed }}, namespace={{ item.namespace }},
+planned requests={{ item.request_count }}, output limit={{ item.output_token_limit if item.output_token_limit is not none else 'unavailable' }};
+generated input tokens per request={{ scenario.input_tokens_per_request if scenario and scenario.input_tokens_per_request is not none else 'unavailable' }};
+request-hash list SHA-256={{ scenario.request_hashes_sha256 if scenario and scenario.request_hashes_sha256 else 'unavailable' }}.
+A fresh namespace does not prove the server cache was cleared.</p>
+{% if scenario and scenario.result %}<p>Executor: {{ scenario.result.engine }} {{ scenario.result.executor_version }};
+requests / successes / errors: {{ scenario.result.profiling_requests }} / {{ scenario.result.profiling_successes }} /
+{{ scenario.result.profiling_errors }}; quality: {{ scenario.result.quality }}</p>
+<ul>{% for metric in scenario.result.metrics %}<li>{{ metric.key }}: {{ metric.value if metric.value is not none else 'unavailable' }}
+{{ metric.unit }} ({{ metric.source }}, {{ metric.scope }}, n={{ metric.count if metric.count is not none else 'unavailable' }},
+{{ metric.availability }}, {{ metric.reason or 'no reason' }})</li>{% endfor %}</ul>{% endif %}
+{% if request_groups and request_groups.availability == 'available' %}<p>Request cache groups: server_usage,
+coverage {{ request_groups.observed_requests }}/{{ request_groups.successful_requests if request_groups.successful_requests is not none else 'unavailable' }};
+percentiles are exact nearest-rank per group and not pooled across runs.</p><ul>
+{% for group in request_groups.groups %}<li>{{ group.group }}: requests={{ group.count }};
+latency seconds mean/P50/P95/P99={{ group.latency.mean if group.latency.mean is not none else 'unavailable' }}/
+{{ group.latency.p50 if group.latency.p50 is not none else 'unavailable' }}/{{ group.latency.p95 if group.latency.p95 is not none else 'unavailable' }}/
+{{ group.latency.p99 if group.latency.p99 is not none else 'unavailable' }} (n={{ group.latency.count }});
+TTFT seconds mean/P50/P95/P99={{ group.ttft.mean if group.ttft.mean is not none else 'unavailable' }}/
+{{ group.ttft.p50 if group.ttft.p50 is not none else 'unavailable' }}/{{ group.ttft.p95 if group.ttft.p95 is not none else 'unavailable' }}/
+{{ group.ttft.p99 if group.ttft.p99 is not none else 'unavailable' }} (n={{ group.ttft.count }})</li>{% endfor %}</ul>
+{% elif request_groups %}<p>Request cache groups unavailable: {{ request_groups.reason or 'no reason' }}</p>{% endif %}
+{% if scenario and scenario.node_analysis %}<p>Node analysis: {{ scenario.node_analysis.availability }},
+window: {{ scenario.node_analysis.window_source or 'unavailable' }},
+{{ scenario.node_analysis.reason or 'no reason' }}</p>
+<ul>{% for ratio in scenario.node_analysis.cache_ratios %}<li>Node {{ ratio.node_id }} {{ ratio.role }} lookup-token hit ratio:
+{{ ratio.ratio if ratio.ratio is not none else 'unavailable' }} ({{ ratio.hit_tokens if ratio.hit_tokens is not none else 'unavailable' }} /
+{{ ratio.lookup_tokens if ratio.lookup_tokens is not none else 'unavailable' }}; {{ ratio.availability }};
+{{ ratio.reason or 'no reason' }}; labels={{ ratio.labels }})</li>{% endfor %}
+{% for node in scenario.node_analysis.series %}<li>{{ node.node_id }} {{ node.role }} {{ node.metric.name }}
+({{ node.engine }} {{ node.metric.upstream_version }}, {{ node.attribution }}, {{ node.window_source }}, labels={{ node.labels }}):
+{% if node.statistic %}{{ node.statistic.value if node.statistic.value is not none else 'unavailable' }} {{ node.metric.unit }};
+sample peak={{ node.statistic.sample_peak if node.statistic.sample_peak is not none else 'unavailable' }};
+n={{ node.statistic.sample_count }}; coverage={{ node.statistic.coverage if node.statistic.coverage is not none else 'unavailable' }};
+{{ node.statistic.availability }}, {{ node.statistic.boundary }}, {{ node.statistic.reason or 'no reason' }}
+{% elif node.histogram %}mean={{ node.histogram.mean if node.histogram.mean is not none else 'unavailable' }} {{ node.histogram.unit }};
+approximate P50/P95/P99={{ node.histogram.p50 if node.histogram.p50 is not none else 'unavailable' }}/
+{{ node.histogram.p95 if node.histogram.p95 is not none else 'unavailable' }}/{{ node.histogram.p99 if node.histogram.p99 is not none else 'unavailable' }};
+n={{ node.histogram.count if node.histogram.count is not none else 'unavailable' }};
+{{ node.histogram.availability }}, {{ node.histogram.boundary }}, {{ node.histogram.reason or 'no reason' }}
+{% else %}unavailable: {{ node.reason or 'no reason' }}{% endif %}</li>{% endfor %}</ul>{% endif %}
+{% if scenario and scenario.result %}<details><summary>Request records (all phases)</summary><table border="1">
+<thead><tr><th>Index / request / session / turn</th><th>Phase / status</th><th>Latency / TTFT seconds</th>
+<th>Input / output tokens (source)</th><th>Cached tokens (source)</th></tr></thead><tbody>
+{% for record in requests %}{% if record %}<tr><td>{{ record.index }} / {{ record.request_id or 'unavailable' }} /
+{{ record.session_id or 'unavailable' }} / {{ record.turn_index if record.turn_index is not none else 'unavailable' }}</td>
+<td>{{ record.phase }} / {{ record.status }}</td><td>{{ record.latency_seconds if record.latency_seconds is not none else 'unavailable' }} /
+{{ record.ttft_seconds if record.ttft_seconds is not none else 'unavailable' }}</td>
+<td>{{ record.prompt_tokens if record.prompt_tokens is not none else 'unavailable' }} ({{ record.prompt_tokens_source or 'unavailable' }}) /
+{{ record.output_tokens if record.output_tokens is not none else 'unavailable' }} ({{ record.output_tokens_source or 'unavailable' }})</td>
+<td>{{ record.cached_tokens if record.cached_tokens is not none else 'unavailable' }} ({{ record.cached_tokens_source or 'unavailable' }})</td></tr>
+{% else %}<tr><td colspan="5">Request records unavailable or incomplete.</td></tr>{% endif %}{% endfor %}</tbody></table></details>{% endif %}
+</td></tr>{% endfor %}
 </tbody></table></body></html>""",
             task_id=task_id,
             experiment=experiment,
-            rows=rows,
+            rows=rows(),
         )
         response = make_response(html)
         response.headers['Content-Security-Policy'] = "default-src 'none'"
@@ -317,7 +398,7 @@ def get_cache_scenario(task_id: str, subrun_id: str):
         return json_response(CacheScenarioResponse, load_scenario(task_id, subrun_id))
     except FileNotFoundError:
         return jsonify({'error': 'Scenario not found'}), 404
-    except (ValueError, OSError):
+    except (ValueError, OSError, sqlite3.Error):
         return jsonify({'error': 'Invalid scenario data or identity'}), 400
 
 
@@ -338,6 +419,20 @@ def get_cache_scenario_requests(task_id: str, subrun_id: str):
         return jsonify({'error': 'Scenario results not found'}), 404
     except (ValueError, OSError):
         return jsonify({'error': 'Invalid request page or scenario identity'}), 400
+
+
+@bp_perf.route('/experiments/<task_id>/runs/<subrun_id>/request-cache-groups', methods=['GET'])
+def get_cache_scenario_request_groups(task_id: str, subrun_id: str):
+    """Compare request latency only where the server reported cache usage."""
+    from ..perf_experiments import scenario_path
+
+    try:
+        _, path = scenario_path(task_id, subrun_id)
+        return json_response(CacheRequestGroupsResponse, request_cache_groups(path).model_dump(mode='json'))
+    except FileNotFoundError:
+        return jsonify({'error': 'Scenario results not found'}), 404
+    except (ValueError, OSError, sqlite3.Error):
+        return jsonify({'error': 'Invalid scenario data or identity'}), 400
 
 
 def _node_metrics_page(path: str):

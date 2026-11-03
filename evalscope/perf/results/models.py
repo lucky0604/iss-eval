@@ -140,3 +140,33 @@ class CacheObservation(BaseArgument):
     source: Optional[Literal['server_usage']] = None
     availability: Literal['available', 'unavailable']
     reason: Optional[str] = None
+
+
+class RequestLatencyDistribution(BaseArgument):
+    """Exact nearest-rank percentiles for observed request latencies."""
+
+    count: int = Field(ge=0)
+    mean: Optional[float] = None
+    p50: Optional[float] = None
+    p95: Optional[float] = None
+    p99: Optional[float] = None
+    unit: Literal['seconds'] = 'seconds'
+
+
+class CacheRequestGroup(BaseArgument):
+    """A group defined only by the server's request-level cached token count."""
+
+    group: Literal['no_cached_tokens', 'some_cached_tokens']
+    count: int = Field(ge=0)
+    latency: RequestLatencyDistribution
+    ttft: RequestLatencyDistribution
+
+
+class CacheRequestGroups(BaseArgument):
+    """Request-level cache groups and their coverage, without node-level inference."""
+
+    availability: Literal['available', 'unavailable']
+    reason: Optional[str] = None
+    successful_requests: Optional[int] = None
+    observed_requests: int = Field(ge=0)
+    groups: List[CacheRequestGroup] = Field(default_factory=list)
