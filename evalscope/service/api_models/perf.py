@@ -5,6 +5,7 @@ from pydantic import AfterValidator, Field
 
 from evalscope.perf.experiments.orchestrator import CacheExperimentOutcome
 from evalscope.perf.experiments.planner import CacheExperimentPlan
+from evalscope.perf.integrations.aiperf.live import LiveNode
 from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis
 from evalscope.perf.integrations.aiperf.preflight import NodePreflight
 from evalscope.perf.results.models import CacheObservation, NodeMetricSample, PerfRequestRecord, PerfRunResult
@@ -164,6 +165,20 @@ class PerfPlanResponse(ApiResponseModel):
     warnings: List[str] = Field(default_factory=list)
     metrics_probe: Literal['not_requested', 'completed'] = 'not_requested'
     nodes: List[NodePreflight] = Field(default_factory=list)
+
+
+class PerfLiveResponse(ApiResponseModel):
+    """Bounded last node scrapes and the current planned scenario, when available."""
+
+    task_id: str
+    current_subrun: Optional[str] = None
+    target_ratio: Optional[float] = None
+    load_mode: Optional[Literal['closed_loop', 'open_loop']] = None
+    concurrency: Optional[int] = None
+    rate: Optional[float] = None
+    repetition: Optional[int] = None
+    expected_interval_seconds: Optional[float] = None
+    nodes: List[LiveNode] = Field(default_factory=list)
 
 
 class CacheSubrunState(ApiResponseModel):

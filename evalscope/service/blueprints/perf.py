@@ -19,6 +19,7 @@ from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, 
 from evalscope.perf.experiments.planner import plan_cache_experiment
 from evalscope.perf.experiments.storage import write_experiment_json
 from evalscope.perf.experiments.tokenizer import HuggingFacePrefixTokenizer
+from evalscope.perf.integrations.aiperf.live import LiveSnapshot
 from evalscope.perf.integrations.aiperf.metrics import analyze_node_metrics, covers_node_ids
 from evalscope.perf.integrations.aiperf.preflight import probe_nodes
 from evalscope.perf.integrations.aiperf.single_run import (
@@ -47,6 +48,7 @@ from evalscope.service.api_models import (
     PerfDetailResponse,
     PerfEnginesResponse,
     PerfInvokeResponse,
+    PerfLiveResponse,
     PerfPlanResponse,
     PerfRequestsResponse,
     PerfRunsListResponse,
@@ -133,6 +135,54 @@ def _build_perf_table(result, api_type: str = None) -> str:
 
 
 bp_perf = Blueprint('perf', __name__, url_prefix='/api/v1/perf')
+
+
+@bp_perf.route('/live/<task_id>', methods=['GET'])
+def get_live_perf_metrics(task_id: str):
+    """Read only the current run's bounded, node-scoped scrape snapshot."""
+    from ..perf_experiments import load_experiment
+
+    try:
+        validate_task_id(task_id)
+        root = task_file_path(task_id, 'perf')
+        from ..utils import log
+
+        if root != os.path.join(os.path.realpath(os.path.join(log.OUTPUT_DIR, task_id)), 'perf'):
+            raise ValueError('Live metrics directory cannot be redirected')
+        plan_path = task_file_path(task_id, 'perf/experiment_plan.json')
+        result = PerfLiveResponse(task_id=task_id)
+        snapshot_path = os.path.join(root, 'live_metrics.json')
+        if os.path.isfile(plan_path):
+            experiment = load_experiment(task_id)
+            current = experiment.state.current_subrun
+            if current is None:
+                return json_response(PerfLiveResponse, result.model_dump(mode='json'))
+            item = next((row for row in experiment.plan.subruns if row.subrun_id == current), None)
+            if item is None:
+                raise ValueError('Unknown current subrun')
+            runs = task_file_path(task_id, 'perf/runs')
+            run = task_file_path(task_id, f'perf/runs/{current}')
+            if runs != os.path.join(root, 'runs') or run != os.path.join(runs, current):
+                raise ValueError('Live metrics run directory cannot be redirected')
+            result.current_subrun = current
+            result.target_ratio = item.target_ratio
+            result.load_mode = item.load_mode
+            result.concurrency = item.load_point.concurrency
+            result.rate = item.load_point.rate
+            result.repetition = item.repetition
+            snapshot_path = os.path.join(run, 'live_metrics.json')
+        if os.path.islink(snapshot_path):
+            raise ValueError('Live snapshot cannot be a symlink')
+        if os.path.isfile(snapshot_path):
+            if os.path.getsize(snapshot_path) > 2 * 1024 * 1024:
+                raise ValueError('Live snapshot exceeds size limit')
+            with open(snapshot_path, encoding='utf-8') as file:
+                snapshot = LiveSnapshot.model_validate_json(file.read())
+                result.nodes = snapshot.nodes
+                result.expected_interval_seconds = snapshot.expected_interval_seconds
+        return json_response(PerfLiveResponse, result.model_dump(mode='json'))
+    except (OSError, ValueError):
+        return jsonify({'error': 'Live metrics unavailable'}), 400
 
 
 @bp_perf.route('/experiments', methods=['GET'])

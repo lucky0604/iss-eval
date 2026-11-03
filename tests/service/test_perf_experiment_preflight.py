@@ -58,6 +58,38 @@ def test_preflight_rejects_bad_task_or_wrong_engine(client) -> None:
                        headers={'EvalScope-Task-Id': 'task'}).status_code == 400
 
 
+def test_live_metrics_use_current_planned_subrun_and_reject_redirected_files(client, tmp_path: Path) -> None:
+    from evalscope.perf.executors.arguments import TelemetryTarget
+    from evalscope.perf.experiments.planner import plan_cache_experiment
+    from evalscope.perf.integrations.aiperf.live import LiveRecorder
+
+    plan = plan_cache_experiment(_config(), 'live-task', 'tokenizer', 'template')
+    item = plan.subruns[0]
+    root = tmp_path / 'live-task' / 'perf'
+    run = root / 'runs' / item.subrun_id
+    run.mkdir(parents=True)
+    (root / 'experiment_plan.json').write_text(plan.model_dump_json())
+    state = {'schema_version': '1.0', 'plan_hash': plan.plan_hash, 'status': 'running', 'phase': 'profiling',
+             'current_subrun': item.subrun_id, 'completed_subruns': 0, 'total_subruns': len(plan.subruns),
+             'subruns': [{'subrun_id': row.subrun_id, 'status': 'running' if row == item else 'not_started'}
+                         for row in plan.subruns]}
+    (root / 'experiment.json').write_text(json.dumps(state))
+    target = TelemetryTarget(node_id='p', role='prefill', engine='vllm', url='http://localhost/metrics')
+    recorder = LiveRecorder(run / 'live_metrics.json', [target], 1)
+    recorder.record(target, b'# TYPE vllm:num_requests_waiting gauge\nvllm:num_requests_waiting 0\n')
+    response = client.get('/api/v1/perf/live/live-task')
+    assert response.status_code == 200
+    assert response.json['current_subrun'] == item.subrun_id
+    assert response.json['target_ratio'] == item.target_ratio
+    assert response.json['nodes'][0]['gauges'][0]['value'] == 0
+    (run / 'live_metrics.json').unlink()
+    (run / 'live_metrics.json').symlink_to(tmp_path / 'outside.json')
+    assert client.get('/api/v1/perf/live/live-task').status_code == 400
+    state['current_subrun'] = 'r999-l999-n999'
+    (root / 'experiment.json').write_text(json.dumps(state))
+    assert client.get('/api/v1/perf/live/live-task').status_code == 400
+
+
 def test_invoke_uses_validated_plan_and_rejects_stale_preview(client, tmp_path: Path,
                                                              monkeypatch: pytest.MonkeyPatch) -> None:
     from evalscope.service.blueprints import perf

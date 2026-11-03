@@ -73,6 +73,7 @@ export interface WebApiContracts {
   perf_detail_response: PerfDetailResponse;
   perf_engines_response: PerfEnginesResponse;
   perf_invoke_response: PerfInvokeResponse;
+  perf_live_response: PerfLiveResponse;
   perf_metrics: PerfMetrics;
   perf_plan_response: PerfPlanResponse;
   perf_requests_response: PerfRequestsResponse;
@@ -921,6 +922,149 @@ export interface PublicAIPerfOutcome {
   executor_version?: string | null;
   exit_code?: number | null;
   exit_reason: "completed" | "error" | "cancelled";
+}
+/**
+ * Bounded last node scrapes and the current planned scenario, when available.
+ */
+export interface PerfLiveResponse {
+  concurrency?: number | null;
+  current_subrun?: string | null;
+  expected_interval_seconds?: number | null;
+  load_mode?: ("closed_loop" | "open_loop") | null;
+  nodes?: LiveNode[];
+  rate?: number | null;
+  repetition?: number | null;
+  target_ratio?: number | null;
+  task_id: string;
+}
+export interface LiveNode {
+  attempted_at_ns?: number | null;
+  engine: "vllm" | "sglang";
+  /**
+   * @maxItems 16
+   */
+  gauges?:
+    | []
+    | [LiveGauge]
+    | [LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ];
+  node_id: string;
+  role: "prefill" | "decode";
+  sampled_at_ns?: number | null;
+  status?: "waiting" | "available" | "unavailable";
+  truncated?: boolean;
+}
+/**
+ * A single unaggregated gauge series from one actual node scrape.
+ */
+export interface LiveGauge {
+  key: string;
+  labels: {
+    [k: string]: string;
+  };
+  name: string;
+  unit: string;
+  value: number;
 }
 /**
  * A side-effect-free cache experiment plan and its limitations.

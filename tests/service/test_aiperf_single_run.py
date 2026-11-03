@@ -201,6 +201,10 @@ def test_http_single_run_exposes_authenticated_pd_metrics(tmp_path: Path, monkey
         client = app.test_client()
         result = client.post('/api/v1/perf/invoke', json=payload, headers={'EvalScope-Task-Id': 'single-pd'})
     assert result.status_code == 200 and result.json['status'] == 'completed', result.json
+    live = client.get('/api/v1/perf/live/single-pd')
+    assert live.status_code == 200
+    assert {node['node_id'] for node in live.json['nodes'] if node['sampled_at_ns'] is not None} == {'p', 'd'}
+    assert 'p-secret' not in live.get_data(as_text=True) and 'd-secret' not in live.get_data(as_text=True)
     params = {'root_path': str(root), 'path': 'single-pd/perf'}
     detail = client.get('/api/v1/perf/detail', query_string=params)
     assert detail.status_code == 200 and detail.json['quality'] == 'partial'

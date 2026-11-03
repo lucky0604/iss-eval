@@ -4,6 +4,7 @@ import threading
 import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Iterator
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
@@ -11,6 +12,7 @@ from urllib.request import urlopen
 import pytest
 
 from evalscope.perf.executors.arguments import TelemetryTarget
+from evalscope.perf.integrations.aiperf.live import LiveSnapshot
 from evalscope.perf.integrations.aiperf.metrics_relay import metrics_auth_relay
 
 
@@ -58,6 +60,23 @@ def test_relay_isolates_node_credentials_and_stops() -> None:
         assert first == ['Bearer prefill-only'] and second == ['Bearer decode-only']
         with pytest.raises(URLError):
             urlopen(routes.collector_urls['p'], timeout=3)
+
+
+def test_live_relay_records_unauthenticated_node_without_changing_body(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import evalscope.perf.integrations.aiperf.metrics_relay as relay
+
+    body = b'# TYPE vllm:num_requests_waiting gauge\nvllm:num_requests_waiting 0\n'
+
+    async def fetch(target: TelemetryTarget) -> tuple[bytes, str]:
+        return body, 'text/plain'
+
+    monkeypatch.setattr(relay, '_fetch', fetch)
+    target = TelemetryTarget(node_id='p', role='prefill', engine='vllm', url='http://localhost/metrics')
+    path = tmp_path / 'live.json'
+    with metrics_auth_relay([target], path, 2) as routes:
+        assert urlopen(routes.collector_urls['p'], timeout=3).read() == body
+    snapshot = LiveSnapshot.model_validate_json(path.read_text())
+    assert snapshot.nodes[0].gauges[0].value == 0
 
 
 def test_relay_refuses_redirects_and_header_injection() -> None:

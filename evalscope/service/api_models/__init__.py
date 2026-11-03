@@ -27,6 +27,7 @@ from .perf import (
     PerfDetailResponse,
     PerfEnginesResponse,
     PerfInvokeResponse,
+    PerfLiveResponse,
     PerfPlanResponse,
     PerfRequestsResponse,
     PerfRunItem,
@@ -92,6 +93,7 @@ class WebApiContracts(BaseModel):
     perf_detail_response: PerfDetailResponse
     perf_engines_response: PerfEnginesResponse
     perf_invoke_response: PerfInvokeResponse
+    perf_live_response: PerfLiveResponse
     perf_plan_response: PerfPlanResponse
     cache_experiment_response: CacheExperimentResponse
     cache_experiment_list_response: CacheExperimentListResponse
@@ -137,6 +139,7 @@ __all__ = [
     'PerfDetailResponse',
     'PerfEnginesResponse',
     'PerfInvokeResponse',
+    'PerfLiveResponse',
     'PerfPlanResponse',
     'PerfRequestsResponse',
     'PerfRunsListResponse',

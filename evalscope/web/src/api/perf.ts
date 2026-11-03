@@ -1,5 +1,5 @@
 import { apiDeleteValidated, apiPostValidated, apiValidated } from './client'
-import type { PerfEnginesResponse, PerfInvokeResponse, PerfPlanResponse } from './generated/contracts'
+import type { PerfEnginesResponse, PerfInvokeResponse, PerfLiveResponse, PerfPlanResponse } from './generated/contracts'
 import type {
   DeletePerfRunResponse,
   ListPerfRunsResponse,
@@ -19,6 +19,10 @@ export const stopPerfTask = perfTaskApi.stop
 
 export function getPerfEngines(signal?: AbortSignal): Promise<PerfEnginesResponse> {
   return apiValidated('/api/v1/perf/engines', { signal })
+}
+
+export function getLivePerfMetrics(taskId: string, signal?: AbortSignal): Promise<PerfLiveResponse> {
+  return apiValidated(`/api/v1/perf/live/${encodeURIComponent(taskId)}`, { signal })
 }
 
 export function validatePerfExperiment(payload: Record<string, unknown>, taskId: string, signal?: AbortSignal,

@@ -2005,6 +2005,108 @@
       ],
       "type": "object"
     },
+    "LiveGauge": {
+      "additionalProperties": false,
+      "description": "A single unaggregated gauge series from one actual node scrape.",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "key",
+        "labels",
+        "value",
+        "unit"
+      ],
+      "type": "object"
+    },
+    "LiveNode": {
+      "additionalProperties": false,
+      "properties": {
+        "attempted_at_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "engine": {
+          "enum": [
+            "vllm",
+            "sglang"
+          ],
+          "type": "string"
+        },
+        "gauges": {
+          "items": {
+            "$ref": "#/$defs/LiveGauge"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "prefill",
+            "decode"
+          ],
+          "type": "string"
+        },
+        "sampled_at_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "default": "waiting",
+          "enum": [
+            "waiting",
+            "available",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "node_id",
+        "role",
+        "engine"
+      ],
+      "type": "object"
+    },
     "LoadPoint": {
       "additionalProperties": false,
       "description": "One closed-loop concurrency or open-loop request rate.",
@@ -3234,6 +3336,106 @@
         "status",
         "task_id",
         "result"
+      ],
+      "type": "object"
+    },
+    "PerfLiveResponse": {
+      "additionalProperties": false,
+      "description": "Bounded last node scrapes and the current planned scenario, when available.",
+      "properties": {
+        "concurrency": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "current_subrun": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "expected_interval_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "load_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "closed_loop",
+                "open_loop"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/LiveNode"
+          },
+          "type": "array"
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "repetition": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "target_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id"
       ],
       "type": "object"
     },
@@ -5563,6 +5765,9 @@
     "perf_invoke_response": {
       "$ref": "#/$defs/PerfInvokeResponse"
     },
+    "perf_live_response": {
+      "$ref": "#/$defs/PerfLiveResponse"
+    },
     "perf_metrics": {
       "$ref": "#/$defs/PerfMetrics"
     },
@@ -5647,6 +5852,7 @@
     "perf_detail_response",
     "perf_engines_response",
     "perf_invoke_response",
+    "perf_live_response",
     "perf_plan_response",
     "cache_experiment_response",
     "cache_experiment_list_response",

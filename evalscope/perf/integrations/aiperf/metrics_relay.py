@@ -5,12 +5,14 @@ import secrets
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, Iterator, Sequence
+from pathlib import Path
+from typing import Any, Dict, Iterator, Optional, Sequence
 
 import aiohttp
 from pydantic import Field
 
 from evalscope.perf.executors.arguments import TelemetryTarget
+from evalscope.perf.integrations.aiperf.live import LiveRecorder
 from evalscope.utils import BaseArgument
 
 _MAX_RESPONSE_BYTES = 32 * 1024 * 1024
@@ -45,10 +47,11 @@ class _RelayServer(ThreadingHTTPServer):
     allow_reuse_address = False
     request_queue_size = 32
 
-    def __init__(self, targets: Sequence[TelemetryTarget]) -> None:
+    def __init__(self, targets: Sequence[TelemetryTarget], recorder: Optional[LiveRecorder] = None) -> None:
         super().__init__(('127.0.0.1', 0), _RelayHandler)
         self.routes = {f'/{secrets.token_urlsafe(24)}/metrics': target for target in targets}
         self.slots = threading.BoundedSemaphore(16)
+        self.recorder = recorder
 
     def get_request(self) -> tuple:
         connection, address = super().get_request()
@@ -94,20 +97,36 @@ class _RelayHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError):
+            self._record(target, None)
             try:
                 self.send_error(502)
             except OSError:
                 pass
+            return
+        self._record(target, body)
+
+    def _record(self, target: TelemetryTarget, body: Optional[bytes]) -> None:
+        if self.server.recorder is not None:
+            try:
+                self.server.recorder.record(target, body)
+            except (OSError, ValueError):
+                pass
 
 
 @contextmanager
-def metrics_auth_relay(targets: Sequence[TelemetryTarget]) -> Iterator[MetricsRelayRoutes]:
-    """Forward only authenticated targets; preserve the raw response without synthesizing metrics."""
-    authenticated = [target for target in targets if target.headers]
-    if not authenticated:
+def metrics_auth_relay(
+    targets: Sequence[TelemetryTarget], live_path: Optional[Path] = None, live_interval: float = 1.0
+) -> Iterator[MetricsRelayRoutes]:
+    """Forward target responses unchanged and optionally record bounded live gauges."""
+    selected = list(targets) if live_path is not None else [target for target in targets if target.headers]
+    if not selected:
         yield MetricsRelayRoutes()
         return
-    server = _RelayServer(authenticated)
+    try:
+        recorder = LiveRecorder(live_path, selected, live_interval) if live_path is not None else None
+    except OSError:
+        recorder = None
+    server = _RelayServer(selected, recorder)
     thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.1}, name='aiperf-metrics-relay')
     thread.start()
     try:

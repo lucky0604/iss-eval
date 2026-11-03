@@ -224,7 +224,11 @@ def _run_verified(
     cancel_event: Optional[Cancellation] = None,
     on_draining: Optional[Callable[[], None]] = None,
 ) -> ExecutionOutcome:
-    with metrics_auth_relay(arguments.telemetry.targets) as relay:
+    with metrics_auth_relay(
+        arguments.telemetry.targets,
+        Path(context.output_dir) / 'live_metrics.json',
+        arguments.telemetry.sample_interval_seconds,
+    ) as relay:
         prepared = prepare_single_run(arguments, context, input_file, relay)
         try:
             if relay.collector_urls:
