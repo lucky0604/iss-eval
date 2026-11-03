@@ -1,0 +1,125 @@
+"""Single-run API preserves payload and supervision without exposing private paths."""
+
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from evalscope.perf.executors.models import ExecutionOutcome, ExternalRuntime
+from evalscope.service.app import create_app
+from evalscope.service.utils import log
+
+
+@pytest.fixture
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from evalscope.service.blueprints import perf
+
+    monkeypatch.setattr(log, 'OUTPUT_DIR', str(tmp_path))
+    monkeypatch.setattr(perf, 'OUTPUT_DIR', str(tmp_path))
+    monkeypatch.setattr(perf, '_aiperf_runtime', lambda: ExternalRuntime(executable='/aiperf'))
+    return create_app(outputs=str(tmp_path)).test_client()
+
+
+def _payload() -> dict:
+    return {'engine': 'aiperf', 'aiperf': {
+        'model': 'model', 'url': 'http://localhost/v1', 'tokenizer_path': '/tokenizer', 'api_key': 'fake-secret',
+        'input_prompts': ['first prompt', 'second prompt'],
+        'load': {'points': [{'concurrency': 2}], 'request_count': 2, 'output_token_limit': 7},
+    }}
+
+
+def test_single_task_materializes_private_inputs_and_hides_runtime(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    from evalscope.service.blueprints import perf
+
+    calls = []
+
+    def execute(context, request, task_meta):
+        path = Path(request.input_file)
+        assert path.stat().st_mode & 0o077 == 0
+        assert [json.loads(line) for line in path.read_text().splitlines()] == [
+            {'text': 'first prompt', 'output_length': 7}, {'text': 'second prompt', 'output_length': 7},
+        ]
+        calls.append((context, request.arguments, task_meta))
+        return ExecutionOutcome(exit_reason='completed', exit_code=0, cleanup_confirmed=True,
+                                artifact_status='available', raw_artifact_dir='/private/artifacts')
+
+    monkeypatch.setattr(perf, 'run_single_aiperf_in_subprocess', execute)
+    response = client.post('/api/v1/perf/invoke', json=_payload(), headers={'EvalScope-Task-Id': 'single-task'})
+    assert response.status_code == 200 and response.json['status'] == 'completed'
+    assert calls[0][1].model == 'model' and calls[0][2].engine == 'aiperf'
+    assert 'fake-secret' not in response.get_data(as_text=True)
+    assert '/private/artifacts' not in response.get_data(as_text=True)
+    assert client.post('/api/v1/perf/invoke', json=_payload(), headers={'EvalScope-Task-Id': 'single-task'}).status_code == 409
+
+
+def test_single_task_rejects_missing_or_mismatched_inputs(client) -> None:
+    payload = _payload()
+    payload['aiperf'].pop('input_prompts')
+    assert client.post('/api/v1/perf/invoke', json=payload, headers={'EvalScope-Task-Id': 'missing'}).status_code == 400
+    payload['aiperf']['input_prompts'] = ['one']
+    assert client.post('/api/v1/perf/invoke', json=payload, headers={'EvalScope-Task-Id': 'mismatch'}).status_code == 400
+
+
+@pytest.mark.parametrize(('reason', 'cleaned', 'expected'), [
+    ('cancelled', True, 'stopped'), ('cancelled', False, 'error'), ('error', True, 'error'),
+])
+def test_single_task_does_not_report_unconfirmed_cleanup_as_stopped(
+    client, monkeypatch: pytest.MonkeyPatch, reason: str, cleaned: bool, expected: str
+) -> None:
+    from evalscope.service.blueprints import perf
+
+    monkeypatch.setattr(perf, 'run_single_aiperf_in_subprocess', lambda *args, **kwargs: ExecutionOutcome(
+        exit_reason=reason, artifact_status='partial', cleanup_confirmed=cleaned,
+    ))
+    response = client.post('/api/v1/perf/invoke', json=_payload(), headers={'EvalScope-Task-Id': 'single-result'})
+    assert response.status_code == 200 and response.json['status'] == expected
+
+
+@pytest.mark.skipif(not os.environ.get('EVALSCOPE_TEST_AIPERF'), reason='requires isolated AIPerf 0.13.0')
+def test_http_single_task_reaches_real_aiperf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+    import sys
+
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    from evalscope.service.blueprints import perf
+
+    root = tmp_path / 'outputs'
+    root.mkdir()
+    tokenizer_path = tmp_path / 'tokenizer'
+    backend = Tokenizer(models.WordLevel({'[UNK]': 0, 'first': 1, 'prompt': 2, 'second': 3}, unk_token='[UNK]'))
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    PreTrainedTokenizerFast(tokenizer_object=backend, unk_token='[UNK]').save_pretrained(tokenizer_path)
+    fixture = Path(__file__).parents[1] / 'perf' / 'fixtures' / 'aiperf' / 'mock_inference_server.py'
+    capture = tmp_path / 'capture.jsonl'
+    server = subprocess.Popen([sys.executable, str(fixture), '--capture', str(capture)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert server.stdout is not None
+        port = int(server.stdout.readline())
+        monkeypatch.setattr(log, 'OUTPUT_DIR', str(root))
+        monkeypatch.setattr(perf, 'OUTPUT_DIR', str(root))
+        app = create_app(outputs=str(root))
+        app.config['AIPERF_EXECUTABLE'] = os.environ['EVALSCOPE_TEST_AIPERF']
+        payload = _payload()
+        payload['aiperf']['url'] = f'http://127.0.0.1:{port}/v1'
+        payload['aiperf']['tokenizer_path'] = str(tokenizer_path)
+        payload['aiperf']['api_key'] = 'fixture-key'
+        response = app.test_client().post('/api/v1/perf/invoke', json=payload,
+                                          headers={'EvalScope-Task-Id': 'real-single-task'})
+        assert response.status_code == 200 and response.json['status'] == 'completed', response.json
+        sent = [json.loads(line) for line in capture.read_text().splitlines()]
+        assert len(sent) == 2
+        assert {item['body']['messages'][0]['content'] for item in sent} == {'first prompt', 'second prompt'}
+        assert all(item['fixture_authorization_matches'] for item in sent)
+        assert (root / 'real-single-task' / 'perf' / 'raw' / 'aiperf' / 'profile_export.jsonl').is_file()
+        assert 'fixture-key' not in response.get_data(as_text=True)
+        task_log = app.test_client().get('/api/v1/perf/log?task_id=real-single-task')
+        assert task_log.status_code == 200 and task_log.json['total_lines'] > 0
+        assert 'fixture-key' not in task_log.get_data(as_text=True)
+    finally:
+        server.terminate()
+        server.wait(timeout=5)
+        if server.stdout:
+            server.stdout.close()

@@ -127,6 +127,7 @@ class AIPerfArguments(BaseArgument):
     tokenizer_path: str = Field(min_length=1)
     stream: bool = True
     deployment_mode: Literal['single', 'pd'] = 'single'
+    input_prompts: Optional[List[str]] = None
     cache_experiment: Optional[CacheExperiment] = None
     load: LoadConfiguration
     telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
@@ -149,6 +150,18 @@ class AIPerfArguments(BaseArgument):
         if self.deployment_mode == 'pd' and self.telemetry.required:
             if {target.role for target in self.telemetry.targets} != {'prefill', 'decode'}:
                 raise ValueError('required PD telemetry needs both prefill and decode targets')
+        if self.input_prompts is not None:
+            if self.cache_experiment is not None:
+                raise ValueError('inline inputs and a cache experiment cannot be combined')
+            if len(self.input_prompts) != self.load.request_count:
+                raise ValueError('inline input count must match the request count')
+            if any(not value.strip() for value in self.input_prompts):
+                raise ValueError('inline prompts must not be blank')
+            if (
+                len(self.input_prompts) > 10000
+                or sum(len(value.encode('utf-8')) for value in self.input_prompts) > 4 * 1024 * 1024
+            ):
+                raise ValueError('inline input budget exceeded')
         return self
 
 

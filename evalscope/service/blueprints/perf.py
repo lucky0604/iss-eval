@@ -1,13 +1,23 @@
 import json
 import math
 import os
+import tempfile
+import time
+from functools import lru_cache
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 from tabulate import tabulate
 
 from evalscope.metrics.semantics import resolve_perf_semantics
 from evalscope.perf.arguments import Arguments as PerfArguments
-from evalscope.perf.executors.arguments import parse_perf_task_arguments
+from evalscope.perf.executors.arguments import AIPerfArguments, parse_perf_task_arguments
+from evalscope.perf.executors.external import supports_external_runner
+from evalscope.perf.executors.models import ExecutionContext, ExternalRuntime
+from evalscope.perf.integrations.aiperf.single_run import (
+    AIPerfSingleRunRequest,
+    probe_version,
+    validate_single_run_configuration,
+)
 from evalscope.perf.plugin.api.base import ApiPluginBase
 from evalscope.perf.plugin.registry import ApiRegistry, DatasetRegistry
 from evalscope.perf.sla.sla_run import SLAResult, format_sla_tables
@@ -45,7 +55,7 @@ from ..utils import (
     task_file_path,
     validate_task_id,
 )
-from ..utils.process import task_is_cancelling
+from ..utils.process import run_single_aiperf_in_subprocess, task_is_cancelling
 
 logger = get_logger()
 
@@ -104,6 +114,39 @@ def _build_perf_table(result, api_type: str = None) -> str:
 bp_perf = Blueprint('perf', __name__, url_prefix='/api/v1/perf')
 
 
+@lru_cache(maxsize=16)
+def _probe_aiperf_runtime(path: str, identity: tuple, epoch: int) -> bool:
+    try:
+        with tempfile.TemporaryDirectory(prefix='evalscope-aiperf-probe-') as directory:
+            runtime = ExternalRuntime(executable=path, graceful_timeout=1, terminate_timeout=1, kill_timeout=2)
+            return (
+                probe_version(
+                    ExecutionContext(task_id='capability-probe', output_dir=directory, runtime=runtime),
+                    timeout_seconds=2,
+                )
+                == runtime.expected_version
+            )
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _aiperf_runtime() -> ExternalRuntime | None:
+    configured = current_app.config.get('AIPERF_EXECUTABLE') or os.environ.get('EVALSCOPE_AIPERF_EXECUTABLE')
+    if not supports_external_runner() or not isinstance(configured, str) or not os.path.isabs(configured):
+        return None
+    try:
+        path = os.path.realpath(configured)
+        stat = os.stat(path)
+        if not os.path.isfile(path) or not os.access(path, os.X_OK):
+            return None
+        identity = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        if not _probe_aiperf_runtime(path, identity, int(time.monotonic() // 60)):
+            return None
+    except OSError:
+        return None
+    return ExternalRuntime(executable=path)
+
+
 def _send_safe_perf_report(report_file: str):
     from evalscope.perf.utils.report.generate_report import is_current_perf_report
 
@@ -132,6 +175,48 @@ def _validate_performance_config(args: PerfArguments) -> None:
         raise ValueError('The random dataset requires tokenizer_path')
 
 
+def _invoke_single_aiperf(arguments: AIPerfArguments, task_id: str, runtime: ExternalRuntime):
+    try:
+        validate_single_run_configuration(arguments)
+        if arguments.input_prompts is None:
+            raise ValueError('Single-run inputs are required')
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        os.mkdir(os.path.join(OUTPUT_DIR, task_id))
+    except FileExistsError:
+        return jsonify({'error': 'Task ID already exists'}), 409
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid single-run configuration or inputs'}), 400
+    try:
+        output_dir = task_file_path(task_id, 'perf')
+        create_log_file(task_id, os.path.join('perf', 'benchmark.log'))
+        input_file = os.path.join(output_dir, 'single_inputs.jsonl')
+        fd = os.open(input_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as file:
+            for prompt in arguments.input_prompts:
+                file.write(json.dumps({'text': prompt, 'output_length': arguments.load.output_token_limit}) + '\n')
+        meta = build_task_info(task_id, 'perf', arguments, arguments.alias, engine='aiperf')
+        context = ExecutionContext(task_id=task_id, output_dir=output_dir, runtime=runtime)
+        outcome = run_single_aiperf_in_subprocess(
+            context, AIPerfSingleRunRequest(arguments=arguments, input_file=input_file), task_meta=meta
+        )
+        status = {'completed': 'completed', 'cancelled': 'stopped', 'error': 'error'}[outcome.exit_reason]
+        if not outcome.cleanup_confirmed:
+            status = 'error'
+        finish_task(task_id, status)
+        return json_response(
+            EvalInvokeResponse,
+            {
+                'status': status,
+                'task_id': task_id,
+                'result': outcome.model_dump(mode='json', exclude={'raw_artifact_dir'}),
+            },
+        )
+    except Exception as error:
+        finish_task(task_id, 'error')
+        logger.error(f'[{task_id}] AIPerf task failed ({type(error).__name__})')
+        return jsonify({'status': 'error', 'task_id': task_id, 'error': 'Task failed; check the task log'}), 500
+
+
 @bp_perf.route('/invoke', methods=['POST'])
 def run_performance_test():
     """Run a performance benchmark task (blocking).
@@ -152,7 +237,13 @@ def run_performance_test():
         except (ValueError, TypeError):
             return jsonify({'error': 'Invalid performance configuration or task ID'}), 400
         if task_args.engine == 'aiperf':
-            return jsonify({'error': 'AIPerf 0.13.0 runtime is unavailable'}), 503
+            runtime = _aiperf_runtime()
+            if runtime is None:
+                return jsonify({'error': 'AIPerf 0.13.0 runtime is unavailable'}), 503
+            assert task_args.aiperf is not None
+            if task_args.aiperf.cache_experiment is not None:
+                return jsonify({'error': 'Cache experiments are not enabled'}), 400
+            return _invoke_single_aiperf(task_args.aiperf, task_id, runtime)
         data = dict(data['native'])
 
     required_fields = ['model']

@@ -12,5 +12,6 @@ sla_auto_tune.md
 speed_benchmark.md
 vs_vllm_bench.md
 agentx.md
+aiperf_single_run.md
 custom.md
 :::

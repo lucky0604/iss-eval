@@ -14,6 +14,7 @@ from evalscope.config import TaskConfig
 from evalscope.perf.arguments import Arguments as PerfArguments
 from evalscope.perf.executors.external import run_external
 from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, ExternalInvocation
+from evalscope.perf.integrations.aiperf.single_run import AIPerfSingleRunRequest, run_single
 from evalscope.perf.main import run_perf_benchmark
 from evalscope.run import run_task
 from evalscope.service.api_models.common import ActiveTaskInfo
@@ -311,10 +312,29 @@ def run_external_in_subprocess(
     return result
 
 
+def _single_aiperf_worker(
+    context: ExecutionContext, request: AIPerfSingleRunRequest, cancel_event: Any, start_event: Any
+) -> ExecutionOutcome:
+    while not start_event.wait(timeout=0.1):
+        parent = multiprocessing.parent_process()
+        if parent is not None and not parent.is_alive():
+            return ExecutionOutcome(exit_reason='error', artifact_status='missing', cleanup_confirmed=True)
+    return run_single(request.arguments, context, request.input_file, cancel_event)
+
+
+def run_single_aiperf_in_subprocess(
+    context: ExecutionContext, request: AIPerfSingleRunRequest, task_meta: Optional[ActiveTaskInfo] = None
+) -> ExecutionOutcome:
+    """Run one validated AIPerf task under the same cancellation supervisor."""
+    result = _run_controlled_subprocess(context, _single_aiperf_worker, request, ExecutionOutcome, task_meta)
+    assert isinstance(result, ExecutionOutcome)
+    return result
+
+
 def _run_controlled_subprocess(
     context: ExecutionContext,
     worker: Callable[..., Any],
-    payload: ExternalInvocation,
+    payload: ExternalInvocation | AIPerfSingleRunRequest,
     result_type: Type[ExecutionOutcome],
     task_meta: Optional[ActiveTaskInfo],
 ) -> ExecutionOutcome:

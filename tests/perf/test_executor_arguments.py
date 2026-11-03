@@ -54,7 +54,7 @@ def test_aiperf_fields_and_secret_projection(payload: dict) -> None:
     assert 'model-secret' not in str(args) and 'metric-secret' not in str(args)
 
 
-def test_dispatch_preserves_native_result_and_rejects_unavailable_executor(payload: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dispatch_preserves_native_result_and_routes_external_executor(payload: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     context = ExecutionContext(task_id='test', output_dir='/tmp/task')
     native = parse_perf_task_arguments({'model': 'model', 'url': 'http://localhost/v1'})
     expected = object()
@@ -67,8 +67,14 @@ def test_dispatch_preserves_native_result_and_rejects_unavailable_executor(paylo
     monkeypatch.setattr('evalscope.perf.executors.dispatch.run_perf_benchmark', execute)
     assert run_perf_task(native, context) is expected
     assert received == [native.native]
-    with pytest.raises(NotImplementedError, match='not enabled'):
+    with pytest.raises(ValueError, match='server-owned input'):
         run_perf_task(parse_perf_task_arguments(payload), context)
+    external = parse_perf_task_arguments(payload)
+    calls = []
+    monkeypatch.setattr('evalscope.perf.integrations.aiperf.single_run.run_single',
+                        lambda arguments, execution, input_file: calls.append((arguments, execution, input_file)))
+    run_perf_task(external, context, '/tmp/task/input.jsonl')
+    assert calls == [(external.aiperf, context, '/tmp/task/input.jsonl')]
 
 
 @pytest.mark.parametrize('ratio', [True, -0.1, 1.1, float('nan'), float('inf'), '0.8'])
@@ -95,3 +101,19 @@ def test_invalid_envelopes_are_rejected(payload: dict, change: Callable[[dict], 
     change(changed)
     with pytest.raises((ValueError, ValidationError)):
         parse_perf_task_arguments(changed)
+
+
+def test_single_run_inline_prompts_must_match_the_request_budget(payload: dict) -> None:
+    config = payload['aiperf']
+    config['cache_experiment'] = None
+    config['load']['request_count'] = 2
+    config['input_prompts'] = ['first', 'second']
+    assert parse_perf_task_arguments(payload).aiperf.input_prompts == ['first', 'second']
+    for invalid in ([], ['only one'], ['first', ' '], ['x' * (4 * 1024 * 1024), 'last']):
+        config['input_prompts'] = invalid
+        with pytest.raises(ValueError):
+            parse_perf_task_arguments(payload)
+    config['input_prompts'] = ['first', 'second']
+    config['cache_experiment'] = {'target_ratios': [0.8], 'total_input_tokens': 100}
+    with pytest.raises(ValueError, match='cannot be combined'):
+        parse_perf_task_arguments(payload)
