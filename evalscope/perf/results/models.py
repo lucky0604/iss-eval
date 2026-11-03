@@ -69,7 +69,9 @@ class ImportManifest(BaseArgument):
     """Input and parser identity for an atomically published import."""
 
     schema_version: Literal['1.0'] = '1.0'
-    parser_version: Literal['aiperf-0.13.0-v1', 'aiperf-0.13.0-v2', 'aiperf-0.13.0-v3'] = 'aiperf-0.13.0-v3'
+    parser_version: Literal['aiperf-0.13.0-v1', 'aiperf-0.13.0-v2', 'aiperf-0.13.0-v3', 'aiperf-0.13.0-v4'] = (
+        'aiperf-0.13.0-v4'
+    )
     input_hash: str
     files: Dict[str, str]
     allow_partial_tail: bool = False
@@ -111,8 +113,20 @@ class NodeMetricSample(BaseArgument):
     metric_type: Literal['counter', 'gauge', 'histogram', 'unknown']
     labels: Dict[str, str]
     observation: Dict[str, Any]
+    request_sent_ns: Optional[int] = Field(default=None, ge=0)
+    scrape_latency_ns: Optional[int] = Field(default=None, ge=0)
+    phase_kind: Optional[Literal['warmup', 'profiling']] = None
     scope: Literal['node_window'] = 'node_window'
     semantics: Literal['unverified'] = 'unverified'
+
+
+class RequestObservationBounds(BaseArgument):
+    """Observed request time extent, distinct from an authoritative phase window."""
+
+    start_ns: Optional[int] = None
+    end_ns: Optional[int] = None
+    timed_requests: int = Field(ge=0)
+    total_requests: int = Field(ge=0)
 
 
 class CacheObservation(BaseArgument):

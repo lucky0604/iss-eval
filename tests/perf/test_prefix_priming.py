@@ -21,9 +21,14 @@ SERVER = Path(__file__).parent / 'fixtures' / 'aiperf' / 'mock_inference_server.
 
 
 @contextmanager
-def _server(tmp_path: Path, mode: str) -> Iterator[tuple[str, Path]]:
+def _server(tmp_path: Path, mode: str, metrics_mode: str = 'normal', metrics_key: str | None = None) -> Iterator[tuple[str, Path]]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     capture = tmp_path / 'requests.jsonl'
-    process = subprocess.Popen([sys.executable, str(SERVER), '--capture', str(capture), '--mode', mode],
+    command = [sys.executable, str(SERVER), '--capture', str(capture), '--mode', mode,
+               '--metrics-mode', metrics_mode, '--metrics-capture', str(tmp_path / 'metrics.jsonl')]
+    if metrics_key is not None:
+        command.extend(['--metrics-key', metrics_key])
+    process = subprocess.Popen(command,
                                stdout=subprocess.PIPE, text=True)
     try:
         assert process.stdout is not None

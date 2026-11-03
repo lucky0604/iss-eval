@@ -1,6 +1,7 @@
 """Typed configuration for native and external performance executors."""
 
 import math
+import re
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import Field, SecretStr, StrictInt, field_validator, model_validator
@@ -87,6 +88,21 @@ class TelemetryTarget(BaseArgument):
             raise ValueError('node ID must not be blank')
         return value
 
+    @field_validator('headers')
+    @classmethod
+    def validate_headers(cls, headers: Dict[str, SecretStr]) -> Dict[str, SecretStr]:
+        for name, secret in headers.items():
+            value = secret.get_secret_value()
+            if (
+                not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name)
+                or name.lower() in {'host', 'content-length', 'transfer-encoding', 'connection', 'accept-encoding'}
+                or '\r' in value
+                or '\n' in value
+                or len(value.encode()) > 4096
+            ):
+                raise ValueError('Invalid metrics authentication header')
+        return headers
+
     @field_validator('url')
     @classmethod
     def validate_url(cls, value: str) -> str:
@@ -99,9 +115,10 @@ class TelemetryConfiguration(BaseArgument):
 
     required: bool = False
     sample_interval_seconds: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    max_scrape_gap_seconds: Optional[float] = Field(default=None, ge=1e-9, le=86400, allow_inf_nan=False)
     targets: List[TelemetryTarget] = Field(default_factory=list)
 
-    @field_validator('sample_interval_seconds', mode='before')
+    @field_validator('sample_interval_seconds', 'max_scrape_gap_seconds', mode='before')
     @classmethod
     def reject_boolean_interval(cls, value: Any) -> Any:
         if isinstance(value, bool):

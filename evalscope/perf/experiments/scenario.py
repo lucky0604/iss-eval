@@ -21,6 +21,7 @@ from evalscope.perf.experiments.prefix_workload import (
 )
 from evalscope.perf.experiments.priming import PrimingResult, prime_prefixes
 from evalscope.perf.experiments.storage import write_experiment_json
+from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis, analyze_node_metrics
 from evalscope.perf.integrations.aiperf.single_run import (
     AIPerfCancelled,
     _run_verified,
@@ -106,6 +107,10 @@ def run_cache_scenario(
         'namespace': scenario.namespace,
         'routing_coverage': 'unknown',
         'template_match': 'unverified',
+        'telemetry_sample_interval_seconds': arguments.telemetry.sample_interval_seconds,
+        'telemetry_max_gap_seconds': (
+            arguments.telemetry.max_scrape_gap_seconds or 2 * arguments.telemetry.sample_interval_seconds
+        ),
         'timestamps': {
             'priming_completed_ns': None,
             'profiling_launch_ns': None,
@@ -122,6 +127,32 @@ def run_cache_scenario(
         write_experiment_json(manifest_path, state)
         if on_phase is not None:
             on_phase(state['status'])
+
+    def publish_node_analysis(normalized: Path) -> Optional[NodeMetricsAnalysis]:
+        if not arguments.telemetry.targets:
+            return None
+        gap = arguments.telemetry.max_scrape_gap_seconds or 2 * arguments.telemetry.sample_interval_seconds
+        try:
+            analysis = analyze_node_metrics(str(normalized), max_gap_ns=max(1, int(gap * 1_000_000_000)))
+            write_experiment_json(root / 'node_analysis.json', analysis.model_dump(mode='json'))
+            state['node_analysis'] = 'node_analysis.json'
+            return analysis
+        except (OSError, ValueError):
+            state['node_analysis_reason'] = 'node_analysis_failed'
+            return None
+
+    def missing_required_nodes(analysis: Optional[NodeMetricsAnalysis]) -> bool:
+        if not arguments.telemetry.required:
+            return False
+        if analysis is None or not arguments.telemetry.targets:
+            return True
+        covered = {
+            row.node_id
+            for row in analysis.series
+            if (row.statistic is not None and row.statistic.value is not None)
+            or (row.histogram is not None and row.histogram.count is not None)
+        }
+        return bool({target.node_id for target in arguments.telemetry.targets} - covered)
 
     publish()
     cancellation = _ScenarioCancellation(cancel_event)
@@ -225,6 +256,7 @@ def run_cache_scenario(
                             'import_completed_ns': time.time_ns(),
                         }
                     )
+                    publish_node_analysis(root / 'normalized')
                 except (ValueError, OSError):
                     state['quality_reasons'] = ['profiling_failed', 'partial_import_failed']
             publish()
@@ -259,6 +291,7 @@ def run_cache_scenario(
             cancel_event=cancellation,
         )
         observation = observed_cache_usage(str(normalized))
+        node_analysis = publish_node_analysis(normalized)
         state['timestamps'].update(
             {
                 'profiling_start_ns': result.profiling_start_ns,
@@ -275,6 +308,7 @@ def run_cache_scenario(
         telemetry_missing = arguments.telemetry.required and (
             result.server_metrics_schema is None
             or not (Path(execution.raw_artifact_dir) / 'server_metrics_export.jsonl').is_file()
+            or missing_required_nodes(node_analysis)
         )
         if telemetry_missing:
             quality_reasons.append('required_telemetry_missing')
@@ -343,6 +377,11 @@ def run_cache_scenario(
                             'import_completed_ns': time.time_ns(),
                         }
                     )
+                    node_analysis = publish_node_analysis(root / 'normalized')
+                    if missing_required_nodes(node_analysis):
+                        cancelled_quality = 'invalid'
+                        state['quality'] = cancelled_quality
+                        state['quality_reasons'].append('required_telemetry_missing')
                 except (OSError, ValueError, ImportCancelled):
                     state['quality_reasons'] = ['cancelled', 'partial_import_failed']
         publish()

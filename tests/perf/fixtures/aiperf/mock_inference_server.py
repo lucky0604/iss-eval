@@ -13,12 +13,13 @@ class MockServer(ThreadingHTTPServer):
     """A small local server that records every inference request."""
 
     def __init__(self, capture: Path, mode: str = 'success', metrics_mode: str = 'normal',
-                 metrics_capture: Optional[Path] = None) -> None:
+                 metrics_capture: Optional[Path] = None, metrics_key: Optional[str] = None) -> None:
         super().__init__(('127.0.0.1', 0), MockHandler)
         self.capture = capture
         self.mode = mode
         self.metrics_mode = metrics_mode
         self.metrics_capture = metrics_capture
+        self.metrics_key = metrics_key
         self.lock = threading.Lock()
         self.requests_seen = 0
         self.scrapes_seen = 0
@@ -42,7 +43,11 @@ class MockHandler(BaseHTTPRequestHandler):
             count = self.server.requests_seen
             if self.server.metrics_capture is not None:
                 with self.server.metrics_capture.open('a', encoding='utf-8') as capture:
-                    capture.write(json.dumps({'authorization_present': bool(self.headers.get('Authorization'))}) + '\n')
+                    capture.write(json.dumps({'authorization_present': bool(self.headers.get('Authorization')),
+                                              'authorization_matches': self.headers.get('Authorization') == f'Bearer {self.server.metrics_key}'}) + '\n')
+        if self.server.metrics_key is not None and self.headers.get('Authorization') != f'Bearer {self.server.metrics_key}':
+            self.send_error(401)
+            return
         if self.server.metrics_mode == 'unavailable':
             self.send_error(503)
             return
@@ -53,7 +58,34 @@ class MockHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', '0')
             self.end_headers()
             return
-        body = (
+        if self.server.metrics_mode == 'pd_vllm':
+            body = (
+                '# TYPE vllm:num_requests_waiting gauge\n'
+                'vllm:num_requests_waiting{model="fixture"} 2\n'
+                '# TYPE vllm:prefix_cache_queries_total counter\n'
+                f'vllm:prefix_cache_queries_total{{model="fixture"}} {scrapes_seen * 10}\n'
+                '# TYPE vllm:prefix_cache_hits_total counter\n'
+                f'vllm:prefix_cache_hits_total{{model="fixture"}} {scrapes_seen * 8}\n'
+                '# TYPE vllm:request_prefill_time_seconds histogram\n'
+                f'vllm:request_prefill_time_seconds_bucket{{model="fixture",le="1"}} {scrapes_seen}\n'
+                f'vllm:request_prefill_time_seconds_bucket{{model="fixture",le="+Inf"}} {scrapes_seen}\n'
+                f'vllm:request_prefill_time_seconds_sum{{model="fixture"}} {scrapes_seen * 0.1}\n'
+                f'vllm:request_prefill_time_seconds_count{{model="fixture"}} {scrapes_seen}\n'
+            ).encode()
+        elif self.server.metrics_mode == 'pd_sglang':
+            body = (
+                '# TYPE sglang:num_decode_transfer_queue_reqs gauge\n'
+                'sglang:num_decode_transfer_queue_reqs{model="fixture"} 3\n'
+                '# TYPE sglang:kv_transfer_latency_ms gauge\n'
+                'sglang:kv_transfer_latency_ms{model="fixture"} 20\n'
+                '# TYPE sglang:queue_time_s histogram\n'
+                f'sglang:queue_time_s_bucket{{model="fixture",le="1"}} {scrapes_seen}\n'
+                f'sglang:queue_time_s_bucket{{model="fixture",le="+Inf"}} {scrapes_seen}\n'
+                f'sglang:queue_time_s_sum{{model="fixture"}} {scrapes_seen * 0.1}\n'
+                f'sglang:queue_time_s_count{{model="fixture"}} {scrapes_seen}\n'
+            ).encode()
+        else:
+            body = (
             '# TYPE mock_requests_total counter\n'
             f'mock_requests_total{{role="prefill"}} {count}\n'
             '# TYPE mock_queue gauge\n'
@@ -63,7 +95,7 @@ class MockHandler(BaseHTTPRequestHandler):
             f'mock_latency_seconds_bucket{{role="prefill",le="+Inf"}} {count}\n'
             f'mock_latency_seconds_sum{{role="prefill"}} 0\n'
             f'mock_latency_seconds_count{{role="prefill"}} {count}\n'
-        ).encode()
+            ).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/plain; version=0.0.4')
         self.send_header('Content-Length', str(len(body)))
@@ -91,6 +123,8 @@ class MockHandler(BaseHTTPRequestHandler):
         if self.server.mode == 'timeout':
             time.sleep(30)
             return
+        if self.server.mode == 'slow_success':
+            time.sleep(0.12)
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
         self.end_headers()
@@ -126,12 +160,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--capture', type=Path, required=True)
     parser.add_argument('--mode', choices=['success', 'cache_usage', 'missing_usage', 'http_error', 'alternating_error', 'stream_error',
-                                           'single_token', 'unfinished', 'timeout'], default='success')
-    parser.add_argument('--metrics-mode', choices=['normal', 'missing', 'unavailable', 'reset', 'delayed'],
+                                           'single_token', 'unfinished', 'slow_success', 'timeout'], default='success')
+    parser.add_argument('--metrics-mode', choices=['normal', 'missing', 'unavailable', 'reset', 'delayed', 'pd_vllm', 'pd_sglang'],
                         default='normal')
     parser.add_argument('--metrics-capture', type=Path)
+    parser.add_argument('--metrics-key')
     args = parser.parse_args()
-    server = MockServer(args.capture, args.mode, args.metrics_mode, args.metrics_capture)
+    server = MockServer(args.capture, args.mode, args.metrics_mode, args.metrics_capture, args.metrics_key)
     print(server.server_port, flush=True)
     try:
         server.serve_forever()

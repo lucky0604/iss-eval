@@ -12,7 +12,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from evalscope.perf.executors.external import Cancellation
 from evalscope.perf.executors.urls import normalize_metrics_url
@@ -25,16 +25,18 @@ from evalscope.perf.results.models import (
     NodeMetricSample,
     PerfRequestRecord,
     PerfRunResult,
+    RequestObservationBounds,
 )
 from evalscope.utils.uri_utils import sanitize_endpoint
 
-_PARSER = 'aiperf-0.13.0-v3'
+_PARSER = 'aiperf-0.13.0-v4'
 _FILES = (
     'profile_export_aiperf.json',
     'profile_export.jsonl',
     'server_metrics_export.json',
     'server_metrics_export.jsonl',
     'phase_manifest.json',
+    'metrics_target_map.json',
 )
 _METRICS = {
     'request_latency': ('seconds', 'ms', 0.001),
@@ -226,11 +228,36 @@ def _records(path: Path, state: _ImportState, allow_partial_tail: bool) -> Itera
             index += 1
 
 
-def _targets(arguments: AIPerfImportArguments) -> tuple[Dict[str, MetricTargetReference], str]:
+def _targets(arguments: AIPerfImportArguments, files: Dict[str, Path]) -> tuple[Dict[str, MetricTargetReference], str]:
+    mapping = {}
+    if 'metrics_target_map.json' in files:
+        data = _json(files['metrics_target_map.json'])
+        if data.get('schema_version') != '1.0' or not isinstance(data.get('targets'), dict):
+            raise ValueError('Invalid metrics relay mapping')
+        mapping = data['targets']
+        if set(mapping) - {target.node_id for target in arguments.targets}:
+            raise ValueError('Unknown metrics relay target')
     targets = {}
     ids = set()
+    original_urls = set()
     for target in arguments.targets:
         url = normalize_metrics_url(target.url)
+        if url in original_urls:
+            raise ValueError('Metrics endpoints and node IDs must be unique')
+        original_urls.add(url)
+        if target.node_id in mapping:
+            item = mapping[target.node_id]
+            if (
+                not isinstance(item, dict)
+                or item.get('endpoint_url') != url
+                or not isinstance(item.get('collector_url'), str)
+            ):
+                raise ValueError('Invalid metrics relay attribution')
+            relay = normalize_metrics_url(item['collector_url'])
+            parsed = urlsplit(relay)
+            if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or parsed.port is None:
+                raise ValueError('Invalid metrics relay endpoint')
+            url = relay
         if url in targets or target.node_id in ids:
             raise ValueError('Metrics endpoints and node IDs must be unique')
         targets[url] = target
@@ -270,6 +297,15 @@ def _node_samples(
                 raise ValueError('Invalid server metrics record')
             endpoint = normalize_metrics_url(event['endpoint_url'])
             target = targets.get(endpoint)
+            sent, latency, phase = (
+                event.get('request_sent_ns'),
+                event.get('endpoint_latency_ns'),
+                event.get('phase_kind'),
+            )
+            if any(value is not None and (type(value) is not int or value < 0) for value in (sent, latency)):
+                raise ValueError('Invalid server metrics scrape timing')
+            if phase not in (None, 'warmup', 'profiling'):
+                phase = None
             for name, series in event['metrics'].items():
                 if not isinstance(name, str) or not isinstance(series, list):
                     raise ValueError('Invalid server metrics series')
@@ -295,11 +331,14 @@ def _node_samples(
                         node_id=target.node_id if target else None,
                         role=target.role if target else None,
                         engine=target.engine if target else None,
-                        endpoint=sanitize_endpoint(endpoint) or '',
+                        endpoint=sanitize_endpoint(target.url if target else endpoint) or '',
                         metric_name=name,
                         metric_type=metric_type,
                         labels=labels,
                         observation=values,
+                        request_sent_ns=sent,
+                        scrape_latency_ns=latency,
+                        phase_kind=phase,
                     )
 
 
@@ -368,7 +407,7 @@ def import_aiperf_run(arguments: AIPerfImportArguments, cancel_event: Optional[C
     if not raw.is_dir() or destination == raw or destination.is_relative_to(raw):
         raise ValueError('Invalid normalized result directory')
     files = _files(raw)
-    targets, target_identity = _targets(arguments)
+    targets, target_identity = _targets(arguments, files)
     identity, hashes = _hash_files(files, arguments.allow_partial_tail, target_identity, cancel_event)
     summary = _json(files['profile_export_aiperf.json']) if 'profile_export_aiperf.json' in files else None
     if summary is not None and (
@@ -654,11 +693,28 @@ def query_aiperf_requests(
         database.close()
 
 
+def request_observation_bounds(normalized_dir: str) -> RequestObservationBounds:
+    """Return the extent of timed profiling requests without calling it a phase window."""
+    generation = _generation(normalized_dir)
+    database_path = _owned_file(generation, 'requests.db')
+    database = sqlite3.connect(f'file:{quote(str(database_path))}?mode=ro', uri=True)
+    try:
+        total = database.execute("SELECT COUNT(*) FROM requests WHERE phase = 'profiling'").fetchone()[0]
+        start, end, count = database.execute(
+            "SELECT MIN(json_extract(record_json, '$.start_ns')), MAX(json_extract(record_json, '$.end_ns')), COUNT(*) "
+            "FROM requests WHERE phase = 'profiling' AND json_extract(record_json, '$.start_ns') IS NOT NULL "
+            "AND json_extract(record_json, '$.end_ns') > json_extract(record_json, '$.start_ns')"
+        ).fetchone()
+        return RequestObservationBounds(start_ns=start, end_ns=end, timed_requests=count, total_requests=total)
+    finally:
+        database.close()
+
+
 def observed_cache_usage(normalized_dir: str) -> CacheObservation:
     """Aggregate only successful requests with valid server-reported cache usage."""
     generation = _generation(normalized_dir)
     manifest = ImportManifest.model_validate(_json(_owned_file(generation, 'import.json')))
-    if manifest.parser_version not in (_PARSER, 'aiperf-0.13.0-v2'):
+    if manifest.parser_version not in (_PARSER, 'aiperf-0.13.0-v2', 'aiperf-0.13.0-v3'):
         return CacheObservation(
             observed_requests=0,
             successful_requests=None,
