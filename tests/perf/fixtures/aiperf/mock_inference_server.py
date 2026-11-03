@@ -106,6 +106,8 @@ class MockHandler(BaseHTTPRequestHandler):
         ]
         if self.server.mode == 'single_token':
             del chunks[1]
+        if self.server.mode == 'unfinished':
+            del chunks[2]
         if self.server.mode != 'missing_usage':
             output_tokens = 1 if self.server.mode == 'single_token' else 2
             usage = {'prompt_tokens': 8, 'completion_tokens': output_tokens, 'total_tokens': 8 + output_tokens}
@@ -124,7 +126,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--capture', type=Path, required=True)
     parser.add_argument('--mode', choices=['success', 'cache_usage', 'missing_usage', 'http_error', 'alternating_error', 'stream_error',
-                                           'single_token', 'timeout'], default='success')
+                                           'single_token', 'unfinished', 'timeout'], default='success')
     parser.add_argument('--metrics-mode', choices=['normal', 'missing', 'unavailable', 'reset', 'delayed'],
                         default='normal')
     parser.add_argument('--metrics-capture', type=Path)
