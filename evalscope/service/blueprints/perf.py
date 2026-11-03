@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import os
@@ -12,7 +13,7 @@ from evalscope.metrics.semantics import resolve_perf_semantics
 from evalscope.perf.arguments import Arguments as PerfArguments
 from evalscope.perf.executors.arguments import AIPerfArguments, parse_perf_task_arguments
 from evalscope.perf.executors.external import supports_external_runner
-from evalscope.perf.executors.models import ExecutionContext, ExternalRuntime
+from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, ExternalRuntime
 from evalscope.perf.integrations.aiperf.single_run import (
     AIPerfSingleRunRequest,
     probe_version,
@@ -20,6 +21,9 @@ from evalscope.perf.integrations.aiperf.single_run import (
 )
 from evalscope.perf.plugin.api.base import ApiPluginBase
 from evalscope.perf.plugin.registry import ApiRegistry, DatasetRegistry
+from evalscope.perf.results.aiperf_import import import_aiperf_run
+from evalscope.perf.results.models import AIPerfImportArguments, MetricTargetReference
+from evalscope.perf.results.single_run import SingleRunManifest, write_single_manifest
 from evalscope.perf.sla.sla_run import SLAResult, format_sla_tables
 from evalscope.perf.utils.benchmark_util import Metrics
 from evalscope.perf.utils.rich_display import EmbeddingResultAnalyzer, LLMResultAnalyzer
@@ -150,7 +154,16 @@ def _aiperf_runtime() -> ExternalRuntime | None:
 def _send_safe_perf_report(report_file: str):
     from evalscope.perf.utils.report.generate_report import is_current_perf_report
 
-    return send_file(report_file, mimetype='text/html', as_attachment=not is_current_perf_report(report_file))
+    from ..perf_archive_aiperf import is_current_report
+
+    aiperf_report = is_current_report(report_file)
+    response = send_file(
+        report_file, mimetype='text/html', as_attachment=not (aiperf_report or is_current_perf_report(report_file))
+    )
+    if aiperf_report:
+        response.headers['Content-Security-Policy'] = "default-src 'none'"
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 def _validate_performance_config(args: PerfArguments) -> None:
@@ -191,18 +204,92 @@ def _invoke_single_aiperf(arguments: AIPerfArguments, task_id: str, runtime: Ext
         create_log_file(task_id, os.path.join('perf', 'benchmark.log'))
         input_file = os.path.join(output_dir, 'single_inputs.jsonl')
         fd = os.open(input_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        input_hash = hashlib.sha256()
         with os.fdopen(fd, 'w', encoding='utf-8') as file:
             for prompt in arguments.input_prompts:
-                file.write(json.dumps({'text': prompt, 'output_length': arguments.load.output_token_limit}) + '\n')
+                line = json.dumps({'text': prompt, 'output_length': arguments.load.output_token_limit}) + '\n'
+                file.write(line)
+                input_hash.update(line.encode('utf-8'))
         meta = build_task_info(task_id, 'perf', arguments, arguments.alias, engine='aiperf')
-        context = ExecutionContext(task_id=task_id, output_dir=output_dir, runtime=runtime)
-        outcome = run_single_aiperf_in_subprocess(
-            context, AIPerfSingleRunRequest(arguments=arguments, input_file=input_file), task_meta=meta
+        point = arguments.load.points[0]
+        manifest = SingleRunManifest(
+            task_id=task_id,
+            model=arguments.model,
+            alias=arguments.alias,
+            endpoint=sanitize_endpoint(arguments.url),
+            load_mode=arguments.load.mode,
+            concurrency=point.concurrency,
+            rate=point.rate,
+            planned_requests=arguments.load.request_count,
+            output_token_limit=arguments.load.output_token_limit,
+            input_sha256=input_hash.hexdigest(),
         )
-        status = {'completed': 'completed', 'cancelled': 'stopped', 'error': 'error'}[outcome.exit_reason]
-        if not outcome.cleanup_confirmed:
-            status = 'error'
-        finish_task(task_id, status)
+        write_single_manifest(output_dir, manifest)
+        context = ExecutionContext(task_id=task_id, output_dir=output_dir, runtime=runtime)
+        final_status: list[str] = []
+
+        def finalize(outcome: ExecutionOutcome) -> None:
+            status = {'completed': 'completed', 'cancelled': 'stopped', 'error': 'error'}[outcome.exit_reason]
+            if not outcome.cleanup_confirmed:
+                status = 'error'
+            normalized = None
+            quality = None
+            quality_reasons = []
+            raw_dir = os.path.realpath(os.path.join(output_dir, 'raw', 'aiperf'))
+            valid_raw = (
+                outcome.raw_artifact_dir is not None
+                and os.path.realpath(outcome.raw_artifact_dir) == raw_dir
+                and os.path.commonpath([os.path.realpath(output_dir), raw_dir]) == os.path.realpath(output_dir)
+            )
+            if (
+                outcome.cleanup_confirmed
+                and valid_raw
+                and os.path.isfile(os.path.join(raw_dir, 'profile_export.jsonl'))
+            ):
+                try:
+                    result = import_aiperf_run(
+                        AIPerfImportArguments(
+                            raw_dir=raw_dir,
+                            normalized_dir=os.path.join(output_dir, 'normalized'),
+                            allow_partial_tail=outcome.exit_reason != 'completed',
+                            metrics_required=arguments.telemetry.required,
+                            targets=[
+                                MetricTargetReference(
+                                    node_id=target.node_id,
+                                    role=target.role,
+                                    engine=target.engine,
+                                    url=target.url,
+                                    labels=target.labels,
+                                )
+                                for target in arguments.telemetry.targets
+                            ],
+                        )
+                    )
+                    normalized, quality, quality_reasons = 'normalized', result.quality, result.quality_reasons
+                except (OSError, ValueError):
+                    quality_reasons = ['result_import_failed']
+            if status == 'completed' and (normalized is None or quality == 'invalid'):
+                status = 'error'
+            final_manifest = manifest.model_copy(
+                update={
+                    'status': status,
+                    'artifact_status': outcome.artifact_status,
+                    'normalized': normalized,
+                    'quality': quality,
+                    'quality_reasons': quality_reasons,
+                }
+            )
+            write_single_manifest(output_dir, final_manifest)
+            finish_task(task_id, status)
+            final_status.append(status)
+
+        outcome = run_single_aiperf_in_subprocess(
+            context,
+            AIPerfSingleRunRequest(arguments=arguments, input_file=input_file),
+            task_meta=meta,
+            finalize=finalize,
+        )
+        status = final_status[0]
         return json_response(
             EvalInvokeResponse,
             {

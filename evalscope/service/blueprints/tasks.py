@@ -58,7 +58,7 @@ def _with_progress(record: dict) -> dict:
 
 
 def _saved_task_info(task_id: str, manifest: dict) -> ActiveTaskInfo:
-    values = {key: manifest[key] for key in ('kind', 'model', 'alias', 'started_at') if key in manifest}
+    values = {key: manifest[key] for key in ('kind', 'engine', 'model', 'alias', 'started_at') if key in manifest}
     config = manifest.get('config')
     if isinstance(config, dict):
         values['config'] = {key: value for key, value in config.items() if key in TaskConfigSummary.model_fields}
@@ -76,6 +76,20 @@ def _saved_task_info(task_id: str, manifest: dict) -> ActiveTaskInfo:
 
 
 def _set_report_links(info: ActiveTaskInfo, run_dir: str) -> None:
+    if info.kind == 'perf' and info.engine == 'aiperf':
+        from .. import perf_archive_aiperf
+
+        perf_dir = os.path.join(run_dir, 'perf')
+        if perf_archive_aiperf.is_single_archive(perf_dir):
+            try:
+                perf_archive_aiperf.build_summary(info.task_id + '/perf', perf_dir)
+                params = urlencode({'root_path': OUTPUT_DIR, 'path': info.task_id + '/perf'})
+                info.report_url = f'/perf-report?{params}'
+                info.html_report_url = f'/api/v1/perf/history/report?{params}'
+            except (ValueError, OSError, perf_archive_aiperf.PerfArchiveError):
+                pass
+            return
+        return
     if info.status not in ('completed', 'unknown'):
         return
     task_id = info.task_id

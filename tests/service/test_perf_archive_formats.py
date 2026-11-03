@@ -1,0 +1,99 @@
+"""Mixed native and AIPerf archive behavior using local recorded fixtures."""
+
+import json
+import shutil
+from pathlib import Path
+
+import pytest
+
+from evalscope.perf.results.aiperf_import import import_aiperf_run
+from evalscope.perf.results.models import AIPerfImportArguments
+from evalscope.perf.results.single_run import SingleRunManifest, write_single_manifest
+from evalscope.service.app import create_app
+from evalscope.service.utils import log
+
+FIXTURES = Path(__file__).parents[1] / 'perf' / 'fixtures' / 'aiperf'
+
+
+@pytest.fixture
+def archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from evalscope.service.blueprints import perf, tasks
+
+    monkeypatch.setattr(log, 'OUTPUT_DIR', str(tmp_path))
+    monkeypatch.setattr(perf, 'OUTPUT_DIR', str(tmp_path))
+    monkeypatch.setattr(tasks, 'OUTPUT_DIR', str(tmp_path))
+    native = tmp_path / 'native'
+    shutil.copytree(FIXTURES / 'native', native)
+    run = tmp_path / 'task' / 'perf'
+    raw = run / 'raw' / 'aiperf'
+    raw.mkdir(parents=True)
+    for name in ('profile_export_aiperf.json', 'profile_export.jsonl', 'phase_manifest.json'):
+        shutil.copyfile(FIXTURES / name, raw / name)
+    result = import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(run / 'normalized')))
+    manifest = SingleRunManifest(task_id='task', model='<script>model</script>', endpoint='host:8000',
+                                 load_mode='closed_loop', concurrency=2, planned_requests=2, output_token_limit=8,
+                                 input_sha256='a' * 64, status='error', artifact_status='available',
+                                 normalized='normalized', quality=result.quality, quality_reasons=result.quality_reasons)
+    write_single_manifest(str(run), manifest)
+    (run.parent / 'task_info.json').write_text(json.dumps({'kind': 'perf', 'engine': 'aiperf', 'status': 'error'}))
+    return create_app(outputs=str(tmp_path)).test_client(), tmp_path, run
+
+
+def test_mixed_list_detail_requests_and_partial_links(archive) -> None:
+    client, root, _ = archive
+    listing = client.get('/api/v1/perf/list', query_string={'root_path': str(root)})
+    assert listing.status_code == 200
+    runs = {row['path']: row for row in listing.json['runs']}
+    assert set(runs) == {'native', 'task/perf'}
+    assert runs['native']['num_runs'] == 2
+    assert runs['task/perf']['engine'] == 'aiperf' and runs['task/perf']['total_requests'] == 2
+    assert runs['task/perf']['quality'] == 'complete'
+    params = {'root_path': str(root), 'path': 'task/perf'}
+    detail = client.get('/api/v1/perf/detail', query_string=params)
+    assert detail.status_code == 200 and detail.json['engine'] == 'aiperf'
+    assert detail.json['basic_info']['Status'] == 'error'
+    assert detail.json['basic_info']['Server Cache Reads'] == 'unavailable'
+    assert detail.json['summary_rows'][0]['values']['avg_latency'] == pytest.approx(0.0006758125)
+    items = client.get('/api/v1/perf/runs', query_string=params)
+    assert items.status_code == 200 and items.json['runs'][0]['dir_name'] == 'single'
+    response = client.get('/api/v1/perf/requests', query_string={**params, 'run': 'single', 'page_size': 1})
+    assert response.status_code == 200 and response.json['total'] == 2
+    assert len(response.json['rows']) == 1 and response.json['rows'][0]['Cached'] is None
+    assert response.json['rows'][0]['Input source'] == 'server_usage'
+    task = client.get('/api/v1/tasks/task')
+    assert task.status_code == 200 and task.json['status'] == 'error'
+    assert task.json['report_url'].startswith('/perf-report?')
+    assert task.json['html_report_url'].startswith('/api/v1/perf/history/report?')
+
+
+def test_html_and_charts_are_safe_and_unsupported_metrics_remain_unavailable(archive) -> None:
+    client, root, _ = archive
+    params = {'root_path': str(root), 'path': 'task/perf'}
+    report = client.get('/api/v1/perf/history/report', query_string=params)
+    assert report.status_code == 200 and b'&lt;script&gt;model&lt;/script&gt;' in report.data
+    assert b'<script>model</script>' not in report.data
+    assert report.headers['Content-Security-Policy'] == "default-src 'none'"
+    for chart in ('latency', 'ttft', 'rps', 'throughput', 'success', 'percentile_latency', 'req_latency', 'req_tokens'):
+        response = client.get('/api/v1/perf/chart', query_string={**params, 'chart_type': chart, 'run': 'single'})
+        assert response.status_code == 200, chart
+    assert client.get('/api/v1/perf/chart', query_string={**params, 'chart_type': 'tpot'}).status_code == 404
+    assert client.get('/api/v1/perf/compare/chart', query_string={'root_path': str(root), 'paths': 'native;task/perf'}).status_code == 400
+
+
+def test_archive_identity_symlink_and_running_delete_are_checked(archive, monkeypatch: pytest.MonkeyPatch) -> None:
+    from evalscope.service.blueprints import perf
+
+    client, root, run = archive
+    params = {'root_path': str(root), 'path': 'task/perf'}
+    assert client.get('/api/v1/perf/requests', query_string={**params, 'run': '../single'}).status_code == 404
+    assert client.get('/api/v1/perf/detail', query_string={'root_path': str(root), 'path': '../outside'}).status_code == 400
+    monkeypatch.setattr(perf, 'active_task_ids', lambda: {'task'})
+    assert client.delete('/api/v1/perf/run', query_string=params).status_code == 409
+    monkeypatch.setattr(perf, 'active_task_ids', lambda: set())
+    outside = root.parent / (root.name + '-outside')
+    outside.mkdir()
+    shutil.rmtree(run / 'normalized')
+    (run / 'normalized').symlink_to(outside, target_is_directory=True)
+    assert client.get('/api/v1/perf/detail', query_string=params).status_code == 400
+    assert client.delete('/api/v1/perf/run', query_string=params).status_code == 200
+    assert outside.is_dir()

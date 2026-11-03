@@ -1454,6 +1454,32 @@
         "dataset": {
           "type": "string"
         },
+        "engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "evalscope",
+                "aiperf"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "executor_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "generated_at": {
           "type": "string"
         },
@@ -1471,6 +1497,28 @@
         },
         "path": {
           "type": "string"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "recommendations": {
           "items": {
@@ -1650,7 +1698,14 @@
           "type": "integer"
         },
         "parallel": {
-          "type": "integer"
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "percentile_columns": {
           "items": {
@@ -1691,7 +1746,14 @@
           "type": "integer"
         },
         "success_rate": {
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "total_requests": {
           "type": "integer"
@@ -1764,10 +1826,24 @@
           "default": null
         },
         "best_latency": {
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "best_rps": {
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "concurrency": {
           "anyOf": [
@@ -1785,6 +1861,32 @@
         },
         "dataset": {
           "type": "string"
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "evalscope",
+                "aiperf"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "executor_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "has_html": {
           "type": "boolean"
@@ -1823,8 +1925,31 @@
           ],
           "default": null
         },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "success_rate": {
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "timestamp": {
           "type": "string"

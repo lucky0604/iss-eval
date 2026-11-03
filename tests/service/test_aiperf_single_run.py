@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -34,22 +35,32 @@ def test_single_task_materializes_private_inputs_and_hides_runtime(client, monke
 
     calls = []
 
-    def execute(context, request, task_meta):
+    def execute(context, request, task_meta, finalize):
         path = Path(request.input_file)
         assert path.stat().st_mode & 0o077 == 0
         assert [json.loads(line) for line in path.read_text().splitlines()] == [
             {'text': 'first prompt', 'output_length': 7}, {'text': 'second prompt', 'output_length': 7},
         ]
         calls.append((context, request.arguments, task_meta))
-        return ExecutionOutcome(exit_reason='completed', exit_code=0, cleanup_confirmed=True,
-                                artifact_status='available', raw_artifact_dir='/private/artifacts')
+        raw = Path(context.output_dir) / 'raw' / 'aiperf'
+        raw.mkdir(parents=True)
+        fixture = Path(__file__).parents[1] / 'perf' / 'fixtures' / 'aiperf'
+        for name in ('profile_export_aiperf.json', 'profile_export.jsonl', 'phase_manifest.json'):
+            shutil.copyfile(fixture / name, raw / name)
+        outcome = ExecutionOutcome(exit_reason='completed', exit_code=0, cleanup_confirmed=True,
+                                   artifact_status='available', raw_artifact_dir=str(raw))
+        finalize(outcome)
+        return outcome
 
     monkeypatch.setattr(perf, 'run_single_aiperf_in_subprocess', execute)
     response = client.post('/api/v1/perf/invoke', json=_payload(), headers={'EvalScope-Task-Id': 'single-task'})
     assert response.status_code == 200 and response.json['status'] == 'completed'
     assert calls[0][1].model == 'model' and calls[0][2].engine == 'aiperf'
     assert 'fake-secret' not in response.get_data(as_text=True)
-    assert '/private/artifacts' not in response.get_data(as_text=True)
+    assert calls[0][0].output_dir not in response.get_data(as_text=True)
+    manifest = json.loads((Path(calls[0][0].output_dir) / 'single_run.json').read_text())
+    assert manifest['normalized'] == 'normalized' and manifest['status'] == 'completed'
+    assert 'fake-secret' not in json.dumps(manifest) and 'first prompt' not in json.dumps(manifest)
     assert client.post('/api/v1/perf/invoke', json=_payload(), headers={'EvalScope-Task-Id': 'single-task'}).status_code == 409
 
 
@@ -61,6 +72,29 @@ def test_single_task_rejects_missing_or_mismatched_inputs(client) -> None:
     assert client.post('/api/v1/perf/invoke', json=payload, headers={'EvalScope-Task-Id': 'mismatch'}).status_code == 400
 
 
+def test_missing_required_telemetry_does_not_report_completed(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    from evalscope.service.blueprints import perf
+
+    def execute(context, request, task_meta, finalize):
+        raw = Path(context.output_dir) / 'raw' / 'aiperf'
+        raw.mkdir(parents=True)
+        fixture = Path(__file__).parents[1] / 'perf' / 'fixtures' / 'aiperf'
+        for name in ('profile_export_aiperf.json', 'profile_export.jsonl', 'phase_manifest.json'):
+            shutil.copyfile(fixture / name, raw / name)
+        outcome = ExecutionOutcome(exit_reason='completed', cleanup_confirmed=True,
+                                   artifact_status='available', raw_artifact_dir=str(raw))
+        finalize(outcome)
+        return outcome
+
+    monkeypatch.setattr(perf, 'run_single_aiperf_in_subprocess', execute)
+    payload = _payload()
+    payload['aiperf']['telemetry'] = {'required': True, 'targets': [
+        {'node_id': 'prefill', 'role': 'prefill', 'engine': 'vllm', 'url': 'http://localhost:9090/metrics'}
+    ]}
+    response = client.post('/api/v1/perf/invoke', json=payload, headers={'EvalScope-Task-Id': 'missing-metrics'})
+    assert response.status_code == 200 and response.json['status'] == 'error'
+
+
 @pytest.mark.parametrize(('reason', 'cleaned', 'expected'), [
     ('cancelled', True, 'stopped'), ('cancelled', False, 'error'), ('error', True, 'error'),
 ])
@@ -69,9 +103,12 @@ def test_single_task_does_not_report_unconfirmed_cleanup_as_stopped(
 ) -> None:
     from evalscope.service.blueprints import perf
 
-    monkeypatch.setattr(perf, 'run_single_aiperf_in_subprocess', lambda *args, **kwargs: ExecutionOutcome(
-        exit_reason=reason, artifact_status='partial', cleanup_confirmed=cleaned,
-    ))
+    def execute(*args, **kwargs):
+        outcome = ExecutionOutcome(exit_reason=reason, artifact_status='partial', cleanup_confirmed=cleaned)
+        kwargs['finalize'](outcome)
+        return outcome
+
+    monkeypatch.setattr(perf, 'run_single_aiperf_in_subprocess', execute)
     response = client.post('/api/v1/perf/invoke', json=_payload(), headers={'EvalScope-Task-Id': 'single-result'})
     assert response.status_code == 200 and response.json['status'] == expected
 

@@ -323,10 +323,13 @@ def _single_aiperf_worker(
 
 
 def run_single_aiperf_in_subprocess(
-    context: ExecutionContext, request: AIPerfSingleRunRequest, task_meta: Optional[ActiveTaskInfo] = None
+    context: ExecutionContext,
+    request: AIPerfSingleRunRequest,
+    task_meta: Optional[ActiveTaskInfo] = None,
+    finalize: Optional[Callable[[ExecutionOutcome], None]] = None,
 ) -> ExecutionOutcome:
     """Run one validated AIPerf task under the same cancellation supervisor."""
-    result = _run_controlled_subprocess(context, _single_aiperf_worker, request, ExecutionOutcome, task_meta)
+    result = _run_controlled_subprocess(context, _single_aiperf_worker, request, ExecutionOutcome, task_meta, finalize)
     assert isinstance(result, ExecutionOutcome)
     return result
 
@@ -337,6 +340,7 @@ def _run_controlled_subprocess(
     payload: ExternalInvocation | AIPerfSingleRunRequest,
     result_type: Type[ExecutionOutcome],
     task_meta: Optional[ActiveTaskInfo],
+    finalize: Optional[Callable[[ExecutionOutcome], None]] = None,
 ) -> ExecutionOutcome:
     if context.runtime is None:
         raise ValueError('External runtime is required')
@@ -380,6 +384,8 @@ def _run_controlled_subprocess(
         if result is None or result.get('status') != 'success' or not isinstance(result.get('result'), result_type):
             raise RuntimeError('External task ended without a confirmed outcome')
         record.external_outcome = result['result']
+        if finalize is not None:
+            finalize(record.external_outcome)
         return record.external_outcome
     except BaseException:
         cancel_event.set()

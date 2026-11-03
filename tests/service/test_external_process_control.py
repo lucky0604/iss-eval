@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from evalscope.perf.executors.models import ExecutionContext, ExternalInvocation, ExternalRuntime
+from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, ExternalInvocation, ExternalRuntime
 from evalscope.service.utils import process
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='External process groups require POSIX')
@@ -67,6 +67,19 @@ def test_stop_waits_for_confirmed_external_cleanup(tmp_path: Path) -> None:
         if worker.is_alive():
             process.stop_process(context.task_id)
             worker.join(timeout=10)
+
+
+def test_task_remains_active_during_result_finalization(tmp_path: Path) -> None:
+    context, invocation, _ = _inputs(tmp_path, 'external-finalizing')
+    invocation.arguments = ['-c', 'pass']
+    observed = []
+
+    def finalize(outcome: ExecutionOutcome) -> None:
+        observed.append(context.task_id in process.active_task_ids())
+
+    process._run_controlled_subprocess(context, process._external_worker, invocation, ExecutionOutcome, None, finalize)
+    assert observed == [True]
+    assert context.task_id not in process.active_task_ids()
 
 
 def test_service_sigkill_triggers_parent_liveness_cleanup(tmp_path: Path) -> None:

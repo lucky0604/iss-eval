@@ -193,6 +193,10 @@ def test_incomplete_and_cancelled_requests_do_not_become_success_or_cache_hits(t
     _, records = query_aiperf_requests(str(output))
     assert [row.status for row in records] == ['success', 'incomplete', 'cancelled', 'error']
     assert records[1].status_reason == 'request_timestamps_missing'
+    assert query_aiperf_requests(str(output), status='success')[0] == 1
+    assert query_aiperf_requests(str(output), status='failed')[0] == 3
+    with pytest.raises(ValueError, match='status'):
+        query_aiperf_requests(str(output), status='not-a-status')
     cache = observed_cache_usage(str(output))
     assert cache.successful_requests == 1 and cache.ratio is None
 
@@ -321,6 +325,10 @@ def test_legacy_parser_results_remain_readable_but_cache_requires_reimport(tmp_p
     observation = observed_cache_usage(str(output))
     assert observation.availability == 'unavailable' and observation.successful_requests is None
     assert observation.ratio is None
+    manifest['parser_version'] = 'aiperf-0.13.0-v2'
+    manifest_path.write_text(json.dumps(manifest))
+    assert 'parser_version_outdated' in load_aiperf_run(str(output)).quality_reasons
+    assert observed_cache_usage(str(output)).ratio == 0.5
     import_aiperf_run(args)
     assert observed_cache_usage(str(output)).ratio == 0.5
 

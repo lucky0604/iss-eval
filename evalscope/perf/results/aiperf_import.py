@@ -28,7 +28,7 @@ from evalscope.perf.results.models import (
 )
 from evalscope.utils.uri_utils import sanitize_endpoint
 
-_PARSER = 'aiperf-0.13.0-v2'
+_PARSER = 'aiperf-0.13.0-v3'
 _FILES = (
     'profile_export_aiperf.json',
     'profile_export.jsonl',
@@ -41,6 +41,9 @@ _METRICS = {
     'time_to_first_token': ('seconds', 'ms', 0.001),
     'inter_token_latency': ('seconds', 'ms', 0.001),
     'request_throughput': ('requests/sec', 'requests/sec', 1),
+    'input_token_throughput': ('tokens/sec', 'tokens/sec', 1),
+    'output_token_throughput': ('tokens/sec', 'tokens/sec', 1),
+    'total_token_throughput': ('tokens/sec', 'tokens/sec', 1),
     'request_error_rate': ('ratio', '%', 0.01),
     'input_sequence_length': ('tokens', 'tokens', 1),
     'output_sequence_length': ('tokens', 'tokens', 1),
@@ -616,19 +619,32 @@ def load_aiperf_run(normalized_dir: str) -> PerfRunResult:
 
 
 def query_aiperf_requests(
-    normalized_dir: str, offset: int = 0, limit: int = 100, phase: Optional[str] = None
+    normalized_dir: str,
+    offset: int = 0,
+    limit: int = 100,
+    phase: Optional[str] = None,
+    status: Optional[str] = None,
 ) -> tuple[int, list[PerfRequestRecord]]:
     """Read a bounded, stable page and total count without loading raw JSONL."""
     if type(offset) is not int or type(limit) is not int or offset < 0 or not 1 <= limit <= 500:
         raise ValueError('Invalid request page')
     if phase is not None and phase not in ('warmup', 'profiling'):
         raise ValueError('Invalid request phase')
+    if status is not None and status not in ('success', 'failed'):
+        raise ValueError('Invalid request status')
     generation = _generation(normalized_dir)
     database_path = _owned_file(generation, 'requests.db')
     database = sqlite3.connect(f'file:{quote(str(database_path))}?mode=ro', uri=True)
     try:
-        clause = ' WHERE phase = ?' if phase else ''
-        parameters = [phase] if phase else []
+        conditions = []
+        parameters = []
+        if phase is not None:
+            conditions.append('phase = ?')
+            parameters.append(phase)
+        if status is not None:
+            conditions.append('status = ?' if status == 'success' else 'status != ?')
+            parameters.append('success')
+        clause = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
         total = database.execute('SELECT COUNT(*) FROM requests' + clause, parameters).fetchone()[0]
         rows = database.execute(
             'SELECT record_json FROM requests' + clause + ' ORDER BY idx LIMIT ? OFFSET ?', [*parameters, limit, offset]
@@ -642,7 +658,7 @@ def observed_cache_usage(normalized_dir: str) -> CacheObservation:
     """Aggregate only successful requests with valid server-reported cache usage."""
     generation = _generation(normalized_dir)
     manifest = ImportManifest.model_validate(_json(_owned_file(generation, 'import.json')))
-    if manifest.parser_version != _PARSER:
+    if manifest.parser_version not in (_PARSER, 'aiperf-0.13.0-v2'):
         return CacheObservation(
             observed_requests=0,
             successful_requests=None,

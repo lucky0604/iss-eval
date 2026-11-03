@@ -1,5 +1,5 @@
 import math
-from typing import Annotated, Any, Dict, List, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import AfterValidator, Field
 
@@ -23,9 +23,9 @@ class PerfRunSummary(ApiResponseModel):
     alias: Optional[str] = None
     num_runs: int
     total_requests: int
-    success_rate: float
-    best_rps: float
-    best_latency: float
+    success_rate: Optional[float]
+    best_rps: Optional[float]
+    best_latency: Optional[float]
     avg_input_tokens: Optional[float] = None
     avg_output_tokens: Optional[float] = None
     is_embedding: bool
@@ -35,6 +35,9 @@ class PerfRunSummary(ApiResponseModel):
     protocol: Optional[str] = None
     api_host: Optional[str] = None
     concurrency: Optional[List[int]] = None
+    engine: Optional[Literal['evalscope', 'aiperf']] = None
+    executor_version: Optional[str] = None
+    quality: Optional[Literal['complete', 'partial', 'invalid']] = None
 
 
 class ListPerfRunsResponse(ApiResponseModel):
@@ -71,17 +74,21 @@ class PerfDetailResponse(ApiResponseModel):
     num_runs: int
     is_embedding: bool
     has_html: bool
+    engine: Optional[Literal['evalscope', 'aiperf']] = None
+    executor_version: Optional[str] = None
+    quality: Optional[Literal['complete', 'partial', 'invalid']] = None
+    quality_reasons: List[str] = Field(default_factory=list)
 
 
 class PerfRunItem(ApiResponseModel):
     dir_name: str
     name: str
-    parallel: int
+    parallel: Optional[int]
     number: int
     rate: Optional[float]
     total_requests: int
     succeed_requests: int
-    success_rate: float
+    success_rate: Optional[float]
     num_requests: int
     has_requests: bool
     percentile_columns: List[str]

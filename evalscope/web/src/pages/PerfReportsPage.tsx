@@ -239,8 +239,8 @@ export default function PerfReportsPage() {
         )
       : runs
     const sorted = [...filtered]
-    if (sortBy === 'rps') sorted.sort((a, b) => b.best_rps - a.best_rps)
-    else if (sortBy === 'latency') sorted.sort((a, b) => a.best_latency - b.best_latency)
+    if (sortBy === 'rps') sorted.sort((a, b) => (b.best_rps ?? -Infinity) - (a.best_rps ?? -Infinity))
+    else if (sortBy === 'latency') sorted.sort((a, b) => (a.best_latency ?? Infinity) - (b.best_latency ?? Infinity))
     else sorted.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''))
     return sorted
   }, [runs, query, sortBy])

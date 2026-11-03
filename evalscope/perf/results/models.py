@@ -69,7 +69,7 @@ class ImportManifest(BaseArgument):
     """Input and parser identity for an atomically published import."""
 
     schema_version: Literal['1.0'] = '1.0'
-    parser_version: Literal['aiperf-0.13.0-v1', 'aiperf-0.13.0-v2'] = 'aiperf-0.13.0-v2'
+    parser_version: Literal['aiperf-0.13.0-v1', 'aiperf-0.13.0-v2', 'aiperf-0.13.0-v3'] = 'aiperf-0.13.0-v3'
     input_hash: str
     files: Dict[str, str]
     allow_partial_tail: bool = False

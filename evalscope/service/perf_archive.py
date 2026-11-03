@@ -84,6 +84,14 @@ def is_run_dir(entry_path: str) -> bool:
     least one ``parallel_*_number_*`` / ``rate_*_number_*`` sub-directory that
     holds a ``benchmark_summary.json`` file.
     """
+    from . import perf_archive_aiperf
+
+    if perf_archive_aiperf.is_single_archive(entry_path):
+        try:
+            perf_archive_aiperf.load_single_manifest(entry_path)
+            return True
+        except (OSError, ValueError):
+            return False
     if os.path.isfile(os.path.join(entry_path, 'perf_report.html')):
         return True
     try:
@@ -249,6 +257,10 @@ def _weighted_avg_tokens(run_dir: str, runs) -> tuple[Optional[float], Optional[
 
 def build_run_summary(rel_path: str, abs_path: str) -> Optional[dict]:
     """Build lightweight list-item metadata for one perf-run directory."""
+    from . import perf_archive_aiperf
+
+    if perf_archive_aiperf.is_single_archive(abs_path):
+        return perf_archive_aiperf.build_summary(rel_path, abs_path)
     runs = _load_runs(abs_path, with_requests=False)
     has_html = os.path.isfile(os.path.join(abs_path, 'perf_report.html'))
     if not runs:
@@ -325,6 +337,10 @@ def build_run_detail(root: str, rel_path: str) -> dict:
     run_dir = resolve_run_dir(root, rel_path)
     if run_dir is None:
         raise PerfArchiveError('Invalid path', 400)
+    from . import perf_archive_aiperf
+
+    if perf_archive_aiperf.is_single_archive(run_dir):
+        return perf_archive_aiperf.build_detail(rel_path, run_dir)
 
     runs = _load_runs(run_dir, with_requests=False)
     if not runs:
@@ -377,6 +393,10 @@ def list_run_items(root: str, rel_path: str) -> List[dict]:
     run_dir = resolve_run_dir(root, rel_path)
     if run_dir is None:
         raise PerfArchiveError('Invalid path', 400)
+    from . import perf_archive_aiperf
+
+    if perf_archive_aiperf.is_single_archive(run_dir):
+        return perf_archive_aiperf.list_items(run_dir)
 
     runs = _load_runs(run_dir, with_requests=False)
     items: List[dict] = []
@@ -416,6 +436,10 @@ def query_request_page(
     run_dir = resolve_run_dir(root, rel_path)
     if run_dir is None:
         raise PerfArchiveError('Invalid path', 400)
+    from . import perf_archive_aiperf
+
+    if perf_archive_aiperf.is_single_archive(run_dir):
+        return perf_archive_aiperf.query_requests(run_dir, run_name, status, page, page_size)
     if not (_PARALLEL_RE.match(run_name) or _RATE_RE.match(run_name)):
         raise PerfArchiveError(f'Run not found: {run_name}', 404)
     sub_dir = os.path.join(run_dir, run_name)
@@ -490,6 +514,10 @@ def render_chart(root: str, rel_path: str, chart_type: str, run_name: Optional[s
     run_dir = resolve_run_dir(root, rel_path)
     if run_dir is None:
         raise PerfArchiveError('Invalid path', 400)
+    from . import perf_archive_aiperf
+
+    if perf_archive_aiperf.is_single_archive(run_dir):
+        return perf_archive_aiperf.render_chart(run_dir, chart_type, run_name, theme)
 
     from evalscope.perf.utils.report import perf_charts
     from evalscope.perf.utils.report.perf_data import RunLoader
@@ -542,6 +570,10 @@ def render_compare_chart(root: str, rel_paths: List[str], chart_type: str, theme
         run_dir = resolve_run_dir(root, rel)
         if run_dir is None:
             raise PerfArchiveError(f'Invalid path: {rel}', 400)
+        from . import perf_archive_aiperf
+
+        if perf_archive_aiperf.is_single_archive(run_dir):
+            raise PerfArchiveError('AIPerf comparison requires verified metric compatibility', 400)
         runs = _load_runs(run_dir, with_requests=False)
         if not runs:
             continue
@@ -576,6 +608,10 @@ def ensure_history_report(root: str, rel_path: str) -> str:
     run_dir = resolve_run_dir(root, rel_path)
     if run_dir is None:
         raise PerfArchiveError('Invalid path', 400)
+    from . import perf_archive_aiperf
+
+    if perf_archive_aiperf.is_single_archive(run_dir):
+        return perf_archive_aiperf.write_report(rel_path, run_dir)
 
     report_file = os.path.join(run_dir, 'perf_report.html')
     from evalscope.perf.utils.report.generate_report import gen_perf_html_report, is_current_perf_report

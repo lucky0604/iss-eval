@@ -330,10 +330,12 @@ export interface PerfRunSummary {
   api_type: string;
   avg_input_tokens?: number | null;
   avg_output_tokens?: number | null;
-  best_latency: number;
-  best_rps: number;
+  best_latency: number | null;
+  best_rps: number | null;
   concurrency?: number[] | null;
   dataset: string;
+  engine?: ("evalscope" | "aiperf") | null;
+  executor_version?: string | null;
   has_html: boolean;
   is_embedding: boolean;
   model: string;
@@ -341,7 +343,8 @@ export interface PerfRunSummary {
   path: string;
   protocol?: string | null;
   provider?: string | null;
-  success_rate: number;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  success_rate: number | null;
   timestamp: string;
   total_requests: number;
 }
@@ -517,12 +520,16 @@ export interface PerfDetailResponse {
     [k: string]: string;
   } | null;
   dataset: string;
+  engine?: ("evalscope" | "aiperf") | null;
+  executor_version?: string | null;
   generated_at: string;
   has_html: boolean;
   is_embedding: boolean;
   model: string;
   num_runs: number;
   path: string;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  quality_reasons?: string[];
   recommendations: string[];
   summary_columns: PerfSummaryColumn[];
   summary_rows: PerfSummaryRow[];
@@ -557,12 +564,12 @@ export interface PerfRunItem {
   name: string;
   num_requests: number;
   number: number;
-  parallel: number;
+  parallel: number | null;
   percentile_columns: string[];
   percentile_rows: (string | number | null)[][];
   rate: number | null;
   succeed_requests: number;
-  success_rate: number;
+  success_rate: number | null;
   total_requests: number;
 }
 export interface PerfRunsListResponse {
