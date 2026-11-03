@@ -45,6 +45,7 @@ from ..utils import (
     task_file_path,
     validate_task_id,
 )
+from ..utils.process import task_is_cancelling
 
 logger = get_logger()
 
@@ -237,6 +238,8 @@ def stop_performance_test():
         return jsonify({'error': 'Invalid task_id'}), 400
     if stopped:
         return json_response(TaskStatusResponse, {'status': 'stopped', 'task_id': task_id})
+    elif task_is_cancelling(task_id):
+        return json_response(TaskStatusResponse, {'status': 'cancelling', 'task_id': task_id}, status=202)
     else:
         return jsonify({'error': f'No running task found for task_id: {task_id}'}), 404
 

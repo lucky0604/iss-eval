@@ -18,7 +18,7 @@ interface Props {
   getLog: (taskId: string, tailLine: number) => Promise<LogResponse>
 }
 
-type StopRequestState = 'idle' | 'pending' | 'confirmed' | 'failed'
+type StopRequestState = 'idle' | 'pending' | 'cancelling' | 'confirmed' | 'failed'
 
 export default function TaskRunMonitor({ taskId, result, stopTask, getLog, active = true, submissionRejected = false }: Props) {
   const { t } = useLocale()
@@ -41,7 +41,8 @@ export default function TaskRunMonitor({ taskId, result, stopTask, getLog, activ
     if (active) title.current?.focus()
   }, [active])
 
-  const status = stopRequest === 'confirmed' ? 'stopped' : snapshot?.status ?? (submissionRejected ? 'error' : 'preparing')
+  const snapshotTerminal = snapshot?.status && ['completed', 'stopped', 'error'].includes(snapshot.status)
+  const status = snapshotTerminal ? (snapshot?.status ?? 'unknown') : stopRequest === 'confirmed' ? 'stopped' : snapshot?.status === 'unknown' ? 'unknown' : stopRequest === 'cancelling' ? 'cancelling' : snapshot?.status ?? (submissionRejected ? 'error' : 'preparing')
   const terminal = ['completed', 'stopped', 'error'].includes(status)
   const task = usePolling({
     fn: () => getTask(taskId),
@@ -61,8 +62,9 @@ export default function TaskRunMonitor({ taskId, result, stopTask, getLog, activ
   const handleStop = async () => {
     setStopRequest('pending')
     try {
-      await stopTask(taskId)
-      if (live.current) setStopRequest('confirmed')
+      const response = await stopTask(taskId)
+      const cancelling = typeof response === 'object' && response !== null && 'status' in response && response.status === 'cancelling'
+      if (live.current) setStopRequest(cancelling ? 'cancelling' : 'confirmed')
     } catch {
       if (live.current) setStopRequest('failed')
     }
@@ -164,7 +166,7 @@ export default function TaskRunMonitor({ taskId, result, stopTask, getLog, activ
         readyLabel=""
         statusLabel={t(`tasks.state.${status}`)}
         onStop={handleStop}
-        stopping={stopRequest === 'pending'}
+        stopping={stopRequest === 'pending' || stopRequest === 'cancelling' || status === 'cancelling'}
       />
     </div>
   )

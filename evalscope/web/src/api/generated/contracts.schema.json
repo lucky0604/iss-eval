@@ -101,6 +101,7 @@
           "enum": [
             "preparing",
             "running",
+            "cancelling",
             "finalizing",
             "completed",
             "stopped",

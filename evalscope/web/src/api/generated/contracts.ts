@@ -98,7 +98,7 @@ export interface ActiveTaskInfo {
   percent?: number | null;
   report_url?: string | null;
   started_at?: string;
-  status?: "preparing" | "running" | "finalizing" | "completed" | "stopped" | "error" | "unknown";
+  status?: "preparing" | "running" | "cancelling" | "finalizing" | "completed" | "stopped" | "error" | "unknown";
   task_id: string;
 }
 export interface TaskConfigSummary {

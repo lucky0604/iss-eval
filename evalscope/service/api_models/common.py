@@ -61,7 +61,9 @@ class ActiveTaskInfo(ApiResponseModel):
     alias: Optional[str] = None
     started_at: str = ''
     percent: Optional[float] = None
-    status: Literal['preparing', 'running', 'finalizing', 'completed', 'stopped', 'error', 'unknown'] = 'running'
+    status: Literal['preparing', 'running', 'cancelling', 'finalizing', 'completed', 'stopped', 'error', 'unknown'] = (
+        'running'
+    )
     config: Optional[TaskConfigSummary] = None
     report_url: Optional[str] = None
     html_report_url: Optional[str] = None

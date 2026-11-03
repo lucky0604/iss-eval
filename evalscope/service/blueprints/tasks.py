@@ -48,6 +48,8 @@ def _read_progress_percent(task_id: str, kind: str) -> float | None:
 def _with_progress(record: dict) -> dict:
     percent = _read_progress_percent(record['task_id'], record.get('kind', ''))
     record['percent'] = percent
+    if record.get('status') == 'cancelling':
+        return record
     if percent is not None and percent >= 100:
         record['status'] = 'finalizing'
     else:

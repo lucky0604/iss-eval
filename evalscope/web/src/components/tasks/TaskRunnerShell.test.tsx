@@ -89,6 +89,24 @@ async function click(name: string) { await act(async () => { fireEvent.click(scr
     await act(async () => { finish() })
     expect(screen.getByText('Stopped')).toBeInTheDocument()
   })
+  it('continues polling after a cancelling acknowledgement until cleanup is confirmed', async () => {
+    const stopTask = vi.fn().mockResolvedValue({ status: 'cancelling' })
+    render(<Runner stopTask={stopTask} />)
+    await click('View A'); await click('Stop')
+    expect(screen.queryByText('Stopped')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Stopping…' })).toBeDisabled()
+    vi.mocked(getTask).mockResolvedValue({ ...TASK, status: 'stopped' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(screen.getByText('Stopped')).toBeInTheDocument()
+  })
+  it('shows unknown when the service loses task state during cancellation', async () => {
+    render(<Runner stopTask={vi.fn().mockResolvedValue({ status: 'cancelling' })} />)
+    await click('View A'); await click('Stop')
+    vi.mocked(getTask).mockResolvedValue({ ...TASK, status: 'unknown' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(screen.getByText('Running state unknown')).toBeInTheDocument()
+    expect(screen.queryByText('Stopped')).not.toBeInTheDocument()
+  })
   it('discards late status, logs and stop responses after selecting B', async () => {
     let status!: (value: ActiveTaskInfo) => void
     let log!: (value: typeof LOG) => void
