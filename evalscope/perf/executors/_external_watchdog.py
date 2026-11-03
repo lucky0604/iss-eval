@@ -216,6 +216,7 @@ def _run(control_fd: int, parent_fd: Optional[int]) -> None:
             now = time.monotonic()
             if code is not None and drain_deadline is None:
                 drain_deadline = now + config['graceful_timeout']
+                _send({'event': 'draining'})
             if code is not None and not guard_released and not guard_gone and guard_pid is not None:
                 try:
                     if _group_has_only_guard(proc.pid, guard_pid):

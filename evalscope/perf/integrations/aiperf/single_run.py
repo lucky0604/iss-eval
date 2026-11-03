@@ -5,7 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 from threading import Event, Timer
-from typing import Optional
+from typing import Callable, Optional
 
 from pydantic import Field
 
@@ -217,10 +217,11 @@ def _run_verified(
     input_file: str,
     version: str,
     cancel_event: Optional[Cancellation] = None,
+    on_draining: Optional[Callable[[], None]] = None,
 ) -> ExecutionOutcome:
     prepared = prepare_single_run(arguments, context, input_file)
     try:
-        outcome = run_external(context, prepared.invocation, cancel_event=cancel_event)
+        outcome = run_external(context, prepared.invocation, cancel_event=cancel_event, on_draining=on_draining)
         directory = Path(prepared.artifact_dir)
         has_summary = (directory / 'profile_export_aiperf.json').is_file()
         has_records = (directory / 'profile_export.jsonl').is_file()

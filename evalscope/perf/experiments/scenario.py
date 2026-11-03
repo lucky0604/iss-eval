@@ -4,6 +4,7 @@ import asyncio
 import json
 import multiprocessing
 import os
+import time
 from pathlib import Path
 from typing import Callable, Literal, Optional, Sequence
 
@@ -105,6 +106,16 @@ def run_cache_scenario(
         'namespace': scenario.namespace,
         'routing_coverage': 'unknown',
         'template_match': 'unverified',
+        'timestamps': {
+            'priming_completed_ns': None,
+            'profiling_launch_ns': None,
+            'profiling_start_ns': None,
+            'dispatch_stopped_ns': None,
+            'profiling_end_ns': None,
+            'draining_started_ns': None,
+            'final_scrape_ns': None,
+            'import_completed_ns': None,
+        },
     }
 
     def publish() -> None:
@@ -156,9 +167,18 @@ def run_cache_scenario(
             return CacheScenarioOutcome(
                 status='error', quality='invalid', reason='primer_failed', priming=priming, cleanup_confirmed=True
             )
+        if priming.status == 'completed':
+            state['timestamps']['priming_completed_ns'] = time.time_ns()
         state['status'] = 'profiling'
+        state['timestamps']['profiling_launch_ns'] = time.time_ns()
         publish()
-        execution = _run_verified(single, context, str(input_path), version, cancellation)
+
+        def draining() -> None:
+            state['status'] = 'draining'
+            state['timestamps']['draining_started_ns'] = time.time_ns()
+            publish()
+
+        execution = _run_verified(single, context, str(input_path), version, cancellation, on_draining=draining)
         state['execution'] = execution.model_dump(mode='json', exclude={'raw_artifact_dir'})
         if not execution.cleanup_confirmed:
             state.update({'status': 'error', 'reason': 'cleanup_unconfirmed'})
@@ -198,6 +218,13 @@ def run_cache_scenario(
                             'quality_reasons': [*partial.quality_reasons, 'profiling_failed'],
                         }
                     )
+                    state['timestamps'].update(
+                        {
+                            'profiling_start_ns': partial.profiling_start_ns,
+                            'profiling_end_ns': partial.profiling_end_ns,
+                            'import_completed_ns': time.time_ns(),
+                        }
+                    )
                 except (ValueError, OSError):
                     state['quality_reasons'] = ['profiling_failed', 'partial_import_failed']
             publish()
@@ -232,6 +259,13 @@ def run_cache_scenario(
             cancel_event=cancellation,
         )
         observation = observed_cache_usage(str(normalized))
+        state['timestamps'].update(
+            {
+                'profiling_start_ns': result.profiling_start_ns,
+                'profiling_end_ns': result.profiling_end_ns,
+                'import_completed_ns': time.time_ns(),
+            }
+        )
         quality_reasons = [*result.quality_reasons, 'template_match_unverified', 'routing_coverage_unknown']
         if result.profiling_requests != arguments.load.request_count:
             quality_reasons.append('planned_request_count_mismatch')
@@ -300,6 +334,13 @@ def run_cache_scenario(
                             'normalized': 'normalized',
                             'quality': cancelled_quality,
                             'quality_reasons': [*partial.quality_reasons, 'cancelled'],
+                        }
+                    )
+                    state['timestamps'].update(
+                        {
+                            'profiling_start_ns': partial.profiling_start_ns,
+                            'profiling_end_ns': partial.profiling_end_ns,
+                            'import_completed_ns': time.time_ns(),
                         }
                     )
                 except (OSError, ValueError, ImportCancelled):

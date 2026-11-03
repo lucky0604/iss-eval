@@ -42,6 +42,7 @@ def run_external(
     cancel_event: Optional[Cancellation] = None,
     on_started: Optional[Callable[[int], None]] = None,
     parent_liveness_fd: Optional[int] = None,
+    on_draining: Optional[Callable[[], None]] = None,
 ) -> ExecutionOutcome:
     """Run a prepared command with a watchdog and a process-group launch gate.
 
@@ -123,6 +124,8 @@ def run_external(
                     elif message.get('event') == 'exited':
                         result = message
                         break
+                    elif message.get('event') == 'draining' and on_draining is not None:
+                        on_draining()
                     elif message.get('event') == 'error':
                         break
                 if watcher.poll() is not None and not selector.select(timeout=0):

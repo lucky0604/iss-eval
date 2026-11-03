@@ -79,6 +79,14 @@ def test_cancel_before_gate_does_not_start_workload(tmp_path: Path) -> None:
     assert not marker.exists()
 
 
+def test_draining_event_follows_process_exit_before_cleanup(tmp_path: Path) -> None:
+    events = []
+    outcome = run_external(_context(tmp_path), _invocation(tmp_path, 'pass'),
+                           on_started=lambda pid: events.append('started'),
+                           on_draining=lambda: events.append('draining'))
+    assert outcome.cleanup_confirmed and events == ['started', 'draining']
+
+
 def test_unsupported_platform_rejects_runner_before_launch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(external.sys, 'platform', 'win32')
     with pytest.raises(RuntimeError, match='Linux or macOS'):

@@ -51,7 +51,7 @@ def test_scenario_primes_then_profiles_generated_input(tmp_path: Path, ratio: fl
     observed = []
 
     def fake_run(arguments: AIPerfArguments, context: ExecutionContext, input_file: str, version: str,
-                 cancel_event: object) -> ExecutionOutcome:
+                 cancel_event: object, on_draining: object) -> ExecutionOutcome:
         primers_sent = capture.read_text().splitlines() if capture.exists() else []
         assert len(primers_sent) == (0 if ratio == 0 else 2)
         observed.extend(json.loads(line)['text'] for line in Path(input_file).read_text().splitlines())
@@ -87,7 +87,7 @@ def test_primer_error_never_starts_profile(tmp_path: Path, monkeypatch: pytest.M
     root.mkdir()
     monkeypatch.setattr(module, 'probe_version', lambda context, cancel: '0.13.0')
     called = []
-    monkeypatch.setattr(module, '_run_verified', lambda *args: called.append(True))
+    monkeypatch.setattr(module, '_run_verified', lambda *args, **kwargs: called.append(True))
     with _server(tmp_path, 'http_error') as (url, capture):
         result = run_cache_scenario(_config(url), _context(root), CacheScenarioArguments(
             target_ratio=0.8, namespace='run', tokenizer_id='fixture', template_id='fixture-template',
@@ -104,7 +104,7 @@ def test_failed_profile_keeps_partial_records_readable(tmp_path: Path, monkeypat
     root.mkdir()
     monkeypatch.setattr(module, 'probe_version', lambda context, cancel: '0.13.0')
 
-    def failed_run(*args: object) -> ExecutionOutcome:
+    def failed_run(*args: object, **kwargs: object) -> ExecutionOutcome:
         raw = root / 'raw' / 'aiperf'
         raw.mkdir(parents=True)
         shutil.copyfile(FIXTURES / 'http_error_profile_export.jsonl', raw / 'profile_export.jsonl')
@@ -134,7 +134,7 @@ def test_cancelled_profile_keeps_partial_records_readable(
     root.mkdir()
     monkeypatch.setattr(module, 'probe_version', lambda context, cancel: '0.13.0')
 
-    def cancelled_run(*args: object) -> ExecutionOutcome:
+    def cancelled_run(*args: object, **kwargs: object) -> ExecutionOutcome:
         raw = root / 'raw' / 'aiperf'
         raw.mkdir(parents=True)
         shutil.copyfile(FIXTURES / 'http_error_profile_export.jsonl', raw / 'profile_export.jsonl')
@@ -162,7 +162,7 @@ def test_required_missing_telemetry_is_not_completed(tmp_path: Path, monkeypatch
     root.mkdir()
     monkeypatch.setattr(module, 'probe_version', lambda context, cancel: '0.13.0')
 
-    def completed_run(*args: object) -> ExecutionOutcome:
+    def completed_run(*args: object, **kwargs: object) -> ExecutionOutcome:
         raw = root / 'raw' / 'aiperf'
         raw.mkdir(parents=True)
         for name in ('profile_export.jsonl', 'profile_export_aiperf.json'):
@@ -194,13 +194,15 @@ def test_real_aiperf_receives_the_generated_scenario(tmp_path: Path, ratio: floa
     backend = Tokenizer(models.WordLevel({'[UNK]': 0, **{f't{i}': i + 1 for i in range(200)}}, unk_token='[UNK]'))
     backend.pre_tokenizer = pre_tokenizers.Whitespace()
     PreTrainedTokenizerFast(tokenizer_object=backend, unk_token='[UNK]').save_pretrained(str(tokenizer_path))
+    phases = []
     with _server(tmp_path, 'success') as (url, capture):
         result = run_cache_scenario(_config(url, str(tokenizer_path)),
                                     _context(root, os.environ['EVALSCOPE_TEST_AIPERF']), CacheScenarioArguments(
                                         target_ratio=ratio, namespace=f'run-{ratio}', tokenizer_id='fixture',
                                         template_id='fixture-template',
-                                    ), _Tokenizer(), list(range(200)))
+                                    ), _Tokenizer(), list(range(200)), on_phase=phases.append)
     assert result.status == 'completed', result
+    assert phases.index('profiling') < phases.index('draining') < phases.index('importing')
     assert result.quality == 'partial' and result.cache is not None and result.cache.ratio is None
     sent = [json.loads(line) for line in capture.read_text().splitlines()]
     primers = 0 if ratio == 0 else 2
@@ -208,6 +210,11 @@ def test_real_aiperf_receives_the_generated_scenario(tmp_path: Path, ratio: floa
     assert all(item['body']['max_completion_tokens'] == 1 for item in sent[:primers])
     assert all(item['body']['max_completion_tokens'] == 2 for item in sent[primers:])
     manifest = json.loads((root / 'scenario.json').read_text())
+    timestamps = manifest['timestamps']
+    assert timestamps['profiling_launch_ns'] <= timestamps['draining_started_ns'] <= timestamps['import_completed_ns']
+    # AIPerf 0.13.0's single named phase does not emit a phase manifest here.
+    assert timestamps['profiling_start_ns'] is None and timestamps['profiling_end_ns'] is None
+    assert timestamps['dispatch_stopped_ns'] is None and timestamps['final_scrape_ns'] is None
     hashes = {row['sha256'] for row in manifest['workload']['requests']}
     sent_hashes = {hashlib.sha256(item['body']['messages'][0]['content'].encode()).hexdigest() for item in sent[primers:]}
     assert hashes == sent_hashes and len(sent_hashes) == 6
