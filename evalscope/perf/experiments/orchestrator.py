@@ -94,8 +94,9 @@ def run_cache_experiment(
             )
 
             def publish_phase(phase: str) -> None:
-                state['phase'] = phase
-                write_experiment_json(manifest, state)
+                if phase in ('preflight', 'generating', 'priming', 'profiling', 'draining', 'importing'):
+                    state['phase'] = phase
+                    write_experiment_json(manifest, state)
 
             outcome = run_cache_scenario(
                 sub_arguments, sub_context, scenario, tokenizer, token_pool, cancellation, on_phase=publish_phase
@@ -127,6 +128,7 @@ def run_cache_experiment(
     state.update(
         {
             'status': status,
+            'last_phase': state.get('phase'),
             'phase': None,
             'current_subrun': None,
             'quality': 'invalid' if status == 'error' else 'partial',

@@ -64,6 +64,11 @@ class ActiveTaskInfo(ApiResponseModel):
     status: Literal['preparing', 'running', 'cancelling', 'finalizing', 'completed', 'stopped', 'error', 'unknown'] = (
         'running'
     )
+    phase: Optional[str] = None
+    current_subrun: Optional[str] = None
+    completed_subruns: Optional[int] = None
+    total_subruns: Optional[int] = None
+    quality: Optional[Literal['complete', 'partial', 'invalid']] = None
     config: Optional[TaskConfigSummary] = None
     report_url: Optional[str] = None
     html_report_url: Optional[str] = None
@@ -79,6 +84,11 @@ class ProgressResponse(ApiResponseModel):
 
     model_config = ConfigDict(extra='allow')
 
-    percent: float
+    percent: Optional[float]
     current_step: Optional[str] = None
     status: Optional[str] = None
+    phase: Optional[str] = None
+    current_subrun: Optional[str] = None
+    completed_subruns: Optional[int] = None
+    total_subruns: Optional[int] = None
+    quality: Optional[Literal['complete', 'partial', 'invalid']] = None

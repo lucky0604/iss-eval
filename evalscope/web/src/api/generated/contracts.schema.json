@@ -15,10 +15,32 @@
           ],
           "default": null
         },
+        "completed_subruns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "config": {
           "anyOf": [
             {
               "$ref": "#/$defs/TaskConfigSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "current_subrun": {
+          "anyOf": [
+            {
+              "type": "string"
             },
             {
               "type": "null"
@@ -81,6 +103,33 @@
           ],
           "default": null
         },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "report_url": {
           "anyOf": [
             {
@@ -112,6 +161,17 @@
         },
         "task_id": {
           "type": "string"
+        },
+        "total_subruns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -453,6 +513,660 @@
           "default": null
         }
       },
+      "type": "object"
+    },
+    "CacheExperimentListItem": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_subruns": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "running",
+            "completed",
+            "stopped",
+            "error",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "total_subruns": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task_id",
+        "status",
+        "completed_subruns",
+        "total_subruns"
+      ],
+      "type": "object"
+    },
+    "CacheExperimentListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "experiments": {
+          "items": {
+            "$ref": "#/$defs/CacheExperimentListItem"
+          },
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 500,
+          "type": "integer"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "experiments",
+        "total",
+        "offset",
+        "limit"
+      ],
+      "type": "object"
+    },
+    "CacheExperimentOutcome": {
+      "additionalProperties": false,
+      "description": "Small task result; the experiment manifest contains subrun details.",
+      "properties": {
+        "cleanup_confirmed": {
+          "type": "boolean"
+        },
+        "completed_subruns": {
+          "type": "integer"
+        },
+        "manifest": {
+          "default": "experiment.json",
+          "type": "string"
+        },
+        "plan_hash": {
+          "type": "string"
+        },
+        "quality": {
+          "enum": [
+            "partial",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "stopped",
+            "error"
+          ],
+          "type": "string"
+        },
+        "total_subruns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "quality",
+        "plan_hash",
+        "completed_subruns",
+        "total_subruns",
+        "cleanup_confirmed"
+      ],
+      "type": "object"
+    },
+    "CacheExperimentPlan": {
+      "additionalProperties": false,
+      "description": "A reproducible plan and its request budget.",
+      "properties": {
+        "configuration_hash": {
+          "type": "string"
+        },
+        "max_primer_output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_profiling_output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plan_hash": {
+          "type": "string"
+        },
+        "primer_requests": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "profiling_requests": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "type": "string"
+        },
+        "subruns": {
+          "items": {
+            "$ref": "#/$defs/CacheSubrunPlan"
+          },
+          "type": "array"
+        },
+        "template_id": {
+          "type": "string"
+        },
+        "tokenizer_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_hash",
+        "configuration_hash",
+        "tokenizer_id",
+        "template_id",
+        "subruns",
+        "profiling_requests",
+        "primer_requests"
+      ],
+      "type": "object"
+    },
+    "CacheExperimentResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "plan": {
+          "$ref": "#/$defs/CacheExperimentPlan"
+        },
+        "state": {
+          "$ref": "#/$defs/CacheExperimentState"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "plan",
+        "state"
+      ],
+      "type": "object"
+    },
+    "CacheExperimentState": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_subruns": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "current_subrun": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "last_phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plan_hash": {
+          "type": "string"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "schema_version": {
+          "const": "1.0",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "completed",
+            "stopped",
+            "error",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "subruns": {
+          "items": {
+            "$ref": "#/$defs/CacheSubrunState"
+          },
+          "type": "array"
+        },
+        "total_subruns": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "plan_hash",
+        "status",
+        "completed_subruns",
+        "total_subruns",
+        "subruns"
+      ],
+      "type": "object"
+    },
+    "CacheNodeMetricsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregation": {
+          "const": "raw",
+          "default": "raw",
+          "type": "string"
+        },
+        "downsample": {
+          "const": "none",
+          "default": "none",
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "samples": {
+          "items": {
+            "$ref": "#/$defs/NodeMetricSample"
+          },
+          "type": "array"
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total",
+        "offset",
+        "limit",
+        "samples"
+      ],
+      "type": "object"
+    },
+    "CacheObservation": {
+      "additionalProperties": false,
+      "description": "Server-reported cache-read token totals and their actual coverage.",
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        "cached_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "observed_requests": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "prompt_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "anyOf": [
+            {
+              "const": "server_usage",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "successful_requests": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "observed_requests",
+        "availability"
+      ],
+      "type": "object"
+    },
+    "CacheRequestsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "requests": {
+          "items": {
+            "$ref": "#/$defs/PerfRequestRecord"
+          },
+          "type": "array"
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total",
+        "offset",
+        "limit",
+        "requests"
+      ],
+      "type": "object"
+    },
+    "CacheScenarioResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "generated_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "generated_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_analysis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeMetricsAnalysis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PerfRunResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "type": "string"
+        },
+        "subrun_id": {
+          "type": "string"
+        },
+        "target_ratio": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "subrun_id",
+        "status",
+        "target_ratio",
+        "generated_count"
+      ],
+      "type": "object"
+    },
+    "CacheSubrunPlan": {
+      "additionalProperties": false,
+      "description": "One uniquely named, independently seeded matrix member.",
+      "properties": {
+        "load_mode": {
+          "enum": [
+            "closed_loop",
+            "open_loop"
+          ],
+          "type": "string"
+        },
+        "load_point": {
+          "$ref": "#/$defs/LoadPoint"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "order": {
+          "type": "integer"
+        },
+        "output_token_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "primer_requests": {
+          "type": "integer"
+        },
+        "repetition": {
+          "type": "integer"
+        },
+        "request_count": {
+          "type": "integer"
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "subrun_id": {
+          "type": "string"
+        },
+        "target_ratio": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "subrun_id",
+        "order",
+        "target_ratio",
+        "load_mode",
+        "load_point",
+        "repetition",
+        "seed",
+        "namespace",
+        "request_count",
+        "primer_requests"
+      ],
+      "type": "object"
+    },
+    "CacheSubrunState": {
+      "additionalProperties": false,
+      "properties": {
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scenario": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "not_started",
+            "running",
+            "completed",
+            "cancelled",
+            "error"
+          ],
+          "type": "string"
+        },
+        "subrun_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "subrun_id",
+        "status"
+      ],
       "type": "object"
     },
     "ChatMessage": {
@@ -904,6 +1618,155 @@
       },
       "type": "object"
     },
+    "HistogramWindow": {
+      "additionalProperties": false,
+      "description": "Window bucket deltas and approximate quantiles, never averaged percentiles.",
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "partial",
+            "missing",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "boundary": {
+          "default": "unknown",
+          "enum": [
+            "exact",
+            "bracketed",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "buckets": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mean": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metric_key": {
+          "type": "string"
+        },
+        "p50": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p95": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p99": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_end_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_start_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unit": {
+          "type": "string"
+        },
+        "window_end_ns": {
+          "type": "integer"
+        },
+        "window_start_ns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "availability",
+        "metric_key",
+        "unit",
+        "window_start_ns",
+        "window_end_ns"
+      ],
+      "type": "object"
+    },
     "JudgeAttempt": {
       "additionalProperties": false,
       "properties": {
@@ -1142,6 +2005,37 @@
       ],
       "type": "object"
     },
+    "LoadPoint": {
+      "additionalProperties": false,
+      "description": "One closed-loop concurrency or open-loop request rate.",
+      "properties": {
+        "concurrency": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
     "LoadReportResponse": {
       "additionalProperties": false,
       "properties": {
@@ -1254,6 +2148,60 @@
       ],
       "type": "string"
     },
+    "MetricMapping": {
+      "additionalProperties": false,
+      "description": "One exact upstream metric family and its non-aggregated semantics.",
+      "properties": {
+        "engine": {
+          "enum": [
+            "vllm",
+            "sglang"
+          ],
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "gauge",
+            "counter",
+            "histogram"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "scale": {
+          "default": 1,
+          "type": "number"
+        },
+        "source_unit": {
+          "type": "string"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "upstream_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "upstream_version",
+        "name",
+        "key",
+        "kind",
+        "unit",
+        "source_unit",
+        "source_url"
+      ],
+      "type": "object"
+    },
     "MetricSemantics": {
       "additionalProperties": false,
       "properties": {
@@ -1338,6 +2286,626 @@
         "direction",
         "display_kind",
         "display_precision"
+      ],
+      "type": "object"
+    },
+    "MetricStatistics": {
+      "additionalProperties": false,
+      "description": "A metric with explicit unit, scope, source, and observation count.",
+      "properties": {
+        "availability": {
+          "default": "available",
+          "enum": [
+            "available",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        "count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "key": {
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scope": {
+          "enum": [
+            "request",
+            "run",
+            "node_window"
+          ],
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "statistics": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "key",
+        "unit",
+        "source",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "MetricWindow": {
+      "additionalProperties": false,
+      "description": "An explicit profiling window in the collector's nanosecond clock.",
+      "properties": {
+        "end_ns": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "start_ns": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_ns",
+        "end_ns"
+      ],
+      "type": "object"
+    },
+    "NodeCacheRatio": {
+      "additionalProperties": false,
+      "description": "vLLM lookup-token ratio; never confused with response cache usage.",
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "partial",
+            "missing",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "hit_tokens": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "lookup_tokens": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "role": {
+          "enum": [
+            "prefill",
+            "decode"
+          ],
+          "type": "string"
+        },
+        "semantics": {
+          "const": "vllm_prefix_lookup_tokens",
+          "default": "vllm_prefix_lookup_tokens",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "role",
+        "labels",
+        "availability"
+      ],
+      "type": "object"
+    },
+    "NodeMetricSample": {
+      "additionalProperties": false,
+      "description": "One source-attributed raw sample; no request-level PD inference is made.",
+      "properties": {
+        "endpoint": {
+          "type": "string"
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "vllm",
+                "sglang"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "metric_name": {
+          "type": "string"
+        },
+        "metric_type": {
+          "enum": [
+            "counter",
+            "gauge",
+            "histogram",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "observation": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "phase_kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "request_sent_ns": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "role": {
+          "anyOf": [
+            {
+              "enum": [
+                "prefill",
+                "decode"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scope": {
+          "const": "node_window",
+          "default": "node_window",
+          "type": "string"
+        },
+        "scrape_latency_ns": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "semantics": {
+          "const": "unverified",
+          "default": "unverified",
+          "type": "string"
+        },
+        "timestamp_ns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "timestamp_ns",
+        "endpoint",
+        "metric_name",
+        "metric_type",
+        "labels",
+        "observation"
+      ],
+      "type": "object"
+    },
+    "NodeMetricWindow": {
+      "additionalProperties": false,
+      "description": "A single node/label series with upstream definition and measured window.",
+      "properties": {
+        "attribution": {
+          "const": "node_window_shared_traffic",
+          "default": "node_window_shared_traffic",
+          "type": "string"
+        },
+        "engine": {
+          "enum": [
+            "vllm",
+            "sglang"
+          ],
+          "type": "string"
+        },
+        "histogram": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HistogramWindow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "metric": {
+          "$ref": "#/$defs/MetricMapping"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "role": {
+          "enum": [
+            "prefill",
+            "decode"
+          ],
+          "type": "string"
+        },
+        "statistic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WindowStatistic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "verification": {
+          "const": "deployment_unverified",
+          "default": "deployment_unverified",
+          "type": "string"
+        },
+        "window_source": {
+          "enum": [
+            "aiperf_phase",
+            "observed_request_bounds"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "role",
+        "engine",
+        "labels",
+        "metric",
+        "window_source"
+      ],
+      "type": "object"
+    },
+    "NodeMetricsAnalysis": {
+      "additionalProperties": false,
+      "description": "Bounded node analysis and the provenance of its profiling interval.",
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "partial",
+            "missing",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "cache_ratios": {
+          "items": {
+            "$ref": "#/$defs/NodeCacheRatio"
+          },
+          "type": "array"
+        },
+        "max_gap_ns": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "quality_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scrapes": {
+          "items": {
+            "$ref": "#/$defs/NodeScrapeSummary"
+          },
+          "type": "array"
+        },
+        "series": {
+          "items": {
+            "$ref": "#/$defs/NodeMetricWindow"
+          },
+          "type": "array"
+        },
+        "timed_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MetricWindow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "window_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "aiperf_phase",
+                "observed_request_bounds"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "availability",
+        "max_gap_ns"
+      ],
+      "type": "object"
+    },
+    "NodePreflight": {
+      "additionalProperties": false,
+      "description": "A single endpoint's reachability and documented matching families.",
+      "properties": {
+        "elapsed_ms": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "engine": {
+          "enum": [
+            "vllm",
+            "sglang"
+          ],
+          "type": "string"
+        },
+        "metric_names": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "role": {
+          "enum": [
+            "prefill",
+            "decode"
+          ],
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "available",
+            "missing",
+            "unreachable",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "verification": {
+          "const": "deployment_unverified",
+          "default": "deployment_unverified",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "role",
+        "engine",
+        "status",
+        "elapsed_ms"
+      ],
+      "type": "object"
+    },
+    "NodeScrapeSummary": {
+      "additionalProperties": false,
+      "description": "Observed successful scrapes; failures are unknown when not exported.",
+      "properties": {
+        "failed_scrapes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mean_interval_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mean_latency_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "observed_successful_scrapes": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id",
+        "observed_successful_scrapes"
       ],
       "type": "object"
     },
@@ -1560,6 +3128,104 @@
       ],
       "type": "object"
     },
+    "PerfEngineCapability": {
+      "additionalProperties": false,
+      "description": "Public availability of a performance execution engine.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "engine": {
+          "enum": [
+            "evalscope",
+            "aiperf"
+          ],
+          "type": "string"
+        },
+        "protocols": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "engine",
+        "available"
+      ],
+      "type": "object"
+    },
+    "PerfEnginesResponse": {
+      "additionalProperties": false,
+      "description": "Available and unavailable execution engines.",
+      "properties": {
+        "engines": {
+          "items": {
+            "$ref": "#/$defs/PerfEngineCapability"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "engines"
+      ],
+      "type": "object"
+    },
+    "PerfInvokeResponse": {
+      "additionalProperties": false,
+      "description": "Typed AIPerf task result, compatible with the shared task monitor.",
+      "properties": {
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheExperimentOutcome"
+            },
+            {
+              "$ref": "#/$defs/PublicAIPerfOutcome"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "error",
+            "stopped"
+          ],
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "task_id",
+        "result"
+      ],
+      "type": "object"
+    },
     "PerfMetrics": {
       "additionalProperties": false,
       "properties": {
@@ -1637,6 +3303,245 @@
         "latency",
         "throughput",
         "usage"
+      ],
+      "type": "object"
+    },
+    "PerfPlanResponse": {
+      "additionalProperties": false,
+      "description": "A side-effect-free cache experiment plan and its limitations.",
+      "properties": {
+        "engine_available": {
+          "type": "boolean"
+        },
+        "metrics_probe": {
+          "default": "not_requested",
+          "enum": [
+            "not_requested",
+            "completed"
+          ],
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/NodePreflight"
+          },
+          "type": "array"
+        },
+        "plan": {
+          "$ref": "#/$defs/CacheExperimentPlan"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "plan",
+        "engine_available"
+      ],
+      "type": "object"
+    },
+    "PerfRequestRecord": {
+      "additionalProperties": false,
+      "description": "A request record without inferred server cache data.",
+      "properties": {
+        "cached_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cached_tokens_source": {
+          "anyOf": [
+            {
+              "const": "server_usage",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "end_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "index": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "latency_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_tokens_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "server_usage",
+                "aiperf_estimate"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "phase": {
+          "type": "string"
+        },
+        "prompt_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prompt_tokens_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "server_usage",
+                "aiperf_estimate"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "success",
+            "error",
+            "cancelled",
+            "incomplete"
+          ],
+          "type": "string"
+        },
+        "status_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ttft_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "turn_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "index",
+        "phase",
+        "status"
       ],
       "type": "object"
     },
@@ -1772,6 +3677,138 @@
         "has_requests",
         "percentile_columns",
         "percentile_rows"
+      ],
+      "type": "object"
+    },
+    "PerfRunResult": {
+      "additionalProperties": false,
+      "description": "A normalized run; raw files remain the source of truth.",
+      "properties": {
+        "engine": {
+          "const": "aiperf",
+          "default": "aiperf",
+          "type": "string"
+        },
+        "executor_version": {
+          "type": "string"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/MetricStatistics"
+          },
+          "type": "array"
+        },
+        "profiling_cancelled": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "profiling_end_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "profiling_errors": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "profiling_incomplete": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "profiling_requests": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "profiling_start_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "profiling_successes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quality": {
+          "enum": [
+            "complete",
+            "partial",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "quality_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "records_schema": {
+          "const": "unversioned",
+          "default": "unversioned",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "type": "string"
+        },
+        "server_metrics_schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "summary_schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "executor_version",
+        "quality",
+        "profiling_requests",
+        "profiling_successes",
+        "profiling_errors"
       ],
       "type": "object"
     },
@@ -2331,6 +4368,17 @@
       "additionalProperties": true,
       "description": "Progress tracker payload with stable fields and tracker-specific metadata.",
       "properties": {
+        "completed_subruns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "current_step": {
           "anyOf": [
             {
@@ -2342,8 +4390,53 @@
           ],
           "default": null
         },
+        "current_subrun": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "percent": {
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "status": {
           "anyOf": [
@@ -2355,10 +4448,79 @@
             }
           ],
           "default": null
+        },
+        "total_subruns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
         "percent"
+      ],
+      "type": "object"
+    },
+    "PublicAIPerfOutcome": {
+      "additionalProperties": false,
+      "description": "Single-run outcome without local paths or credentials.",
+      "properties": {
+        "artifact_status": {
+          "enum": [
+            "available",
+            "partial",
+            "missing"
+          ],
+          "type": "string"
+        },
+        "cleanup_confirmed": {
+          "type": "boolean"
+        },
+        "engine": {
+          "const": "aiperf",
+          "type": "string"
+        },
+        "executor_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "exit_reason": {
+          "enum": [
+            "completed",
+            "error",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "exit_reason",
+        "artifact_status",
+        "cleanup_confirmed"
       ],
       "type": "object"
     },
@@ -3188,6 +5350,108 @@
         "max"
       ],
       "type": "object"
+    },
+    "WindowStatistic": {
+      "additionalProperties": false,
+      "description": "A window value with coverage and explicit boundary semantics.",
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "partial",
+            "missing",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "boundary": {
+          "default": "unknown",
+          "enum": [
+            "exact",
+            "bracketed",
+            "step",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "coverage": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sample_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sample_peak": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_end_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_start_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "availability",
+        "sample_count"
+      ],
+      "type": "object"
     }
   },
   "description": "Schema-only root that keeps every public Web API type reachable for code generation.",
@@ -3203,6 +5467,21 @@
     },
     "benchmarks_response": {
       "$ref": "#/$defs/BenchmarksResponse"
+    },
+    "cache_experiment_list_response": {
+      "$ref": "#/$defs/CacheExperimentListResponse"
+    },
+    "cache_experiment_response": {
+      "$ref": "#/$defs/CacheExperimentResponse"
+    },
+    "cache_node_metrics_response": {
+      "$ref": "#/$defs/CacheNodeMetricsResponse"
+    },
+    "cache_requests_response": {
+      "$ref": "#/$defs/CacheRequestsResponse"
+    },
+    "cache_scenario_response": {
+      "$ref": "#/$defs/CacheScenarioResponse"
     },
     "chat_message": {
       "$ref": "#/$defs/ChatMessage"
@@ -3267,8 +5546,17 @@
     "perf_detail_response": {
       "$ref": "#/$defs/PerfDetailResponse"
     },
+    "perf_engines_response": {
+      "$ref": "#/$defs/PerfEnginesResponse"
+    },
+    "perf_invoke_response": {
+      "$ref": "#/$defs/PerfInvokeResponse"
+    },
     "perf_metrics": {
       "$ref": "#/$defs/PerfMetrics"
+    },
+    "perf_plan_response": {
+      "$ref": "#/$defs/PerfPlanResponse"
     },
     "perf_requests_response": {
       "$ref": "#/$defs/PerfRequestsResponse"
@@ -3346,6 +5634,14 @@
     "perf_run_summary",
     "list_perf_runs_response",
     "perf_detail_response",
+    "perf_engines_response",
+    "perf_invoke_response",
+    "perf_plan_response",
+    "cache_experiment_response",
+    "cache_experiment_list_response",
+    "cache_scenario_response",
+    "cache_requests_response",
+    "cache_node_metrics_response",
     "perf_run_item",
     "perf_runs_list_response",
     "perf_requests_response",

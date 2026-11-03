@@ -72,6 +72,8 @@ class MockHandler(BaseHTTPRequestHandler):
                 f'vllm:request_prefill_time_seconds_sum{{model="fixture"}} {scrapes_seen * 0.1}\n'
                 f'vllm:request_prefill_time_seconds_count{{model="fixture"}} {scrapes_seen}\n'
             ).encode()
+        elif self.server.metrics_mode == 'malformed':
+            body = b'# TYPE vllm:num_requests_waiting gauge\nvllm:num_requests_waiting{broken="} 1\n'
         elif self.server.metrics_mode == 'pd_sglang':
             body = (
                 '# TYPE sglang:num_decode_transfer_queue_reqs gauge\n'
@@ -161,7 +163,7 @@ def main() -> None:
     parser.add_argument('--capture', type=Path, required=True)
     parser.add_argument('--mode', choices=['success', 'cache_usage', 'missing_usage', 'http_error', 'alternating_error', 'stream_error',
                                            'single_token', 'unfinished', 'slow_success', 'timeout'], default='success')
-    parser.add_argument('--metrics-mode', choices=['normal', 'missing', 'unavailable', 'reset', 'delayed', 'pd_vllm', 'pd_sglang'],
+    parser.add_argument('--metrics-mode', choices=['normal', 'missing', 'unavailable', 'reset', 'delayed', 'pd_vllm', 'pd_sglang', 'malformed'],
                         default='normal')
     parser.add_argument('--metrics-capture', type=Path)
     parser.add_argument('--metrics-key')

@@ -17,9 +17,17 @@ from .common import (
 )
 from .eval import BenchmarkEntry, BenchmarksResponse, EvalInvokeResponse
 from .perf import (
+    CacheExperimentListResponse,
+    CacheExperimentResponse,
+    CacheNodeMetricsResponse,
+    CacheRequestsResponse,
+    CacheScenarioResponse,
     DeletePerfRunResponse,
     ListPerfRunsResponse,
     PerfDetailResponse,
+    PerfEnginesResponse,
+    PerfInvokeResponse,
+    PerfPlanResponse,
     PerfRequestsResponse,
     PerfRunItem,
     PerfRunsListResponse,
@@ -82,6 +90,14 @@ class WebApiContracts(BaseModel):
     perf_run_summary: PerfRunSummary
     list_perf_runs_response: ListPerfRunsResponse
     perf_detail_response: PerfDetailResponse
+    perf_engines_response: PerfEnginesResponse
+    perf_invoke_response: PerfInvokeResponse
+    perf_plan_response: PerfPlanResponse
+    cache_experiment_response: CacheExperimentResponse
+    cache_experiment_list_response: CacheExperimentListResponse
+    cache_scenario_response: CacheScenarioResponse
+    cache_requests_response: CacheRequestsResponse
+    cache_node_metrics_response: CacheNodeMetricsResponse
     perf_run_item: PerfRunItem
     perf_runs_list_response: PerfRunsListResponse
     perf_requests_response: PerfRequestsResponse
@@ -101,6 +117,11 @@ __all__ = [
     'AnalysisResponse',
     'ApiResponseModel',
     'BenchmarkEntry',
+    'CacheExperimentResponse',
+    'CacheExperimentListResponse',
+    'CacheNodeMetricsResponse',
+    'CacheRequestsResponse',
+    'CacheScenarioResponse',
     'BenchmarksResponse',
     'ConfigResponse',
     'DataFrameResponse',
@@ -114,6 +135,9 @@ __all__ = [
     'LoadReportResponse',
     'LogResponse',
     'PerfDetailResponse',
+    'PerfEnginesResponse',
+    'PerfInvokeResponse',
+    'PerfPlanResponse',
     'PerfRequestsResponse',
     'PerfRunsListResponse',
     'PredictionsResponse',

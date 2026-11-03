@@ -12,8 +12,10 @@ from typing import Any, Callable, Iterator, List, Optional, TextIO, Type
 
 from evalscope.config import TaskConfig
 from evalscope.perf.arguments import Arguments as PerfArguments
+from evalscope.perf.executors.arguments import AIPerfArguments
 from evalscope.perf.executors.external import run_external
 from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, ExternalInvocation
+from evalscope.perf.experiments.orchestrator import CacheExperimentOutcome
 from evalscope.perf.integrations.aiperf.single_run import AIPerfSingleRunRequest, run_single
 from evalscope.perf.main import run_perf_benchmark
 from evalscope.run import run_task
@@ -31,7 +33,7 @@ class ActiveTask:
     info: ActiveTaskInfo
     cancel_event: Any = None
     cleanup_event: threading.Event = field(default_factory=threading.Event)
-    external_outcome: Optional[ExecutionOutcome] = None
+    external_outcome: Optional[ExecutionOutcome | CacheExperimentOutcome] = None
     stop_timeout: float = 0
 
 
@@ -120,7 +122,9 @@ def stop_process(task_id: str) -> bool:
         if not record.cleanup_event.wait(timeout=record.stop_timeout):
             return False
         outcome = record.external_outcome
-        return bool(outcome and outcome.exit_reason == 'cancelled' and outcome.cleanup_confirmed)
+        if isinstance(outcome, ExecutionOutcome):
+            return outcome.exit_reason == 'cancelled' and outcome.cleanup_confirmed
+        return bool(outcome and outcome.status == 'stopped' and outcome.cleanup_confirmed)
     if wait([proc.sentinel], timeout=0):
         # Process already exited on its own; do NOT mark as user-stopped, or a
         # pending success result would be masked as TaskStoppedError. Treat the
@@ -334,14 +338,65 @@ def run_single_aiperf_in_subprocess(
     return result
 
 
+def _experiment_worker(
+    context: ExecutionContext, arguments: AIPerfArguments, cancel_event: Any, start_event: Any
+) -> CacheExperimentOutcome:
+    from evalscope.perf.experiments.orchestrator import run_cache_experiment
+    from evalscope.perf.experiments.prefix_workload import WorkloadCancelled
+    from evalscope.perf.experiments.tokenizer import HuggingFacePrefixTokenizer
+
+    while not start_event.wait(timeout=0.1):
+        parent = multiprocessing.parent_process()
+        if parent is not None and not parent.is_alive():
+            return CacheExperimentOutcome(
+                status='error',
+                quality='invalid',
+                plan_hash='',
+                completed_subruns=0,
+                total_subruns=0,
+                cleanup_confirmed=True,
+            )
+    try:
+        if cancel_event.is_set():
+            raise WorkloadCancelled()
+        tokenizer = HuggingFacePrefixTokenizer(arguments.tokenizer_path)
+        pool = tokenizer.candidate_ids(max(16384, arguments.load.request_count), cancel_event)
+        return run_cache_experiment(
+            arguments, context, tokenizer, pool, tokenizer.tokenizer_hash, tokenizer.template_hash, cancel_event
+        )
+    except WorkloadCancelled:
+        return CacheExperimentOutcome(
+            status='stopped',
+            quality='partial',
+            plan_hash='',
+            completed_subruns=0,
+            total_subruns=0,
+            cleanup_confirmed=True,
+        )
+
+
+def run_cache_experiment_in_subprocess(
+    context: ExecutionContext,
+    arguments: AIPerfArguments,
+    task_meta: Optional[ActiveTaskInfo] = None,
+    finalize: Optional[Callable[[CacheExperimentOutcome], None]] = None,
+) -> CacheExperimentOutcome:
+    """Run a cache experiment with service-owned cancellation and cleanup."""
+    result = _run_controlled_subprocess(
+        context, _experiment_worker, arguments, CacheExperimentOutcome, task_meta, finalize
+    )
+    assert isinstance(result, CacheExperimentOutcome)
+    return result
+
+
 def _run_controlled_subprocess(
     context: ExecutionContext,
     worker: Callable[..., Any],
-    payload: ExternalInvocation | AIPerfSingleRunRequest,
-    result_type: Type[ExecutionOutcome],
+    payload: ExternalInvocation | AIPerfArguments | AIPerfSingleRunRequest,
+    result_type: Type[ExecutionOutcome] | Type[CacheExperimentOutcome],
     task_meta: Optional[ActiveTaskInfo],
-    finalize: Optional[Callable[[ExecutionOutcome], None]] = None,
-) -> ExecutionOutcome:
+    finalize: Optional[Callable[[Any], None]] = None,
+) -> ExecutionOutcome | CacheExperimentOutcome:
     if context.runtime is None:
         raise ValueError('External runtime is required')
     ctx = multiprocessing.get_context('spawn')

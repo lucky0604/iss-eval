@@ -2,11 +2,12 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import tempfile
 import time
 from functools import lru_cache
 
-from flask import Blueprint, current_app, jsonify, request, send_file
+from flask import Blueprint, current_app, jsonify, make_response, render_template_string, request, send_file
 from tabulate import tabulate
 
 from evalscope.metrics.semantics import resolve_perf_semantics
@@ -14,6 +15,9 @@ from evalscope.perf.arguments import Arguments as PerfArguments
 from evalscope.perf.executors.arguments import AIPerfArguments, parse_perf_task_arguments
 from evalscope.perf.executors.external import supports_external_runner
 from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, ExternalRuntime
+from evalscope.perf.experiments.planner import plan_cache_experiment
+from evalscope.perf.experiments.tokenizer import HuggingFacePrefixTokenizer
+from evalscope.perf.integrations.aiperf.preflight import probe_nodes
 from evalscope.perf.integrations.aiperf.single_run import (
     AIPerfSingleRunRequest,
     probe_version,
@@ -21,18 +25,26 @@ from evalscope.perf.integrations.aiperf.single_run import (
 )
 from evalscope.perf.plugin.api.base import ApiPluginBase
 from evalscope.perf.plugin.registry import ApiRegistry, DatasetRegistry
-from evalscope.perf.results.aiperf_import import import_aiperf_run
+from evalscope.perf.results.aiperf_import import import_aiperf_run, query_aiperf_requests, query_node_metrics
 from evalscope.perf.results.models import AIPerfImportArguments, MetricTargetReference
 from evalscope.perf.results.single_run import SingleRunManifest, write_single_manifest
 from evalscope.perf.sla.sla_run import SLAResult, format_sla_tables
 from evalscope.perf.utils.benchmark_util import Metrics
 from evalscope.perf.utils.rich_display import EmbeddingResultAnalyzer, LLMResultAnalyzer
 from evalscope.service.api_models import (
+    CacheExperimentListResponse,
+    CacheExperimentResponse,
+    CacheNodeMetricsResponse,
+    CacheRequestsResponse,
+    CacheScenarioResponse,
     DeletePerfRunResponse,
     EvalInvokeResponse,
     ListPerfRunsResponse,
     LogResponse,
     PerfDetailResponse,
+    PerfEnginesResponse,
+    PerfInvokeResponse,
+    PerfPlanResponse,
     PerfRequestsResponse,
     PerfRunsListResponse,
     ProgressResponse,
@@ -52,6 +64,8 @@ from ..utils import (
     create_log_file,
     finish_task,
     get_log_content,
+    list_active_tasks,
+    read_task_manifest,
     run_in_subprocess,
     run_perf_wrapper,
     serialize_result,
@@ -59,7 +73,7 @@ from ..utils import (
     task_file_path,
     validate_task_id,
 )
-from ..utils.process import run_single_aiperf_in_subprocess, task_is_cancelling
+from ..utils.process import run_cache_experiment_in_subprocess, run_single_aiperf_in_subprocess, task_is_cancelling
 
 logger = get_logger()
 
@@ -118,6 +132,224 @@ def _build_perf_table(result, api_type: str = None) -> str:
 bp_perf = Blueprint('perf', __name__, url_prefix='/api/v1/perf')
 
 
+@bp_perf.route('/experiments', methods=['GET'])
+def list_cache_experiments():
+    """List experiments in the service outputs root without exposing artifact paths."""
+    from ..perf_experiments import load_experiment
+    from ..utils import log
+
+    try:
+        offset = int(request.args.get('offset', '0'))
+        limit = int(request.args.get('limit', '100'))
+        if offset < 0 or not 1 <= limit <= 500:
+            raise ValueError('Invalid page')
+        rows = []
+        if os.path.isdir(log.OUTPUT_DIR):
+            with os.scandir(log.OUTPUT_DIR) as entries:
+                names = sorted((entry.name for entry in entries if entry.is_dir(follow_symlinks=False)), reverse=True)
+            for name in names:
+                try:
+                    experiment = load_experiment(name)
+                except (OSError, ValueError):
+                    continue
+                state = experiment.state
+                rows.append(
+                    {
+                        'task_id': name,
+                        'status': state.status,
+                        'quality': state.quality,
+                        'completed_subruns': state.completed_subruns,
+                        'total_subruns': state.total_subruns,
+                    }
+                )
+        return json_response(
+            CacheExperimentListResponse,
+            {'experiments': rows[offset : offset + limit], 'total': len(rows), 'offset': offset, 'limit': limit},
+        )
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid experiment page'}), 400
+
+
+@bp_perf.route('/experiments/<task_id>', methods=['GET'])
+def get_cache_experiment(task_id: str):
+    """Read the saved plan and experiment status, including partial runs."""
+    from ..perf_experiments import load_experiment
+
+    try:
+        return json_response(CacheExperimentResponse, load_experiment(task_id))
+    except FileNotFoundError:
+        return jsonify({'error': 'Experiment not found'}), 404
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid experiment data or task ID'}), 400
+
+
+@bp_perf.route('/experiments/<task_id>', methods=['DELETE'])
+def delete_cache_experiment(task_id: str):
+    """Delete an inactive experiment and all of its subruns."""
+    from ..perf_experiments import load_experiment
+
+    try:
+        load_experiment(task_id)
+        if task_id in active_task_ids():
+            return jsonify({'error': 'Cannot delete an active task'}), 409
+        run_dir = task_file_path(task_id, 'perf')
+        expected = os.path.join(os.path.realpath(os.path.join(OUTPUT_DIR, task_id)), 'perf')
+        if run_dir != expected:
+            raise ValueError('Invalid experiment directory')
+        shutil.rmtree(run_dir)
+        return json_response(DeletePerfRunResponse, {'success': True, 'path': f'{task_id}/perf'})
+    except FileNotFoundError:
+        return jsonify({'error': 'Experiment not found'}), 404
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid experiment data or task ID'}), 400
+
+
+@bp_perf.route('/experiments/<task_id>/report', methods=['GET'])
+def get_cache_experiment_report(task_id: str):
+    """Render a bounded, standalone summary using the same projections as the API."""
+    from ..perf_experiments import load_experiment, load_scenario
+
+    try:
+        experiment = load_experiment(task_id)
+        rows = []
+        for item, state in zip(experiment.plan.subruns[:100], experiment.state.subruns[:100]):
+            scenario = None
+            if state.scenario:
+                try:
+                    scenario = load_scenario(task_id, item.subrun_id)
+                except (OSError, ValueError):
+                    pass
+            rows.append((item, state, scenario))
+        html = render_template_string(
+            """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Prefix cache experiment</title></head>
+<body><h1>Prefix cache experiment: {{ task_id }}</h1>
+<p>Status: {{ experiment.state.status }}; quality: {{ experiment.state.quality or 'unavailable' }};
+completed: {{ experiment.state.completed_subruns }}/{{ experiment.state.total_subruns }}</p>
+<p>Target reuse, generated reuse and server-reported cache reads are distinct. Missing values are unavailable.
+Node metric semantics, chat-template match and routing coverage are unverified.</p>
+{% if experiment.plan.subruns|length > rows|length %}<p>Showing the first {{ rows|length }} of
+{{ experiment.plan.subruns|length }} subruns. Use the Web report for the complete matrix.</p>{% endif %}
+<table border="1"><thead><tr><th>Run</th><th>Load mode</th><th>Load</th><th>Repetition</th>
+<th>Status</th><th>Target reuse</th><th>Generated reuse</th><th>Server cache reads</th>
+<th>Observed requests</th><th>Quality reasons</th></tr></thead><tbody>
+{% for item, state, scenario in rows %}<tr><td>{{ item.subrun_id }}</td><td>{{ item.load_mode }}</td>
+<td>{{ item.load_point.concurrency if item.load_point.concurrency is not none else item.load_point.rate }}</td>
+<td>{{ item.repetition }}</td><td>{{ state.status }}</td><td>{{ item.target_ratio }}</td>
+<td>{{ scenario.generated_ratio if scenario and scenario.generated_ratio is not none else 'unavailable' }}</td>
+<td>{{ scenario.cache.ratio if scenario and scenario.cache and scenario.cache.ratio is not none else 'unavailable' }}</td>
+<td>{{ scenario.cache.observed_requests ~ '/' ~ scenario.cache.successful_requests if scenario and scenario.cache and scenario.cache.successful_requests is not none else 'unavailable' }}</td>
+<td>{{ scenario.quality_reasons|join(', ') if scenario else 'unavailable' }}</td></tr>{% endfor %}
+</tbody></table></body></html>""",
+            task_id=task_id,
+            experiment=experiment,
+            rows=rows,
+        )
+        response = make_response(html)
+        response.headers['Content-Security-Policy'] = "default-src 'none'"
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        return response
+    except FileNotFoundError:
+        return jsonify({'error': 'Experiment not found'}), 404
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid experiment data or task ID'}), 400
+
+
+@bp_perf.route('/experiments/<task_id>/runs/<subrun_id>', methods=['GET'])
+def get_cache_scenario(task_id: str, subrun_id: str):
+    """Read generated reuse, observed cache usage and run quality."""
+    from ..perf_experiments import load_scenario
+
+    try:
+        return json_response(CacheScenarioResponse, load_scenario(task_id, subrun_id))
+    except FileNotFoundError:
+        return jsonify({'error': 'Scenario not found'}), 404
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid scenario data or identity'}), 400
+
+
+@bp_perf.route('/experiments/<task_id>/runs/<subrun_id>/requests', methods=['GET'])
+def get_cache_scenario_requests(task_id: str, subrun_id: str):
+    """Page normalized request records for a planned subrun."""
+    from ..perf_experiments import scenario_path
+
+    try:
+        _, path = scenario_path(task_id, subrun_id)
+        offset = int(request.args.get('offset', '0'))
+        limit = int(request.args.get('limit', '100'))
+        total, rows = query_aiperf_requests(path, offset=offset, limit=limit, phase=request.args.get('phase'))
+        return json_response(
+            CacheRequestsResponse, {'total': total, 'offset': offset, 'limit': limit, 'requests': rows}
+        )
+    except FileNotFoundError:
+        return jsonify({'error': 'Scenario results not found'}), 404
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid request page or scenario identity'}), 400
+
+
+@bp_perf.route('/experiments/<task_id>/runs/<subrun_id>/metrics', methods=['GET'])
+def get_cache_scenario_metrics(task_id: str, subrun_id: str):
+    """Page raw node-window samples with explicitly unverified semantics."""
+    from ..perf_experiments import scenario_path
+
+    try:
+        _, path = scenario_path(task_id, subrun_id)
+        offset = int(request.args.get('offset', '0'))
+        limit = int(request.args.get('limit', '500'))
+        start = request.args.get('start_ns')
+        end = request.args.get('end_ns')
+        node_id = request.args.get('node_id')
+        metric_name = request.args.get('metric_name')
+        if node_id is not None or metric_name is not None:
+            count, _ = query_node_metrics(path, node_id=node_id, metric_name=metric_name, limit=1)
+            if not count:
+                return jsonify({'error': 'Node or metric not found in this scenario'}), 404
+        total, rows = query_node_metrics(
+            path,
+            node_id=node_id,
+            metric_name=metric_name,
+            start_ns=int(start) if start is not None else None,
+            end_ns=int(end) if end is not None else None,
+            offset=offset,
+            limit=limit,
+        )
+        return json_response(
+            CacheNodeMetricsResponse,
+            {
+                'total': total,
+                'offset': offset,
+                'limit': limit,
+                'samples': rows,
+                'aggregation': 'raw',
+                'downsample': 'none',
+            },
+        )
+    except FileNotFoundError:
+        return jsonify({'error': 'Scenario results not found'}), 404
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid metrics page or scenario identity'}), 400
+
+
+@bp_perf.route('/server-metrics', methods=['GET'])
+def get_server_metrics():
+    """Read a planned subrun's node samples within the configured outputs root."""
+    from ..utils import log
+
+    root = request.args.get('root_path', log.OUTPUT_DIR)
+    relative = request.args.get('path', '')
+    subrun_id = request.args.get('subrun_id', '')
+    try:
+        if os.path.realpath(root) != os.path.realpath(log.OUTPUT_DIR):
+            raise ValueError('Invalid outputs root')
+        parts = relative.split('/')
+        if len(parts) != 2 or parts[1] != 'perf':
+            raise ValueError('Invalid experiment path')
+        validate_task_id(parts[0])
+        return get_cache_scenario_metrics(parts[0], subrun_id)
+    except (OSError, ValueError):
+        return jsonify({'error': 'Invalid experiment path or outputs root'}), 400
+
+
 @lru_cache(maxsize=16)
 def _probe_aiperf_runtime(path: str, identity: tuple, epoch: int) -> bool:
     try:
@@ -149,6 +381,70 @@ def _aiperf_runtime() -> ExternalRuntime | None:
     except OSError:
         return None
     return ExternalRuntime(executable=path)
+
+
+@bp_perf.route('/engines', methods=['GET'])
+def get_perf_engines():
+    """Describe execution engines without exposing local runtime paths."""
+    available = _aiperf_runtime() is not None
+    return json_response(
+        PerfEnginesResponse,
+        {
+            'engines': [
+                {'engine': 'evalscope', 'available': True},
+                {
+                    'engine': 'aiperf',
+                    'available': available,
+                    'version': '0.13.0' if available else None,
+                    'protocols': ['openai_chat'],
+                    'reason': None if available else 'AIPerf 0.13.0 runtime is unavailable',
+                },
+            ]
+        },
+    )
+
+
+@bp_perf.route('/validate', methods=['POST'])
+def validate_perf_experiment():
+    """Plan a local cache experiment without sending inference or Metrics requests."""
+    task_id = request.headers.get('EvalScope-Task-Id')
+    try:
+        validate_task_id(task_id)
+        task = parse_perf_task_arguments(request.get_json())
+        if task.engine != 'aiperf' or task.aiperf is None:
+            raise ValueError('AIPerf configuration is required')
+        tokenizer = HuggingFacePrefixTokenizer(task.aiperf.tokenizer_path)
+        plan = plan_cache_experiment(task.aiperf, task_id, tokenizer.tokenizer_hash, tokenizer.template_hash)
+    except (ValueError, TypeError, OSError, ImportError):
+        return jsonify({'error': 'Invalid cache experiment configuration or tokenizer'}), 400
+    flag = request.args.get('probe_metrics', '0')
+    if flag not in ('0', '1'):
+        return jsonify({'error': 'Invalid metrics probe option'}), 400
+    try:
+        nodes = probe_nodes(task.aiperf.telemetry.targets) if flag == '1' else []
+    except (ImportError, RuntimeError):
+        return jsonify({'error': 'Metrics preflight is unavailable'}), 503
+    available = _aiperf_runtime() is not None
+    warnings = ([] if available else ['AIPerf 0.13.0 runtime is unavailable']) + [
+        'Model chat template match is unverified',
+        'Node metric semantics and routing coverage are unverified',
+    ]
+    if task.aiperf.telemetry.required and not task.aiperf.telemetry.targets:
+        warnings.append('Required node metrics targets are missing')
+    elif task.aiperf.telemetry.targets and flag == '0':
+        warnings.append('Node metrics have not been probed')
+    elif any(node.status != 'available' for node in nodes):
+        warnings.append('One or more node metrics are unavailable or invalid')
+    return json_response(
+        PerfPlanResponse,
+        {
+            'plan': plan,
+            'engine_available': available,
+            'metrics_probe': 'completed' if flag == '1' else 'not_requested',
+            'nodes': nodes,
+            'warnings': warnings,
+        },
+    )
 
 
 def _send_safe_perf_report(report_file: str):
@@ -188,11 +484,74 @@ def _validate_performance_config(args: PerfArguments) -> None:
         raise ValueError('The random dataset requires tokenizer_path')
 
 
+def _invoke_aiperf(arguments: AIPerfArguments, task_id: str):
+    runtime = _aiperf_runtime()
+    if runtime is None:
+        return jsonify({'error': 'AIPerf 0.13.0 runtime is unavailable'}), 503
+    if arguments.cache_experiment is None:
+        return _invoke_single_aiperf(arguments, task_id, runtime)
+    try:
+        tokenizer = HuggingFacePrefixTokenizer(arguments.tokenizer_path)
+        plan = plan_cache_experiment(arguments, task_id, tokenizer.tokenizer_hash, tokenizer.template_hash)
+        expected = request.headers.get('EvalScope-Plan-Hash')
+        if expected is not None and expected != plan.plan_hash:
+            return jsonify({'error': 'Experiment plan changed; validate again'}), 409
+        rejection = _required_metrics_preflight(arguments)
+        if rejection is not None:
+            return rejection
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        os.mkdir(os.path.join(OUTPUT_DIR, task_id))
+    except FileExistsError:
+        return jsonify({'error': 'Task ID already exists'}), 409
+    except (ValueError, TypeError, OSError, ImportError):
+        return jsonify({'error': 'Invalid cache experiment configuration or tokenizer'}), 400
+    try:
+        output_dir = task_file_path(task_id, 'perf')
+        create_log_file(task_id, os.path.join('perf', 'benchmark.log'))
+        meta = build_task_info(task_id, 'perf', arguments, arguments.alias, engine='aiperf')
+        context = ExecutionContext(
+            task_id=task_id, output_dir=output_dir, runtime=runtime, expected_plan_hash=plan.plan_hash
+        )
+        outcome = run_cache_experiment_in_subprocess(
+            context, arguments, task_meta=meta, finalize=lambda result: finish_task(task_id, result.status)
+        )
+        return json_response(
+            PerfInvokeResponse,
+            {'status': outcome.status, 'task_id': task_id, 'result': outcome.model_dump(mode='json')},
+        )
+    except Exception as error:
+        finish_task(task_id, 'error')
+        logger.error(f'[{task_id}] AIPerf task failed ({type(error).__name__})')
+        return jsonify({'status': 'error', 'task_id': task_id, 'error': 'Task failed; check the task log'}), 500
+
+
+def _required_metrics_preflight(arguments: AIPerfArguments):
+    if not arguments.telemetry.required:
+        return None
+    if not arguments.telemetry.targets:
+        return jsonify({'error': 'Required node metrics have no configured targets'}), 400
+    try:
+        nodes = probe_nodes(arguments.telemetry.targets)
+    except (ImportError, RuntimeError):
+        return jsonify({'error': 'Metrics preflight is unavailable'}), 503
+    if any(node.status != 'available' for node in nodes):
+        return jsonify(
+            {
+                'error': 'Required node metrics preflight failed',
+                'nodes': [node.model_dump(mode='json') for node in nodes],
+            }
+        ), 400
+    return None
+
+
 def _invoke_single_aiperf(arguments: AIPerfArguments, task_id: str, runtime: ExternalRuntime):
     try:
         validate_single_run_configuration(arguments)
         if arguments.input_prompts is None:
             raise ValueError('Single-run inputs are required')
+        rejection = _required_metrics_preflight(arguments)
+        if rejection is not None:
+            return rejection
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         os.mkdir(os.path.join(OUTPUT_DIR, task_id))
     except FileExistsError:
@@ -291,7 +650,7 @@ def _invoke_single_aiperf(arguments: AIPerfArguments, task_id: str, runtime: Ext
         )
         status = final_status[0]
         return json_response(
-            EvalInvokeResponse,
+            PerfInvokeResponse,
             {
                 'status': status,
                 'task_id': task_id,
@@ -314,23 +673,21 @@ def run_performance_test():
     if not isinstance(data, dict) or not data:
         return jsonify({'error': 'Request body must be a JSON object'}), 400
     data = dict(data)
+
     if 'engine' in data:
         task_id = request.headers.get('EvalScope-Task-Id')
         if not task_id:
             return jsonify({'error': 'EvalScope-Task-Id header is required'}), 400
         try:
             validate_task_id(task_id)
+        except ValueError as error:
+            return jsonify({'error': str(error)}), 400
+        try:
             task_args = parse_perf_task_arguments(data)
         except (ValueError, TypeError):
-            return jsonify({'error': 'Invalid performance configuration or task ID'}), 400
+            return jsonify({'error': 'Invalid performance configuration'}), 400
         if task_args.engine == 'aiperf':
-            runtime = _aiperf_runtime()
-            if runtime is None:
-                return jsonify({'error': 'AIPerf 0.13.0 runtime is unavailable'}), 503
-            assert task_args.aiperf is not None
-            if task_args.aiperf.cache_experiment is not None:
-                return jsonify({'error': 'Cache experiments are not enabled'}), 400
-            return _invoke_single_aiperf(task_args.aiperf, task_id, runtime)
+            return _invoke_aiperf(task_args.aiperf, task_id)
         data = dict(data['native'])
 
     required_fields = ['model']
@@ -488,6 +845,28 @@ def get_performance_progress():
     except ValueError:
         return jsonify({'error': 'Invalid task_id'}), 400
     try:
+        from .tasks import _aiperf_progress, _with_progress
+
+        active = next((item for item in list_active_tasks() if item['task_id'] == task_id), None)
+        saved = read_task_manifest(os.path.join(OUTPUT_DIR, task_id)) or {}
+        if (active and active.get('engine') == 'aiperf') or saved.get('engine') == 'aiperf':
+            details = _with_progress(active) if active else _aiperf_progress(task_id)
+            status = details.get('status') if active else saved.get('status', 'unknown')
+            if not active and status not in ('completed', 'stopped', 'error'):
+                status = 'unknown'
+            if status not in ('running', 'cancelling', 'finalizing', 'completed', 'stopped', 'error'):
+                status = 'unknown'
+            return json_response(
+                ProgressResponse,
+                {
+                    'percent': 100.0 if status == 'completed' else details.get('percent'),
+                    'status': status,
+                    **{
+                        key: details.get(key)
+                        for key in ('phase', 'current_subrun', 'completed_subruns', 'total_subruns', 'quality')
+                    },
+                },
+            )
         progress_file = task_file_path(task_id, os.path.join('perf', 'progress.json'))
         with open(progress_file, 'r', encoding='utf-8') as f:
             progress = json.load(f)

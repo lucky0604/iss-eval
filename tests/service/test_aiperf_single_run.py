@@ -73,6 +73,7 @@ def test_single_task_rejects_missing_or_mismatched_inputs(client) -> None:
 
 
 def test_missing_required_telemetry_does_not_report_completed(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    from evalscope.perf.integrations.aiperf.preflight import NodePreflight
     from evalscope.service.blueprints import perf
 
     def execute(context, request, task_meta, finalize):
@@ -87,6 +88,9 @@ def test_missing_required_telemetry_does_not_report_completed(client, monkeypatc
         return outcome
 
     monkeypatch.setattr(perf, 'run_single_aiperf_in_subprocess', execute)
+    monkeypatch.setattr(perf, 'probe_nodes', lambda targets: [NodePreflight(
+        node_id='prefill', role='prefill', engine='vllm', status='available', elapsed_ms=0,
+    )])
     payload = _payload()
     payload['aiperf']['telemetry'] = {'required': True, 'targets': [
         {'node_id': 'prefill', 'role': 'prefill', 'engine': 'vllm', 'url': 'http://localhost:9090/metrics'}

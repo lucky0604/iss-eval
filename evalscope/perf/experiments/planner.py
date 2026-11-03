@@ -3,7 +3,7 @@
 import hashlib
 import json
 import random
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from pydantic import Field
 
@@ -26,7 +26,7 @@ class CacheSubrunPlan(BaseArgument):
     namespace: str
     request_count: int
     primer_requests: int
-    output_token_limit: int
+    output_token_limit: Optional[int] = None
 
 
 class CacheExperimentPlan(BaseArgument):
@@ -40,8 +40,8 @@ class CacheExperimentPlan(BaseArgument):
     subruns: List[CacheSubrunPlan]
     profiling_requests: int = Field(ge=0)
     primer_requests: int = Field(ge=0)
-    max_profiling_output_tokens: int = Field(ge=0)
-    max_primer_output_tokens: int = Field(ge=0)
+    max_profiling_output_tokens: Optional[int] = Field(default=None, ge=0)
+    max_primer_output_tokens: Optional[int] = Field(default=None, ge=0)
 
 
 def plan_cache_experiment(
@@ -114,6 +114,6 @@ def plan_cache_experiment(
         subruns=members,
         profiling_requests=sum(member.request_count for member in members),
         primer_requests=sum(member.primer_requests for member in members),
-        max_profiling_output_tokens=sum(member.request_count * member.output_token_limit for member in members),
+        max_profiling_output_tokens=sum(member.request_count * arguments.load.output_token_limit for member in members),
         max_primer_output_tokens=sum(member.primer_requests for member in members),
     )

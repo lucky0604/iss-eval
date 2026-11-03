@@ -116,7 +116,7 @@ class TelemetryConfiguration(BaseArgument):
     required: bool = False
     sample_interval_seconds: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     max_scrape_gap_seconds: Optional[float] = Field(default=None, ge=1e-9, le=86400, allow_inf_nan=False)
-    targets: List[TelemetryTarget] = Field(default_factory=list)
+    targets: List[TelemetryTarget] = Field(default_factory=list, max_length=64)
 
     @field_validator('sample_interval_seconds', 'max_scrape_gap_seconds', mode='before')
     @classmethod

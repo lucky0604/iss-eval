@@ -1,0 +1,145 @@
+"""Read-only projections of AIPerf experiment artifacts."""
+
+import hashlib
+import json
+import math
+import os
+import re
+from typing import Any, Dict, Tuple
+
+from evalscope.perf.experiments.planner import CacheExperimentPlan, CacheSubrunPlan
+from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis
+from evalscope.perf.results.aiperf_import import load_aiperf_run, observed_cache_usage
+from evalscope.service.api_models import CacheExperimentResponse, CacheScenarioResponse
+from evalscope.service.utils import active_task_ids, task_file_path, validate_task_id
+
+_SUBRUN = re.compile(r'^r\d{3,}-l\d{3,}-n\d{3,}$')
+
+
+def _read(task_id: str, subpath: str) -> Dict[str, Any]:
+    from evalscope.service.utils import log
+
+    path = task_file_path(task_id, subpath)
+    perf_dir = task_file_path(task_id, 'perf')
+    expected = os.path.join(os.path.realpath(os.path.join(log.OUTPUT_DIR, task_id)), 'perf')
+    if perf_dir != expected or not path.startswith(perf_dir + os.sep):
+        raise ValueError('Experiment document escapes the perf directory')
+    if os.path.getsize(path) > 16 * 1024 * 1024:
+        raise ValueError('Experiment document is too large')
+    with open(path, encoding='utf-8') as file:
+        data = json.load(file)
+    if not isinstance(data, dict):
+        raise ValueError('Invalid experiment document')
+    return data
+
+
+def load_experiment(task_id: str) -> CacheExperimentResponse:
+    """Project an experiment plan and its authoritative persisted status."""
+    validate_task_id(task_id)
+    raw_plan = _read(task_id, 'perf/experiment_plan.json')
+    plan = CacheExperimentPlan.model_validate(raw_plan)
+    state = _read(task_id, 'perf/experiment.json')
+    rows = state.get('subruns')
+    if (
+        state.get('plan_hash') != plan.plan_hash
+        or not isinstance(rows, list)
+        or len(rows) != len(plan.subruns)
+        or state.get('total_subruns') != len(rows)
+    ):
+        raise ValueError('Experiment plan and state do not match')
+    identifiers = set()
+    for index, (item, row) in enumerate(zip(plan.subruns, rows)):
+        if not isinstance(row, dict) or row.get('subrun_id') != item.subrun_id or not _SUBRUN.fullmatch(item.subrun_id):
+            raise ValueError('Experiment subrun identity mismatch')
+        if item.subrun_id in identifiers or item.order != index:
+            raise ValueError('Experiment subrun order or identity is invalid')
+        identifiers.add(item.subrun_id)
+        expected = f'runs/{item.subrun_id}/scenario.json'
+        if row.get('scenario') is not None and row['scenario'] != expected:
+            raise ValueError('Invalid scenario reference')
+    payload = {'config_hash': raw_plan.get('configuration_hash'), 'subruns': raw_plan.get('subruns')}
+    actual_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    if actual_hash != plan.plan_hash:
+        raise ValueError('Experiment plan contents do not match its identity')
+    if state.get('status') == 'running' and task_id not in active_task_ids():
+        state['status'] = 'unknown'
+    return CacheExperimentResponse(task_id=task_id, plan=plan, state=state)
+
+
+def scenario_path(task_id: str, subrun_id: str) -> Tuple[CacheSubrunPlan, str]:
+    """Resolve a subrun only after checking membership in its saved plan."""
+    if not _SUBRUN.fullmatch(subrun_id):
+        raise ValueError('Invalid subrun ID')
+    experiment = load_experiment(task_id)
+    item = next((row for row in experiment.plan.subruns if row.subrun_id == subrun_id), None)
+    if item is None:
+        raise ValueError('Unknown subrun ID')
+    runs = task_file_path(task_id, 'perf/runs')
+    if runs != os.path.join(task_file_path(task_id, 'perf'), 'runs'):
+        raise ValueError('Scenario runs directory cannot be redirected')
+    run = task_file_path(task_id, f'perf/runs/{subrun_id}')
+    normalized = task_file_path(task_id, f'perf/runs/{subrun_id}/normalized')
+    if run != os.path.join(runs, subrun_id) or not normalized.startswith(run + os.sep):
+        raise ValueError('Scenario path escapes its planned run')
+    return item, normalized
+
+
+def load_scenario(task_id: str, subrun_id: str) -> CacheScenarioResponse:
+    """Project generated reuse separately from server-observed cache usage."""
+    item, normalized = scenario_path(task_id, subrun_id)
+    scenario_file = task_file_path(task_id, f'perf/runs/{subrun_id}/scenario.json')
+    if not scenario_file.startswith(os.path.dirname(normalized) + os.sep):
+        raise ValueError('Scenario document escapes its planned run')
+    state = _read(task_id, f'perf/runs/{subrun_id}/scenario.json')
+    if state.get('target_ratio') != item.target_ratio:
+        raise ValueError('Scenario target does not match plan')
+    workload = state.get('workload')
+    requests = workload.get('requests', []) if isinstance(workload, dict) else []
+    if not isinstance(requests, list) or len(requests) > item.request_count:
+        raise ValueError('Invalid generated workload')
+    numerator = denominator = count = 0
+    for row in requests:
+        if not isinstance(row, dict):
+            raise ValueError('Invalid generated request')
+        shared, total = row.get('shared_tokens'), row.get('input_tokens')
+        if shared is None:
+            continue
+        if type(shared) is not int or type(total) is not int or total <= 0 or not 0 <= shared <= total:
+            raise ValueError('Invalid generated reuse value')
+        numerator += shared
+        denominator += total
+        count += 1
+    reasons = state.get('quality_reasons', [])
+    if (
+        not isinstance(reasons, list)
+        or len(reasons) > 100
+        or any(not isinstance(v, str) or len(v) > 200 for v in reasons)
+    ):
+        raise ValueError('Invalid quality reasons')
+    result = (
+        load_aiperf_run(normalized) if state.get('normalized') == 'normalized' and os.path.isdir(normalized) else None
+    )
+    cache = observed_cache_usage(normalized) if result is not None else None
+    analysis = None
+    if state.get('node_analysis') is not None:
+        if state['node_analysis'] != 'node_analysis.json':
+            raise ValueError('Invalid node analysis reference')
+        run_dir = os.path.dirname(normalized)
+        analysis_path = task_file_path(task_id, f'perf/runs/{subrun_id}/node_analysis.json')
+        if not analysis_path.startswith(run_dir + os.sep):
+            raise ValueError('Node analysis escapes its planned run')
+        analysis = NodeMetricsAnalysis.model_validate(_read(task_id, f'perf/runs/{subrun_id}/node_analysis.json'))
+    ratio = numerator / denominator if denominator else None
+    if ratio is not None and not math.isfinite(ratio):
+        raise ValueError('Invalid generated reuse ratio')
+    return CacheScenarioResponse(
+        subrun_id=subrun_id,
+        status=str(state.get('status', 'unknown')),
+        target_ratio=item.target_ratio,
+        generated_ratio=ratio,
+        generated_count=count,
+        cache=cache,
+        result=result,
+        node_analysis=analysis,
+        quality_reasons=reasons,
+    )

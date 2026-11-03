@@ -665,7 +665,7 @@ def query_aiperf_requests(
     status: Optional[str] = None,
 ) -> tuple[int, list[PerfRequestRecord]]:
     """Read a bounded, stable page and total count without loading raw JSONL."""
-    if type(offset) is not int or type(limit) is not int or offset < 0 or not 1 <= limit <= 500:
+    if type(offset) is not int or type(limit) is not int or not 0 <= offset <= 2**63 - 1 or not 1 <= limit <= 500:
         raise ValueError('Invalid request page')
     if phase is not None and phase not in ('warmup', 'profiling'):
         raise ValueError('Invalid request phase')
@@ -772,11 +772,14 @@ def query_node_metrics(
     limit: int = 500,
 ) -> tuple[int, list[NodeMetricSample]]:
     """Read a bounded source-attributed node time-series page."""
-    if type(offset) is not int or type(limit) is not int or offset < 0 or not 1 <= limit <= 2000:
+    if type(offset) is not int or type(limit) is not int or not 0 <= offset <= 2**63 - 1 or not 1 <= limit <= 2000:
         raise ValueError('Invalid node metrics page')
     for value in (start_ns, end_ns):
-        if value is not None and (type(value) is not int or value < 0):
+        if value is not None and (type(value) is not int or not 0 <= value <= 2**63 - 1):
             raise ValueError('Invalid node metrics window')
+    for value in (node_id, metric_name):
+        if value is not None and (not isinstance(value, str) or not value or len(value) > 512 or '\x00' in value):
+            raise ValueError('Invalid node metrics dimension')
     if start_ns is not None and end_ns is not None and start_ns > end_ns:
         raise ValueError('Invalid node metrics window')
     clauses = []

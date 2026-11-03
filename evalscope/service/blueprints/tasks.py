@@ -45,7 +45,61 @@ def _read_progress_percent(task_id: str, kind: str) -> float | None:
     return max(0.0, min(100.0, float(percent)))
 
 
+def _experiment_progress(task_id: str) -> dict:
+    try:
+        path = task_file_path(task_id, os.path.join('perf', 'experiment.json'))
+        if os.path.getsize(path) > 16 * 1024 * 1024:
+            return {}
+        with open(path, encoding='utf-8') as file:
+            state = json.load(file)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(state, dict):
+        return {}
+    completed, total = state.get('completed_subruns'), state.get('total_subruns')
+    if type(completed) is not int or type(total) is not int or total <= 0 or not 0 <= completed <= total:
+        return {}
+    phase = state.get('phase') or state.get('last_phase')
+    if phase not in ('preflight', 'generating', 'priming', 'profiling', 'draining', 'importing', None):
+        phase = None
+    current = state.get('current_subrun')
+    if not isinstance(current, str) or len(current) > 100:
+        current = None
+    percent = 100.0 * completed / total
+    if state.get('status') != 'completed':
+        percent = min(percent, 99.9)
+    quality = state.get('quality')
+    if quality not in ('complete', 'partial', 'invalid'):
+        quality = None
+    return {
+        'percent': percent,
+        'phase': phase,
+        'current_subrun': current,
+        'completed_subruns': completed,
+        'total_subruns': total,
+        'quality': quality,
+    }
+
+
+def _aiperf_progress(task_id: str) -> dict:
+    progress = _experiment_progress(task_id)
+    if progress:
+        return progress
+    from evalscope.perf.results.single_run import load_single_manifest
+
+    try:
+        manifest = load_single_manifest(task_file_path(task_id, 'perf'))
+        return {'quality': manifest.quality, 'percent': 100.0 if manifest.status == 'completed' else None}
+    except (OSError, ValueError):
+        return {}
+
+
 def _with_progress(record: dict) -> dict:
+    if record.get('engine') == 'aiperf':
+        record.update(_aiperf_progress(record['task_id']))
+        if record.get('status') != 'cancelling':
+            record['status'] = 'finalizing' if record.get('percent') == 100 else 'running'
+        return record
     percent = _read_progress_percent(record['task_id'], record.get('kind', ''))
     record['percent'] = percent
     if record.get('status') == 'cancelling':
@@ -89,6 +143,25 @@ def _set_report_links(info: ActiveTaskInfo, run_dir: str) -> None:
             except (ValueError, OSError, perf_archive_aiperf.PerfArchiveError):
                 pass
             return
+        from ..perf_experiments import load_experiment, load_scenario
+
+        try:
+            experiment = load_experiment(info.task_id)
+            readable = False
+            for row in experiment.state.subruns:
+                if row.scenario is None:
+                    continue
+                try:
+                    if load_scenario(info.task_id, row.subrun_id).result is not None:
+                        readable = True
+                        break
+                except (ValueError, OSError):
+                    continue
+            if readable:
+                info.report_url = f'/perf-experiment/{quote(info.task_id, safe="")}'
+                info.html_report_url = f'/api/v1/perf/experiments/{quote(info.task_id, safe="")}/report'
+        except (ValueError, OSError):
+            pass
         return
     if info.status not in ('completed', 'unknown'):
         return
@@ -140,7 +213,11 @@ def get_task(task_id: str) -> ResponseReturnValue:
         info = _saved_task_info(task_id, manifest)
     except ValidationError:
         return jsonify({'error': 'Task metadata is unreadable'}), 400
-    info.percent = _read_progress_percent(task_id, info.kind)
+    if info.engine == 'aiperf':
+        for key, value in _aiperf_progress(task_id).items():
+            setattr(info, key, value)
+    else:
+        info.percent = _read_progress_percent(task_id, info.kind)
     _set_report_links(info, run_dir)
     return json_response(ActiveTaskInfo, info.model_dump(mode='json'))
 

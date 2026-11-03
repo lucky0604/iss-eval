@@ -4,6 +4,7 @@ fastapi
 jinja2
 # for calc result.
 numpy
+prometheus-client>=0.17,<1
 rich
 sse_starlette
 # for tokenizer

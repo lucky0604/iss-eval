@@ -52,6 +52,7 @@ def test_matrix_preserves_all_planned_subruns(tmp_path: Path, monkeypatch: pytes
     else:
         assert len(calls) == outcome.completed_subruns == 18
         assert all(row['status'] == 'completed' for row in manifest['subruns'])
+        assert manifest['last_phase'] == 'importing'
     assert [(point, ratio, namespace) for point, ratio, namespace in calls] == [
         (item.load_point, item.target_ratio, item.namespace) for item in preview.subruns[:len(calls)]
     ]
