@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { CacheNodeMetricsResponse, NodeMetricWindow } from '@/api/generated/contracts'
-import { getCacheNodeMetrics } from '@/api/perf'
+import type { CacheNodeSeriesResponse, NodeMetricWindow } from '@/api/generated/contracts'
+import { getCacheNodeSeries } from '@/api/perf'
 import { useLocale } from '@/contexts/LocaleContext'
 
 interface Props { taskId: string; subrunId: string; series: NodeMetricWindow; maxGap: number; start?: number; end?: number }
@@ -9,16 +9,17 @@ const labelsKey = (labels: Record<string, string>) => JSON.stringify(Object.entr
 export default function NodeSeriesChart({ taskId, subrunId, series, maxGap, start, end }: Props) {
   const { locale } = useLocale()
   const zh = locale === 'zh'
-  const [data, setData] = useState<CacheNodeMetricsResponse | null>(null)
+  const [data, setData] = useState<CacheNodeSeriesResponse | null>(null)
   const [failed, setFailed] = useState(false)
+  const selectedLabels = labelsKey(series.labels)
   useEffect(() => {
     const controller = new AbortController()
     let active = true
-    getCacheNodeMetrics(taskId, subrunId, 0, { nodeId: series.node_id, metricName: series.metric.name, signal: controller.signal })
-      .then((value) => { if (active) setData(value) }).catch(() => { if (active) setFailed(true) })
+    getCacheNodeSeries(taskId, subrunId, { nodeId: series.node_id, metricName: series.metric.name, labels: Object.fromEntries(JSON.parse(selectedLabels) as [string, string][]), start, end, signal: controller.signal })
+      .then((value) => { if (active) { setData(value); setFailed(false) } }).catch(() => { if (active) setFailed(true) })
     return () => { active = false; controller.abort() }
-  }, [taskId, subrunId, series.node_id, series.metric.name])
-  const samples = (data?.samples ?? []).filter((sample) => labelsKey(sample.labels) === labelsKey(series.labels) &&
+  }, [taskId, subrunId, series.node_id, series.metric.name, selectedLabels, start, end])
+  const samples = (data?.series.samples ?? []).filter((sample) => labelsKey(sample.labels) === selectedLabels &&
     typeof sample.observation.value === 'number' && Number.isFinite(sample.observation.value) &&
     (start == null || sample.timestamp_ns >= start) && (end == null || sample.timestamp_ns <= end))
   const values = samples.map((sample) => ({ at: sample.timestamp_ns, value: Number(sample.observation.value) * (series.metric.scale ?? 1) }))
@@ -39,7 +40,7 @@ export default function NodeSeriesChart({ taskId, subrunId, series, maxGap, star
   return <div className="space-y-1 text-xs">
     <p>{series.metric.name} · {JSON.stringify(series.labels)} · {series.metric.unit} · {zh ? '节点采样，不跨断采连接' : 'Node samples; gaps are not interpolated'}</p>
     {failed ? <p role="status">{zh ? '序列不可用，保留上表。' : 'Series unavailable; the table remains available.'}</p> : null}
-    {data && data.total > data.limit && <p>{zh ? '仅显示前' : 'Showing first'} {data.limit} / {data.total} {zh ? '个原始样本，未降采样。' : 'raw samples, without downsampling.'}</p>}
+    {data?.series.downsample === 'uniform_index' && <p>{zh ? '等间隔序号抽取原始样本' : 'Uniform index selection of raw samples'}: {data.series.samples.length} / {data.series.total} · {zh ? '不保证包含峰值，间断可能更明显。' : 'Peaks may be omitted and gaps may appear wider.'}</p>}
     {values.length ? <svg role="img" aria-label={zh ? '节点指标时间序列' : 'Node metric time series'} viewBox="0 0 100 40" className="h-24 w-full" preserveAspectRatio="none">
       {segments.filter((segment) => segment.length > 1).map((segment, index) => <polyline key={index} fill="none" stroke="currentColor" strokeWidth=".7" points={segment.map((point) => { const p = position(point); return `${p.x},${p.y}` }).join(' ')} />)}
       {values.map((point, index) => { const p = position(point); return <circle key={index} cx={p.x} cy={p.y} r=".8"><title>{point.at} ns: {point.value} {series.metric.unit}</title></circle> })}

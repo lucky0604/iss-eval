@@ -48,6 +48,7 @@ export interface WebApiContracts {
   cache_experiment_list_response: CacheExperimentListResponse;
   cache_experiment_response: CacheExperimentResponse;
   cache_node_metrics_response: CacheNodeMetricsResponse;
+  cache_node_series_response: CacheNodeSeriesResponse;
   cache_repetitions_response: CacheRepetitionsResponse;
   cache_request_groups_response: CacheRequestGroupsResponse;
   cache_requests_response: CacheRequestsResponse;
@@ -340,6 +341,22 @@ export interface NodeMetricSample {
   scrape_latency_ns?: number | null;
   semantics?: "unverified";
   timestamp_ns: number;
+}
+/**
+ * Bounded raw node points and their full matching sample count.
+ */
+export interface CacheNodeSeriesResponse {
+  series: NodeMetricSeries;
+}
+/**
+ * Selected raw points, reporting the full matching population and sampling method.
+ */
+export interface NodeMetricSeries {
+  aggregation?: "raw";
+  downsample: "none" | "uniform_index";
+  max_points: number;
+  samples: NodeMetricSample[];
+  total: number;
 }
 export interface CacheRepetitionsResponse {
   limit: number;

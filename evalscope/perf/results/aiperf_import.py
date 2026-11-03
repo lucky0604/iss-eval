@@ -25,6 +25,8 @@ from evalscope.perf.results.models import (
     MetricStatistics,
     MetricTargetReference,
     NodeMetricSample,
+    NodeMetricSeries,
+    NodeMetricSeriesQuery,
     PerfRequestRecord,
     PerfRunResult,
     RequestLatencyDistribution,
@@ -877,5 +879,66 @@ def query_node_metrics(
             [*parameters, limit, offset],
         )
         return total, [NodeMetricSample.model_validate_json(row[0]) for row in rows]
+    finally:
+        database.close()
+
+
+_MAX_NODE_SERIES_CANDIDATES = 1_000_000
+
+
+class NodeSeriesBudgetExceeded(ValueError):
+    """The selected node series exceeds the bounded scan budget."""
+
+
+class NodeSeriesNotFound(ValueError):
+    """The requested node and metric do not occur in the archive."""
+
+
+def query_node_metric_series(normalized_dir: str, query: NodeMetricSeriesQuery) -> NodeMetricSeries:
+    """Select equally spaced raw points from one labelled series without averaging peaks."""
+    generation = _generation(normalized_dir)
+    database_path = _owned_file(generation, 'requests.db')
+    database = sqlite3.connect(f'file:{quote(str(database_path))}?mode=ro', uri=True)
+    clauses = ['node_id = ?', 'metric_name = ?']
+    parameters: list = [query.node_id, query.metric_name]
+    if query.start_ns is not None:
+        clauses.append('timestamp_ns >= ?')
+        parameters.append(query.start_ns)
+    if query.end_ns is not None:
+        clauses.append('timestamp_ns <= ?')
+        parameters.append(query.end_ns)
+    statement = 'SELECT sample_json FROM node_samples WHERE ' + ' AND '.join(clauses) + ' ORDER BY timestamp_ns, idx'
+
+    def matching() -> Iterator[NodeMetricSample]:
+        for index, (raw,) in enumerate(database.execute(statement, parameters)):
+            if index >= _MAX_NODE_SERIES_CANDIDATES:
+                raise NodeSeriesBudgetExceeded('Too many node samples; narrow the time window')
+            sample = NodeMetricSample.model_validate_json(raw)
+            if sample.labels == query.labels:
+                yield sample
+
+    try:
+        database.execute('BEGIN')
+        exists = database.execute(
+            'SELECT 1 FROM node_samples WHERE node_id = ? AND metric_name = ? LIMIT 1',
+            (query.node_id, query.metric_name),
+        ).fetchone()
+        if exists is None:
+            raise NodeSeriesNotFound('Node or metric not found')
+        total = sum(1 for _ in matching())
+        count = min(total, query.max_points)
+        if count == 0:
+            return NodeMetricSeries(
+                total=0, max_points=query.max_points, aggregation='raw', downsample='none', samples=[]
+            )
+        indices = {0} if count == 1 else {index * (total - 1) // (count - 1) for index in range(count)}
+        selected = [sample for index, sample in enumerate(matching()) if index in indices]
+        return NodeMetricSeries(
+            total=total,
+            max_points=query.max_points,
+            aggregation='raw',
+            downsample='uniform_index' if total > count else 'none',
+            samples=selected,
+        )
     finally:
         database.close()

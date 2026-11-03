@@ -131,3 +131,49 @@ def test_delete_requires_inactive_task(archive, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(perf, 'active_task_ids', lambda: set())
     response = client.delete('/api/v1/perf/experiments/task')
     assert response.status_code == 200 and response.json['path'] == 'task/perf' and not root.exists()
+
+
+def test_series_sampling_matches_labels_and_full_window(archive, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sqlite3
+
+    from evalscope.perf.results.models import NodeMetricSample
+
+    client, _, run, item, _ = archive
+    normalized = run / 'normalized'
+    identity = json.loads((normalized / 'current.json').read_text())['generation']
+    database = normalized / 'generations' / identity / 'requests.db'
+    with sqlite3.connect(database) as connection:
+        for index in range(1200):
+            for label in ('wanted', 'other'):
+                sample = NodeMetricSample(timestamp_ns=index, node_id='p', role='prefill', engine='vllm',
+                    endpoint='host', metric_name='test:queue', metric_type='gauge',
+                    labels={'model': label, 'device': '0'}, observation={'value': index})
+                connection.execute('INSERT INTO node_samples (node_id, metric_name, timestamp_ns, sample_json) '
+                                   'VALUES (?, ?, ?, ?)', ('p', 'test:queue', index, sample.model_dump_json()))
+    base = f'/api/v1/perf/experiments/task/runs/{item.subrun_id}/metrics/series'
+    params = {'node_id': 'p', 'metric_name': 'test:queue', 'labels': json.dumps({'device': '0', 'model': 'wanted'}),
+              'max_points': 13}
+    response = client.get(base, query_string=params)
+    assert response.status_code == 200
+    series = response.json['series']
+    assert series['total'] == 1200 and series['aggregation'] == 'raw' and series['downsample'] == 'uniform_index'
+    assert len(series['samples']) == 13
+    assert series['samples'][0]['timestamp_ns'] == 0 and series['samples'][-1]['timestamp_ns'] == 1199
+    assert all(sample['labels']['model'] == 'wanted' for sample in series['samples'])
+    server_params = {**params, 'root_path': str(run.parents[3]), 'path': 'task/perf',
+                     'subrun_id': item.subrun_id, 'downsample': 'uniform_index'}
+    server = client.get('/api/v1/perf/server-metrics', query_string=server_params)
+    assert server.status_code == 200 and server.json['series'] == series
+    assert client.get('/api/v1/perf/server-metrics', query_string={**server_params, 'downsample': 'bad'}).status_code == 400
+    window = client.get(base, query_string={**params, 'start_ns': 200, 'end_ns': 800}).json['series']
+    assert window['total'] == 601 and window['samples'][0]['timestamp_ns'] == 200
+    assert window['samples'][-1]['timestamp_ns'] == 800
+    exact = client.get(base, query_string={**params, 'start_ns': 200, 'end_ns': 202}).json['series']
+    assert exact['downsample'] == 'none' and len(exact['samples']) == 3
+    assert client.get(base, query_string={**params, 'max_points': 2001}).status_code == 400
+    assert client.get(base, query_string={**params, 'start_ns': 10, 'end_ns': 9}).status_code == 400
+    assert client.get(base, query_string={**params, 'labels': 'not-json'}).status_code == 400
+    assert client.get(base, query_string={**params, 'node_id': 'unknown'}).status_code == 404
+    monkeypatch.setattr('evalscope.perf.results.aiperf_import._MAX_NODE_SERIES_CANDIDATES', 2)
+    budget = client.get(base, query_string=params)
+    assert budget.status_code == 413 and 'narrow the time window' in budget.json['error']

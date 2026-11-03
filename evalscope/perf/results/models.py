@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import Field
+from pydantic import Field, StrictInt, field_validator, model_validator
 
 from evalscope.utils import BaseArgument
 
@@ -118,6 +118,49 @@ class NodeMetricSample(BaseArgument):
     phase_kind: Optional[Literal['warmup', 'profiling']] = None
     scope: Literal['node_window'] = 'node_window'
     semantics: Literal['unverified'] = 'unverified'
+
+
+class NodeMetricSeriesQuery(BaseArgument):
+    """A bounded window for one exactly labelled node metric series."""
+
+    node_id: str = Field(min_length=1, max_length=512)
+    metric_name: str = Field(min_length=1, max_length=512)
+    labels: Dict[str, str]
+    start_ns: Optional[StrictInt] = Field(default=None, ge=0, le=2**63 - 1)
+    end_ns: Optional[StrictInt] = Field(default=None, ge=0, le=2**63 - 1)
+    max_points: StrictInt = Field(default=500, ge=2, le=2000)
+
+    @field_validator('node_id', 'metric_name')
+    @classmethod
+    def validate_dimension(cls, value: str) -> str:
+        if '\x00' in value:
+            raise ValueError('Invalid metric dimension')
+        return value
+
+    @field_validator('labels')
+    @classmethod
+    def validate_labels(cls, labels: Dict[str, str]) -> Dict[str, str]:
+        if len(labels) > 64 or any(
+            len(key) > 512 or len(value) > 512 or '\x00' in key or '\x00' in value for key, value in labels.items()
+        ):
+            raise ValueError('Invalid metric labels')
+        return labels
+
+    @model_validator(mode='after')
+    def validate_window(self) -> 'NodeMetricSeriesQuery':
+        if self.start_ns is not None and self.end_ns is not None and self.start_ns > self.end_ns:
+            raise ValueError('Invalid metric window')
+        return self
+
+
+class NodeMetricSeries(BaseArgument):
+    """Selected raw points, reporting the full matching population and sampling method."""
+
+    total: int = Field(ge=0)
+    max_points: int = Field(ge=2, le=2000)
+    aggregation: Literal['raw'] = 'raw'
+    downsample: Literal['none', 'uniform_index']
+    samples: List[NodeMetricSample]
 
 
 class RequestObservationBounds(BaseArgument):

@@ -122,3 +122,25 @@ def test_single_node_analysis_and_metrics_use_manifest_identity(archive) -> None
     outside.write_text(analysis.model_dump_json())
     (run / 'node_analysis.json').symlink_to(outside)
     assert client.get('/api/v1/perf/detail', query_string=params).status_code == 400
+
+
+def test_single_node_series_uses_normalized_archive(archive) -> None:
+    import sqlite3
+
+    from evalscope.perf.results.models import NodeMetricSample
+
+    client, root, run = archive
+    normalized = run / 'normalized'
+    identity = json.loads((normalized / 'current.json').read_text())['generation']
+    database = normalized / 'generations' / identity / 'requests.db'
+    sample = NodeMetricSample(timestamp_ns=123, node_id='p', role='prefill', engine='vllm', endpoint='host',
+                              metric_name='queue', metric_type='gauge', labels={}, observation={'value': 0})
+    with sqlite3.connect(database) as connection:
+        connection.execute('INSERT INTO node_samples (node_id, metric_name, timestamp_ns, sample_json) '
+                           'VALUES (?, ?, ?, ?)', ('p', 'queue', 123, sample.model_dump_json()))
+    query = {'root_path': str(root), 'path': 'task/perf', 'downsample': 'uniform_index', 'node_id': 'p',
+             'metric_name': 'queue', 'labels': '{}'}
+    response = client.get('/api/v1/perf/server-metrics', query_string=query)
+    assert response.status_code == 200
+    assert response.json['series']['total'] == 1 and response.json['series']['downsample'] == 'none'
+    assert response.json['series']['samples'][0]['observation']['value'] == 0

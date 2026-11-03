@@ -930,6 +930,19 @@
       ],
       "type": "object"
     },
+    "CacheNodeSeriesResponse": {
+      "additionalProperties": false,
+      "description": "Bounded raw node points and their full matching sample count.",
+      "properties": {
+        "series": {
+          "$ref": "#/$defs/NodeMetricSeries"
+        }
+      },
+      "required": [
+        "series"
+      ],
+      "type": "object"
+    },
     "CacheObservation": {
       "additionalProperties": false,
       "description": "Server-reported cache-read token totals and their actual coverage.",
@@ -3158,6 +3171,46 @@
         "metric_type",
         "labels",
         "observation"
+      ],
+      "type": "object"
+    },
+    "NodeMetricSeries": {
+      "additionalProperties": false,
+      "description": "Selected raw points, reporting the full matching population and sampling method.",
+      "properties": {
+        "aggregation": {
+          "const": "raw",
+          "default": "raw",
+          "type": "string"
+        },
+        "downsample": {
+          "enum": [
+            "none",
+            "uniform_index"
+          ],
+          "type": "string"
+        },
+        "max_points": {
+          "maximum": 2000,
+          "minimum": 2,
+          "type": "integer"
+        },
+        "samples": {
+          "items": {
+            "$ref": "#/$defs/NodeMetricSample"
+          },
+          "type": "array"
+        },
+        "total": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total",
+        "max_points",
+        "downsample",
+        "samples"
       ],
       "type": "object"
     },
@@ -6329,6 +6382,9 @@
     "cache_node_metrics_response": {
       "$ref": "#/$defs/CacheNodeMetricsResponse"
     },
+    "cache_node_series_response": {
+      "$ref": "#/$defs/CacheNodeSeriesResponse"
+    },
     "cache_repetitions_response": {
       "$ref": "#/$defs/CacheRepetitionsResponse"
     },
@@ -6510,6 +6566,7 @@
     "cache_request_groups_response",
     "cache_repetitions_response",
     "cache_node_metrics_response",
+    "cache_node_series_response",
     "perf_run_item",
     "perf_runs_list_response",
     "perf_requests_response",

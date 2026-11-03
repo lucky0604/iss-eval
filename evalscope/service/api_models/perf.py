@@ -14,6 +14,7 @@ from evalscope.perf.results.models import (
     CacheRequestGroup,
     MetricStatistics,
     NodeMetricSample,
+    NodeMetricSeries,
     PerfRequestRecord,
     PerfRunResult,
 )
@@ -289,6 +290,12 @@ class CacheRequestGroupsResponse(ApiResponseModel):
     successful_requests: Optional[int] = None
     observed_requests: int = Field(ge=0)
     groups: List[CacheRequestGroup] = Field(default_factory=list)
+
+
+class CacheNodeSeriesResponse(ApiResponseModel):
+    """Bounded raw node points and their full matching sample count."""
+
+    series: NodeMetricSeries
 
 
 class CacheNodeMetricsResponse(ApiResponseModel):

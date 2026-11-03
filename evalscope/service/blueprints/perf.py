@@ -34,12 +34,20 @@ from evalscope.perf.integrations.aiperf.single_run import (
 from evalscope.perf.plugin.api.base import ApiPluginBase
 from evalscope.perf.plugin.registry import ApiRegistry, DatasetRegistry
 from evalscope.perf.results.aiperf_import import (
+    NodeSeriesBudgetExceeded,
+    NodeSeriesNotFound,
     import_aiperf_run,
     query_aiperf_requests,
+    query_node_metric_series,
     query_node_metrics,
     request_cache_groups,
 )
-from evalscope.perf.results.models import AIPerfImportArguments, MetricTargetReference, PerfRequestRecord
+from evalscope.perf.results.models import (
+    AIPerfImportArguments,
+    MetricTargetReference,
+    NodeMetricSeriesQuery,
+    PerfRequestRecord,
+)
 from evalscope.perf.results.single_run import SingleRunManifest, write_single_manifest
 from evalscope.perf.sla.sla_run import SLAResult, format_sla_tables
 from evalscope.perf.utils.benchmark_util import Metrics
@@ -48,6 +56,7 @@ from evalscope.service.api_models import (
     CacheExperimentListResponse,
     CacheExperimentResponse,
     CacheNodeMetricsResponse,
+    CacheNodeSeriesResponse,
     CacheRepetitionsResponse,
     CacheRequestGroupsResponse,
     CacheRequestsResponse,
@@ -493,6 +502,40 @@ def _node_metrics_page(path: str):
     )
 
 
+def _node_series(path: str):
+    labels = request.args.get('labels', '')
+    if not labels or len(labels) > 8192:
+        raise ValueError('Invalid labels')
+    start, end = request.args.get('start_ns'), request.args.get('end_ns')
+    query = NodeMetricSeriesQuery(
+        node_id=request.args.get('node_id', ''),
+        metric_name=request.args.get('metric_name', ''),
+        labels=json.loads(labels),
+        start_ns=int(start) if start is not None else None,
+        end_ns=int(end) if end is not None else None,
+        max_points=int(request.args.get('max_points', '500')),
+    )
+    return json_response(CacheNodeSeriesResponse, {'series': query_node_metric_series(path, query)})
+
+
+@bp_perf.route('/experiments/<task_id>/runs/<subrun_id>/metrics/series', methods=['GET'])
+def get_cache_node_series(task_id: str, subrun_id: str):
+    """Select bounded raw points for one exact node, metric, label set and window."""
+    from ..perf_experiments import scenario_path
+
+    try:
+        _, path = scenario_path(task_id, subrun_id)
+        return _node_series(path)
+    except FileNotFoundError:
+        return jsonify({'error': 'Scenario results not found'}), 404
+    except NodeSeriesBudgetExceeded:
+        return jsonify({'error': 'Too many node samples; narrow the time window'}), 413
+    except NodeSeriesNotFound:
+        return jsonify({'error': 'Node or metric not found in this scenario'}), 404
+    except (OSError, ValueError, sqlite3.Error):
+        return jsonify({'error': 'Invalid node series or scenario identity'}), 400
+
+
 @bp_perf.route('/experiments/<task_id>/runs/<subrun_id>/metrics', methods=['GET'])
 def get_cache_scenario_metrics(task_id: str, subrun_id: str):
     """Page raw node-window samples with explicitly unverified semantics."""
@@ -522,14 +565,26 @@ def get_server_metrics():
         if len(parts) != 2 or parts[1] != 'perf':
             raise ValueError('Invalid experiment path')
         validate_task_id(parts[0])
+        downsample = request.args.get('downsample', 'none')
+        if downsample not in ('none', 'uniform_index'):
+            raise ValueError('Invalid downsampling mode')
         if subrun_id:
-            return get_cache_scenario_metrics(parts[0], subrun_id)
+            return (
+                get_cache_node_series(parts[0], subrun_id)
+                if downsample == 'uniform_index'
+                else get_cache_scenario_metrics(parts[0], subrun_id)
+            )
         from ..perf_archive_aiperf import normalized_path
 
-        return _node_metrics_page(normalized_path(task_file_path(parts[0], 'perf')))
+        normalized = normalized_path(task_file_path(parts[0], 'perf'))
+        return _node_series(normalized) if downsample == 'uniform_index' else _node_metrics_page(normalized)
+    except NodeSeriesBudgetExceeded:
+        return jsonify({'error': 'Too many node samples; narrow the time window'}), 413
+    except NodeSeriesNotFound:
+        return jsonify({'error': 'Node or metric not found in this scenario'}), 404
     except PerfArchiveError as error:
         return jsonify({'error': str(error)}), error.status
-    except (OSError, ValueError):
+    except (OSError, ValueError, sqlite3.Error):
         return jsonify({'error': 'Invalid experiment path or outputs root'}), 400
 
 
