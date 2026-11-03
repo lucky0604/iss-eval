@@ -19,6 +19,8 @@ from evalscope.perf.executors.arguments import (
 from evalscope.perf.executors.dispatch import run_perf_task
 from evalscope.perf.executors.models import ExecutionContext, ExternalRuntime
 from evalscope.perf.integrations.aiperf.single_run import prepare_single_run, run_single
+from evalscope.perf.results.aiperf_import import import_aiperf_run, query_aiperf_requests, query_node_metrics
+from evalscope.perf.results.models import AIPerfImportArguments
 
 
 def _arguments(tokenizer: str, url: str = 'http://localhost:8000/v1') -> AIPerfArguments:
@@ -147,12 +149,18 @@ def test_pinned_aiperf_sends_real_local_requests(tmp_path: Path, mode: str) -> N
         assert metrics_requests and all(not request['authorization_present'] for request in metrics_requests)
         assert not any(b'fixture-key' in path.read_bytes() for path in artifact_dir.rglob('*') if path.is_file())
         assert not list(tmp_path.glob('.aiperf-config-*.json'))
-        records = [json.loads(line) for line in (artifact_dir / 'profile_export.jsonl').read_text().splitlines()]
-        profiling = [item for item in records if item['metadata']['phase_kind'] == 'profiling']
-        assert len(profiling) == 2
-        for item in profiling:
-            cache = item['metrics'].get('usage_prompt_cache_read_tokens')
-            assert (cache['value'] if cache else None) == (6 if mode == 'open_loop' else None)
+        normalized = tmp_path / 'normalized'
+        result = import_aiperf_run(AIPerfImportArguments(
+            raw_dir=str(artifact_dir), normalized_dir=str(normalized), targets=[{
+                'node_id': 'local', 'role': 'prefill', 'engine': 'vllm', 'url': f'http://127.0.0.1:{port}/metrics',
+            }],
+        ))
+        total, page = query_aiperf_requests(str(normalized), phase='profiling')
+        assert result.profiling_requests == total == 2
+        assert all(record.cached_tokens == (6 if mode == 'open_loop' else None) for record in page)
+        assert all(record.prompt_tokens_source == 'server_usage' for record in page)
+        node_count, nodes = query_node_metrics(str(normalized), node_id='local', metric_name='mock_requests')
+        assert node_count and all(node.semantics == 'unverified' for node in nodes)
     finally:
         server.terminate()
         server.wait(timeout=5)
