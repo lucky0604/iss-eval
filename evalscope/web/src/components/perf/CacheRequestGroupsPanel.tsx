@@ -21,7 +21,7 @@ export default function CacheRequestGroupsPanel({ taskId, subrunId, cache }: Pro
     <h3 className="font-semibold">{zh ? '请求级缓存分组' : 'Request-level cache groups'}</h3>
     <p className="text-sm">{zh ? '仅使用服务端返回的 cached token；百分位为各组原始请求的精确最近秩，不跨轮合并。' : 'Only server-reported cached tokens are grouped. Percentiles are exact nearest-rank request values, not pooled across repetitions.'}</p>
     {groups?.availability === 'available' ? <><p className="text-sm">{zh ? '覆盖' : 'Coverage'}: {groups.observed_requests} / {groups.successful_requests ?? '—'}</p>
-      <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th>{zh ? '分组 / 请求数' : 'Group / requests'}</th><th>{zh ? '指标 (秒) / 样本' : 'Metric (seconds) / samples'}</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th></tr></thead><tbody>
+      <div className="overflow-x-auto"><table className="w-full min-w-max whitespace-nowrap text-left text-xs [&_th]:px-2 [&_td]:px-2"><thead><tr><th>{zh ? '分组 / 请求数' : 'Group / requests'}</th><th>{zh ? '指标 (秒) / 样本' : 'Metric (seconds) / samples'}</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th></tr></thead><tbody>
         {groups.groups?.flatMap((group) => ([['Latency', group.latency], ['TTFT', group.ttft]] as const).map(([label, metric]) => <tr key={`${group.group}-${label}`}>
           <td>{group.group} / {group.count}</td><td>{label} / {metric.count}</td><td>{metric.mean ?? '—'}</td><td>{metric.p50 ?? '—'}</td><td>{metric.p95 ?? '—'}</td><td>{metric.p99 ?? '—'}</td>
         </tr>))}

@@ -89,7 +89,7 @@ function CacheExperimentReport({ taskId }: { taskId: string }) {
         <p className="text-sm">{zh ? '正式 / 预热请求预算' : 'Profiling / primer request budget'}: {experiment.plan.profiling_requests} / {experiment.plan.primer_requests}</p>
       </details>
       <p className="text-sm text-[var(--text-muted)]">{zh ? '目标比例、生成比例与服务端报告的缓存命中彼此独立；缺失值显示为 —。TTFT 和吞吐来自 AIPerf 客户端汇总。' : 'Target, generated reuse, and server-reported cache hits are distinct; missing values are shown as —. TTFT and throughput come from the AIPerf client summary.'}</p>
-      <div className="overflow-x-auto"><table className="w-full text-left text-sm">
+      <div className="overflow-x-auto"><table className="w-full min-w-max whitespace-nowrap text-left text-sm [&_th]:px-2 [&_td]:px-2">
         <thead><tr><th>{zh ? '子任务' : 'Run'}</th><th>{zh ? '负载' : 'Load'}</th><th>{zh ? '重复' : 'Repeat'}</th><th>{zh ? '目标' : 'Target'}</th><th>{zh ? '实际生成' : 'Generated'}</th><th>{zh ? '服务端命中' : 'Server cache'}</th><th>{zh ? '覆盖请求' : 'Observed requests'}</th><th>{zh ? '平均 TTFT（秒）' : 'Mean TTFT (s)'}</th><th>{zh ? '请求/秒' : 'Requests/s'}</th><th>{zh ? '成功' : 'Success'}</th><th>{zh ? '状态' : 'Status'}</th><th>{zh ? '对比' : 'Compare'}</th></tr></thead>
         <tbody>{experiment.plan.subruns.slice(matrixOffset, matrixOffset + 50).map((row) => {
           const scenario = scenarios[row.subrun_id]
@@ -130,7 +130,7 @@ function CacheExperimentReport({ taskId }: { taskId: string }) {
         <NodeWindowPanel key={selected} analysis={selectedScenario.node_analysis} taskId={taskId} subrunId={selected} />
         <CacheRequestGroupsPanel key={selected} cache={selectedScenario.cache} taskId={taskId} subrunId={selected} />
         <h3 className="font-semibold">{zh ? '请求明细' : 'Request records'}</h3>
-        {requests ? <><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>
+        {requests ? <><div className="overflow-x-auto"><table className="w-full min-w-max whitespace-nowrap text-left text-sm [&_th]:px-2 [&_td]:px-2"><thead><tr>
           <th># / ID</th><th>{zh ? '状态' : 'Status'}</th><th>{zh ? '延迟（秒）' : 'Latency (s)'}</th><th>TTFT (s)</th>
           <th>{zh ? '输入 token（来源）' : 'Input tokens (source)'}</th><th>{zh ? '缓存 token（服务端）' : 'Cached tokens (server)'}</th>
         </tr></thead><tbody>{requests.requests.map((row) => <tr key={row.index}>
@@ -143,7 +143,7 @@ function CacheExperimentReport({ taskId }: { taskId: string }) {
         </div></> : <p>—</p>}
         <h3 className="font-semibold">{zh ? '节点原始样本（语义待验证）' : 'Raw node samples (semantics unverified)'}</h3>
         <p className="text-sm">{metrics ? `${metrics.samples.length} / ${metrics.total}` : '—'}</p>
-        {metrics && <><div className="overflow-auto max-h-80"><table className="w-full text-left text-sm"><thead><tr><th>{zh ? '时间' : 'Timestamp'}</th><th>{zh ? '节点' : 'Node'}</th><th>{zh ? '指标' : 'Metric'}</th><th>{zh ? '观测' : 'Observation'}</th></tr></thead>
+        {metrics && <><div className="overflow-auto max-h-80"><table className="w-full min-w-max whitespace-nowrap text-left text-sm [&_th]:px-2 [&_td]:px-2"><thead><tr><th>{zh ? '时间' : 'Timestamp'}</th><th>{zh ? '节点' : 'Node'}</th><th>{zh ? '指标' : 'Metric'}</th><th>{zh ? '观测' : 'Observation'}</th></tr></thead>
           <tbody>{metrics.samples.map((sample, index) => <tr key={`${sample.timestamp_ns}-${sample.metric_name}-${index}`}><td>{sample.timestamp_ns}</td><td>{sample.node_id ?? '—'} / {sample.role ?? '—'}</td><td>{sample.metric_name}</td><td>{JSON.stringify(sample.observation)}</td></tr>)}</tbody>
         </table></div><div className="flex gap-2 text-sm"><span>{metrics.samples.length ? metrics.offset + 1 : 0}–{metrics.offset + metrics.samples.length} / {metrics.total}</span>
           <Button variant="outline" size="sm" disabled={metricOffset === 0} onClick={() => setMetricOffset(Math.max(0, metricOffset - metrics.limit))}>{zh ? '上一页' : 'Previous'}</Button>

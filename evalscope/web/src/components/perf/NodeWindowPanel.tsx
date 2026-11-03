@@ -38,7 +38,7 @@ export default function NodeWindowPanel({ analysis, taskId, subrunId }: Props) {
         {zh ? 'vLLM 节点查询 token 命中率' : 'vLLM node lookup-token hit ratio'}: {display(ratio.ratio)}
         {' '}({display(ratio.hit_tokens)} / {display(ratio.lookup_tokens)}, {ratio.availability}, {ratio.reason ?? '—'}, {JSON.stringify(ratio.labels)})
       </p>)}
-      {rows.length ? <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr>
+      {rows.length ? <div className="overflow-x-auto"><table className="w-full min-w-max whitespace-nowrap text-left text-xs [&_th]:px-2 [&_td]:px-2"><thead><tr>
         <th>{zh ? '节点 / 指标' : 'Role / metric'}</th><th>{zh ? '标签' : 'Labels'}</th><th>{zh ? '窗口值' : 'Window value'}</th>
         <th>{zh ? '样本峰值' : 'Sample peak'}</th><th>{zh ? '样本 / 覆盖' : 'Count / coverage'}</th><th>{zh ? '状态 / 边界 / 原因' : 'Status / boundary / reason'}</th>
       </tr></thead><tbody>{rows.slice(page * 50, page * 50 + 50).map((row, index) => {

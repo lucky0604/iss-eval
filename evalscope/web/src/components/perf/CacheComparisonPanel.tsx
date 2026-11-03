@@ -29,7 +29,7 @@ export default function CacheComparisonPanel({ baseline, candidate, configuratio
     <p className="text-sm">{zh ? '基准' : 'Baseline'}: {baseline?.plan.subrun_id ?? '—'} · {zh ? '候选' : 'Candidate'}: {candidate?.plan.subrun_id ?? '—'}</p>
     {!valid ? <p className="text-sm">{zh ? '请选择仅变化所选维度、重复序号一致且结果有效的两组；跨实验还需匹配已核验的配置。未经校准的来源或范围不计算变化。' : 'Choose two valid runs that differ only in the selected dimension and use the same repetition. Cross-experiment runs also require matching verified configurations; uncalibrated sources or scopes have no delta.'}</p> : <>
       <p className="text-sm">{zh ? '质量' : 'Quality'}: {a?.quality} / {b?.quality}; {zh ? '结果为单轮观测，不是聚合结论。' : 'These are individual repetitions, not an aggregate verdict.'}</p>
-      <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr>
+      <div className="overflow-x-auto"><table className="w-full min-w-max whitespace-nowrap text-left text-xs [&_th]:px-2 [&_td]:px-2"><thead><tr>
         <th>{zh ? '指标 / 来源 / 范围' : 'Metric / source / scope'}</th><th>{zh ? '基准 (n)' : 'Baseline (n)'}</th><th>{zh ? '候选 (n)' : 'Candidate (n)'}</th><th>{zh ? '变化' : 'Change'}</th>
       </tr></thead><tbody>{a?.metrics?.map((left) => {
         const matches = b?.metrics?.filter((right) => right.key === left.key) ?? []
