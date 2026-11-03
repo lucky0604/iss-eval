@@ -104,11 +104,12 @@ export default function ModelConnectionEditor({
           onReset={reset}
         />
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <Field id="connection-api" name="api" labelKey="perf.task.apiType" hintKey="perf.task.apiHint">
+          <Field id="connection-api" name="api" labelKey="perf.task.apiType" hintKey="perf.task.apiHint"
+            error={errors.api ? t(errors.api) : undefined}>
             {(aria) => (
               <select
                 {...aria}
-                className={inputClass()}
+                className={inputClass(errors.api ? t(errors.api) : undefined)}
                 value={connection.api}
                 onChange={(event) => {
                   const api = event.target.value

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CONFIG_STORAGE_KEY,
+  LEGACY_CONFIG_STORAGE_KEY,
+  LEGACY_AIPERF_STORAGE_KEY,
   emptyWorkspace,
   exportLibrary,
   mergeLibrary,
@@ -19,6 +21,7 @@ import {
   validatePerfDraft,
   DEFAULT_PERF,
 } from './taskConfig'
+import { DEFAULT_AIPERF } from './aiperfDraft'
 
 afterEach(() => {
   localStorage.clear()
@@ -43,6 +46,53 @@ describe('Browser configuration storage', () => {
   it('returns independent defaults when empty', () => {
     const result = readWorkspace()
     expect(result).toEqual({ ok: true, value: emptyWorkspace() })
+  })
+  it('migrates version-1 native and AIPerf drafts without overwriting the originals', () => {
+    const legacy = savedWorkspace() as unknown as Record<string, unknown>
+    legacy.version = 1
+    for (const key of ['engine', 'aiperf', 'aiperfTemplates', 'selectedAIPerf']) delete legacy[key]
+    const oldText = JSON.stringify(legacy)
+    const oldDraft = JSON.stringify({ tokenizer: '/tokenizer', ratios: '0, 80, 90', inputTokens: '20',
+      requestCount: '6', outputTokens: '2', loads: '1', mode: 'closed_loop', repetitions: '1', pool: '1',
+      prefill: 'http://p:9000/metrics', decode: 'http://d:9000/metrics', server: 'vllm' })
+    localStorage.setItem(LEGACY_CONFIG_STORAGE_KEY, oldText)
+    localStorage.setItem(LEGACY_AIPERF_STORAGE_KEY, oldDraft)
+    const result = readWorkspace()
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.engine).toBe('evalscope')
+    expect(result.value.perf).toEqual(DEFAULT_PERF)
+    expect(result.value.aiperf.nodes.map((node) => node.role)).toEqual(['prefill', 'decode'])
+    expect(writeWorkspace(result.value).ok).toBe(true)
+    expect(localStorage.getItem(LEGACY_CONFIG_STORAGE_KEY)).toBe(oldText)
+    expect(localStorage.getItem(LEGACY_AIPERF_STORAGE_KEY)).toBe(oldDraft)
+    expect(JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY)!).version).toBe(2)
+  })
+  it('does not save or export metrics tokens or credentials embedded in URLs', () => {
+    const state = savedWorkspace()
+    state.engine = 'aiperf'
+    state.aiperf = { ...DEFAULT_AIPERF, tokenizer: '/tokenizer', nodes: [
+      { id: 'p', nodeId: 'p', role: 'prefill', engine: 'vllm', url: 'http://p:9000/metrics', labels: 'model=a', bearerToken: 'node-secret' },
+      { id: 'd', nodeId: 'd', role: 'decode', engine: 'sglang', url: 'http://user:pass@d/metrics?key=other-secret', labels: '', bearerToken: 'other-token' },
+    ] }
+    state.aiperfTemplates = [{ id: 'preset', name: 'AIPerf', value: state.aiperf }]
+    expect(writeWorkspace(state).ok).toBe(true)
+    const raw = localStorage.getItem(CONFIG_STORAGE_KEY)!
+    expect(raw).not.toContain('node-secret')
+    expect(raw).not.toContain('other-token')
+    expect(raw).not.toContain('other-secret')
+    expect(raw).not.toContain('user:pass')
+    expect(exportLibrary(state, true)).not.toContain('node-secret')
+    expect(exportLibrary(state, true)).not.toContain('other-secret')
+    expect(readWorkspace()).toMatchObject({ ok: true, value: { engine: 'aiperf', aiperf: {
+      nodes: [{ url: 'http://p:9000/metrics', bearerToken: '' }, { url: '', bearerToken: '' }],
+    } } })
+  })
+  it('fails closed when the legacy AIPerf draft is damaged', () => {
+    localStorage.setItem(LEGACY_AIPERF_STORAGE_KEY, '{broken')
+    expect(readWorkspace()).toEqual({ ok: false, error: 'invalidStorage' })
+    expect(localStorage.getItem(LEGACY_AIPERF_STORAGE_KEY)).toBe('{broken')
+    expect(localStorage.getItem(CONFIG_STORAGE_KEY)).toBeNull()
   })
   it.each(['connection', 'eval', 'perf'] as const)('restores missing %s fields from defaults', (field) => {
     const expected = emptyWorkspace()
@@ -124,6 +174,24 @@ describe('Browser configuration storage', () => {
     delete raw.evalTemplates[0].value.reasoningTokens
     delete raw.evalTemplates[0].value.enableThinking
     expect(parseImport(JSON.stringify(raw)).evalTemplates[0].value).toEqual(value)
+  })
+  it('imports version-1 libraries and round-trips nested version-2 presets without node secrets', () => {
+    const state = savedWorkspace()
+    const old = JSON.parse(exportLibrary(state, false))
+    old.version = 1
+    delete old.aiperfTemplates
+    expect(parseImport(JSON.stringify(old))).toMatchObject({ version: 2, aiperfTemplates: [] })
+
+    state.aiperfTemplates = [{ id: 'aiperf', name: 'Cache', value: { ...DEFAULT_AIPERF, tokenizer: '/tok', nodes: [
+      { id: 'p', nodeId: 'p', role: 'prefill', engine: 'vllm', url: 'http://p/metrics', labels: '', bearerToken: 'private' },
+    ] } }]
+    const imported = parseImport(exportLibrary(state, true))
+    expect(imported.aiperfTemplates[0].value.nodes[0]).toMatchObject({ nodeId: 'p', bearerToken: '' })
+    const merged = mergeLibrary(emptyWorkspace(), imported)
+    expect(merged.aiperfTemplates[0].value.ratios).toBe('0, 80, 90')
+    expect(merged.aiperfTemplates[0].id).not.toBe('aiperf')
+    state.aiperfTemplates[0].value.nodes[0].nodeId = 'changed'
+    expect(merged.aiperfTemplates[0].value.nodes[0].nodeId).toBe('p')
   })
   it('imports as new ids without overwriting existing names and values', () => {
     const state = savedWorkspace()

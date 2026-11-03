@@ -1,4 +1,5 @@
-import { apiDeleteValidated, apiValidated } from './client'
+import { apiDeleteValidated, apiPostValidated, apiValidated } from './client'
+import type { PerfEnginesResponse, PerfInvokeResponse, PerfPlanResponse } from './generated/contracts'
 import type {
   DeletePerfRunResponse,
   ListPerfRunsResponse,
@@ -15,6 +16,23 @@ export const getPerfProgress = perfTaskApi.progress
 export const getPerfLog = perfTaskApi.log
 export const getPerfReportUrl = perfTaskApi.reportUrl
 export const stopPerfTask = perfTaskApi.stop
+
+export function getPerfEngines(signal?: AbortSignal): Promise<PerfEnginesResponse> {
+  return apiValidated('/api/v1/perf/engines', { signal })
+}
+
+export function validatePerfExperiment(payload: Record<string, unknown>, taskId: string, signal?: AbortSignal,
+                                       probeMetrics = false): Promise<PerfPlanResponse> {
+  return apiPostValidated('/api/v1/perf/validate', payload, {
+    headers: { 'EvalScope-Task-Id': taskId }, signal, params: { probe_metrics: probeMetrics ? 1 : 0 },
+  })
+}
+
+export function submitPerfExperiment(payload: Record<string, unknown>, taskId: string): Promise<PerfInvokeResponse> {
+  return validatePerfExperiment(payload, taskId).then((preview) => apiPostValidated('/api/v1/perf/invoke', payload, {
+    headers: { 'EvalScope-Task-Id': taskId, 'EvalScope-Plan-Hash': preview.plan.plan_hash },
+  }))
+}
 
 // ------------------------------------------------------------------ //
 // Historical perf-run archive                                         //

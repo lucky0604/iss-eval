@@ -19,6 +19,9 @@ vi.mock('@/api/eval', () => ({
 }))
 vi.mock('@/api/perf', () => ({
   submitPerfTask: vi.fn(() => new Promise(() => {})),
+  submitPerfExperiment: vi.fn(() => new Promise(() => {})),
+  getPerfEngines: vi.fn(async () => ({ engines: [{ engine: 'aiperf', available: true }] })),
+  validatePerfExperiment: vi.fn(),
   stopPerfTask: vi.fn(),
   getPerfLog: vi.fn(() => new Promise(() => {})),
 }))
@@ -140,6 +143,25 @@ describe('Task workspace', () => {
     expect(document.getElementById('perf-number')).toHaveValue('16')
     expect(document.getElementById('connection-apiKey')).toHaveValue('')
     expect(document.getElementById('connection-model')).toHaveValue('same-model')
+  })
+  it('keeps both executor drafts when switching and after reload', async () => {
+    const view = mount()
+    tab('perf')
+    change('perf-number', '16')
+    fireEvent.change(screen.getByLabelText('Executor'), { target: { value: 'aiperf' } })
+    change('aiperf-tokenizer', '/tokenizer')
+    change('aiperf-ratios', '0, 90')
+    fireEvent.change(screen.getByLabelText('Executor'), { target: { value: 'evalscope' } })
+    expect(document.getElementById('perf-number')).toHaveValue('16')
+    fireEvent.change(screen.getByLabelText('Executor'), { target: { value: 'aiperf' } })
+    expect(document.getElementById('aiperf-ratios')).toHaveValue('0, 90')
+    await flushDraft()
+    view.unmount()
+    mount()
+    tab('perf')
+    expect(document.getElementById('aiperf-tokenizer')).toHaveValue('/tokenizer')
+    fireEvent.change(screen.getByLabelText('Executor'), { target: { value: 'evalscope' } })
+    expect(document.getElementById('perf-number')).toHaveValue('16')
   })
   it('saves credentials only after opting in and confirming, then loads them', () => {
     const view = mount()
