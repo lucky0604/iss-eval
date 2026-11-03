@@ -91,6 +91,7 @@ export interface ActiveTaskInfo {
   alias?: string | null;
   config?: TaskConfigSummary | null;
   endpoint?: string | null;
+  engine?: ("evalscope" | "aiperf") | null;
   html_report_url?: string | null;
   kind: string;
   model?: string;

@@ -55,6 +55,7 @@ class ActiveTaskInfo(ApiResponseModel):
 
     task_id: str
     kind: str  # 'eval' or 'perf'
+    engine: Optional[Literal['evalscope', 'aiperf']] = None
     model: str = ''
     endpoint: Optional[str] = None  # sanitized host[:port]
     alias: Optional[str] = None

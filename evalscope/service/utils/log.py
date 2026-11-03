@@ -14,6 +14,7 @@ from evalscope.utils.uri_utils import sanitize_endpoint
 if TYPE_CHECKING:
     from evalscope.config import TaskConfig
     from evalscope.perf.arguments import Arguments as PerfArguments
+    from evalscope.perf.executors.arguments import AIPerfArguments
 
 OUTPUT_DIR = os.path.abspath(os.getenv('EVALSCOPE_OUTPUT_DIR', DEFAULT_WORK_DIR))
 
@@ -136,7 +137,12 @@ def write_task_manifest(task_id: str, manifest: dict) -> str:
 
 
 def build_task_info(
-    task_id: str, kind: Literal['eval', 'perf'], config: TaskConfig | PerfArguments, alias: Optional[str]
+    task_id: str,
+    kind: Literal['eval', 'perf'],
+    config: TaskConfig | PerfArguments | AIPerfArguments,
+    alias: Optional[str],
+    *,
+    engine: Optional[Literal['evalscope', 'aiperf']] = None,
 ) -> ActiveTaskInfo:
     if kind == 'eval':
         fields = ('datasets', 'limit', 'eval_batch_size', 'repeats')
@@ -173,6 +179,7 @@ def build_task_info(
     info = ActiveTaskInfo(
         task_id=task_id,
         kind=kind,
+        engine=engine,
         model=str(getattr(config, 'model', '') or ''),
         alias=alias,
         endpoint=sanitize_endpoint(endpoint_url),

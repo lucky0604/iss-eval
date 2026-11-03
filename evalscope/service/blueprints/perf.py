@@ -7,6 +7,7 @@ from tabulate import tabulate
 
 from evalscope.metrics.semantics import resolve_perf_semantics
 from evalscope.perf.arguments import Arguments as PerfArguments
+from evalscope.perf.executors.arguments import parse_perf_task_arguments
 from evalscope.perf.plugin.api.base import ApiPluginBase
 from evalscope.perf.plugin.registry import ApiRegistry, DatasetRegistry
 from evalscope.perf.sla.sla_run import SLAResult, format_sla_tables
@@ -139,6 +140,19 @@ def run_performance_test():
     data = request.get_json()
     if not isinstance(data, dict) or not data:
         return jsonify({'error': 'Request body must be a JSON object'}), 400
+    data = dict(data)
+    if 'engine' in data:
+        task_id = request.headers.get('EvalScope-Task-Id')
+        if not task_id:
+            return jsonify({'error': 'EvalScope-Task-Id header is required'}), 400
+        try:
+            validate_task_id(task_id)
+            task_args = parse_perf_task_arguments(data)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid performance configuration or task ID'}), 400
+        if task_args.engine == 'aiperf':
+            return jsonify({'error': 'AIPerf 0.13.0 runtime is unavailable'}), 503
+        data = dict(data['native'])
 
     required_fields = ['model']
     for field in required_fields:

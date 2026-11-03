@@ -37,6 +37,21 @@
           ],
           "default": null
         },
+        "engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "evalscope",
+                "aiperf"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "html_report_url": {
           "anyOf": [
             {

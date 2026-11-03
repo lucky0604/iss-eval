@@ -76,6 +76,22 @@ def test_summary_is_whitelisted_and_lifecycle_is_authoritative(client, tmp_path:
     assert client.get('/api/v1/tasks/eval_safe').json['status'] == 'stopped'
 
 
+def test_aiperf_identity_uses_safe_inner_configuration(client, tmp_path: Path) -> None:
+    from evalscope.perf.executors.arguments import AIPerfArguments
+
+    config = AIPerfArguments(
+        model='served-model', alias='server-A', url='http://host:8000/v1?token=SECRET',
+        api_key='SECRET', tokenizer_path='/tokenizer',
+        load={'points': [{'concurrency': 1}], 'request_count': 2, 'output_token_limit': 8},
+        telemetry={'targets': [{'node_id': 'p', 'role': 'prefill', 'engine': 'vllm',
+                                'url': 'http://node/metrics', 'headers': {'Authorization': 'SECRET'}}]},
+    )
+    info = log.build_task_info('perf_external', 'perf', config, config.alias)
+    manifest = log.read_task_manifest(str(tmp_path / 'perf_external'))
+    assert (info.model, info.endpoint, info.alias) == ('served-model', 'host:8000', 'server-A')
+    assert 'SECRET' not in json.dumps(manifest)
+
+
 @pytest.mark.parametrize('value', [None, True, float('nan'), float('inf'), '50'])
 def test_invalid_progress_is_unknown(client, tmp_path: Path, value: object) -> None:
     register_process('perf_p', Mock(), ActiveTaskInfo(task_id='perf_p', kind='perf'))
