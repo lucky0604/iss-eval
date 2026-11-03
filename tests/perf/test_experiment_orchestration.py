@@ -154,3 +154,96 @@ def test_real_three_ratio_matrix_matches_requests(tmp_path: Path) -> None:
         assert {hashlib.sha256(row['body']['messages'][0]['content'].encode()).hexdigest() for row in measured} == hashes
         assert manifest['target_ratio'] == item.target_ratio
     assert cursor == len(sent)
+
+
+@pytest.mark.skipif(not os.environ.get('EVALSCOPE_TEST_AIPERF'), reason='requires isolated AIPerf 0.13.0')
+@pytest.mark.parametrize('phase', ['generating', 'priming', 'profiling', 'draining', 'importing'])
+def test_real_matrix_cancellation_does_not_start_later_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str,
+) -> None:
+    """Stop the real scenario pipeline at each phase and retain its matrix manifest."""
+    import time
+
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    import evalscope.perf.experiments.orchestrator as module
+    import evalscope.perf.integrations.aiperf.single_run as runtime_module
+    from tests.perf.test_cache_scenario import _config as scenario_config
+    from tests.perf.test_external_runner_lifecycle import _wait_group_gone
+    from tests.perf.test_prefix_priming import _server
+
+    root = tmp_path / 'run'
+    root.mkdir()
+    tokenizer_path = root / 'tokenizer'
+    backend = Tokenizer(models.WordLevel({'[UNK]': 0, **{f't{i}': i + 1 for i in range(200)}}, unk_token='[UNK]'))
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    PreTrainedTokenizerFast(tokenizer_object=backend, unk_token='[UNK]').save_pretrained(str(tokenizer_path))
+    context = ExecutionContext(task_id='matrix-stop', output_dir=str(root), runtime=ExternalRuntime(
+        executable=os.environ['EVALSCOPE_TEST_AIPERF'], graceful_timeout=3, terminate_timeout=2, kill_timeout=3,
+    ))
+    cancel, reached, observed = threading.Event(), threading.Event(), threading.Event()
+    process_groups = []
+    original_run = runtime_module.run_external
+
+    def tracked_run(*args, **kwargs):
+        previous = kwargs.pop('on_started', None)
+
+        def on_started(pid: int) -> None:
+            process_groups.append(pid)
+            if previous is not None:
+                previous(pid)
+
+        return original_run(*args, on_started=on_started, **kwargs)
+
+    monkeypatch.setattr(runtime_module, 'run_external', tracked_run)
+    original_write = module.write_experiment_json
+
+    def observe_state(path: Path, state: dict) -> None:
+        original_write(path, state)
+        if path.name == 'experiment.json' and state.get('status') == 'running' and state.get('phase') == phase:
+            reached.set()
+            if phase not in ('priming', 'profiling'):
+                cancel.set()
+
+    monkeypatch.setattr(module, 'write_experiment_json', observe_state)
+    mode = 'timeout' if phase in ('priming', 'profiling') else 'success'
+    with _server(tmp_path, mode) as (url, capture):
+        args = scenario_config(url, str(tokenizer_path))
+        args.cache_experiment.target_ratios = [.8] if phase == 'priming' else [0]
+        args.load.repetitions = 2
+
+        def cancel_after_actual_request() -> None:
+            deadline = time.monotonic() + 60
+            while not cancel.is_set() and time.monotonic() < deadline:
+                if reached.is_set() and capture.exists() and capture.stat().st_size:
+                    observed.set()
+                    cancel.set()
+                    return
+                time.sleep(.02)
+            cancel.set()
+
+        watcher = None
+        if phase in ('priming', 'profiling'):
+            watcher = threading.Thread(target=cancel_after_actual_request, daemon=True)
+            watcher.start()
+        result = run_cache_experiment(args, context, _Tokenizer(), list(range(200)), 'fixture', 'fixture-template', cancel)
+        if watcher is not None:
+            watcher.join(timeout=2)
+            assert observed.is_set(), 'No actual request was observed in the selected phase'
+        assert reached.is_set() and result.status == 'stopped' and result.cleanup_confirmed
+        assert len(process_groups) >= (2 if phase in ('profiling', 'draining', 'importing') else 1)
+        for group in process_groups:
+            _wait_group_gone(group)
+        manifest = json.loads((root / 'experiment.json').read_text())
+        assert manifest['subruns'][0]['status'] == 'cancelled'
+        assert manifest['subruns'][1]['status'] == 'not_started'
+        assert len(list((root / 'runs').iterdir())) == 1
+        before = capture.read_bytes() if capture.exists() else b''
+        time.sleep(.3)
+        assert (capture.read_bytes() if capture.exists() else b'') == before
+        if phase == 'profiling':
+            subrun = root / 'runs' / manifest['subruns'][0]['subrun_id']
+            scenario = json.loads((subrun / 'scenario.json').read_text())
+            assert scenario['execution']['exit_reason'] == 'cancelled'
+            assert scenario['execution']['cleanup_confirmed']
