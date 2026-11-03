@@ -1,0 +1,5 @@
+{"path": "/v1/chat/completions", "body": {"messages": [{"role": "user", "content": "shared alpha first"}], "model": "mock-model", "stream": true, "max_completion_tokens": 1, "stream_options": {"include_usage": true}}}
+{"path": "/v1/chat/completions", "body": {"messages": [{"role": "user", "content": "shared alpha second"}], "model": "mock-model", "stream": true, "max_completion_tokens": 2, "stream_options": {"include_usage": true}}}
+{"path": "/v1/chat/completions", "body": {"messages": [{"role": "user", "content": "shared beta third"}], "model": "mock-model", "stream": true, "max_completion_tokens": 3, "stream_options": {"include_usage": true}}}
+{"path": "/v1/chat/completions", "body": {"messages": [{"role": "user", "content": "shared alpha first"}], "model": "mock-model", "stream": true, "max_completion_tokens": 1, "stream_options": {"include_usage": true}}}
+{"path": "/v1/chat/completions", "body": {"messages": [{"role": "user", "content": "shared alpha second"}], "model": "mock-model", "stream": true, "max_completion_tokens": 2, "stream_options": {"include_usage": true}}}
