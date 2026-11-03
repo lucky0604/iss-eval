@@ -34,6 +34,7 @@ from .perf import (
     PerfRunItem,
     PerfRunsListResponse,
     PerfRunSummary,
+    PerfSinglePlanResponse,
 )
 from .reports import (
     AnalysisResponse,
@@ -96,6 +97,7 @@ class WebApiContracts(BaseModel):
     perf_invoke_response: PerfInvokeResponse
     perf_live_response: PerfLiveResponse
     perf_plan_response: PerfPlanResponse
+    perf_single_plan_response: PerfSinglePlanResponse
     cache_experiment_response: CacheExperimentResponse
     cache_experiment_list_response: CacheExperimentListResponse
     cache_scenario_response: CacheScenarioResponse
@@ -144,6 +146,7 @@ __all__ = [
     'PerfInvokeResponse',
     'PerfLiveResponse',
     'PerfPlanResponse',
+    'PerfSinglePlanResponse',
     'PerfRequestsResponse',
     'PerfRunsListResponse',
     'PredictionsResponse',

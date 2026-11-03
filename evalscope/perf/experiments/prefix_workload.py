@@ -71,6 +71,15 @@ class PrefixWorkload(BaseArgument):
     requests: List[PrefixWorkloadItem]
 
 
+class PrefixGeometry(BaseArgument):
+    """Template overhead and feasible content budget for one target ratio."""
+
+    header_tokens: int
+    content_budget: int
+    target_shared_tokens: int
+    prefix_content_tokens: int
+
+
 def _common_prefix(left: Sequence[int], right: Sequence[int]) -> int:
     for index, (first, second) in enumerate(zip(left, right)):
         if first != second:
@@ -80,6 +89,41 @@ def _common_prefix(left: Sequence[int], right: Sequence[int]) -> int:
 
 def _hash_text(text: str) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def validate_prefix_geometry(
+    arguments: PrefixWorkloadArguments,
+    tokenizer: PrefixTokenizer,
+    token_pool: Sequence[int],
+    check_zero_leaders: bool = True,
+) -> PrefixGeometry:
+    """Reject template/ratio combinations that cannot leave a distinct content suffix."""
+    tokens = list(dict.fromkeys(token_pool))
+    if len(tokens) < 2 or any(type(token) is not int or token < 0 for token in tokens):
+        raise ValueError('At least two distinct non-negative candidate token IDs are required')
+    if arguments.target_ratio > 0 and arguments.prefix_pool_size > arguments.request_count:
+        raise ValueError('Every requested prefix must have at least one profiling request')
+    left, right = tokenizer.decode([tokens[0]]), tokenizer.decode([tokens[1]])
+    if not left or not right or left == right:
+        raise ValueError('Candidate tokens do not decode to distinct text')
+    left_rendered, right_rendered = tokenizer.render(left), tokenizer.render(right)
+    if left_rendered == right_rendered:
+        raise ValueError('Candidate tokens are indistinguishable after chat rendering')
+    header = _common_prefix(left_rendered, right_rendered)
+    budget = arguments.total_input_tokens - len(tokenizer.render(''))
+    target = round(arguments.target_ratio * arguments.total_input_tokens)
+    prefix_length = max(0, target - header) if arguments.target_ratio else 0
+    if budget <= 0 or prefix_length >= budget:
+        raise ValueError('Template and prefix leave no room for a distinct suffix')
+    if arguments.target_ratio > 0 and target < header - arguments.tolerance_tokens:
+        raise ValueError('The fixed template already exceeds the requested shared length')
+    if arguments.target_ratio > 0 and prefix_length == 0:
+        raise ValueError('The requested shared length does not include a primer content token')
+    if check_zero_leaders and not arguments.target_ratio and arguments.request_count > len(tokens):
+        raise ValueError('Zero-ratio inputs need a distinct leading token for each request')
+    return PrefixGeometry(
+        header_tokens=header, content_budget=budget, target_shared_tokens=target, prefix_content_tokens=prefix_length
+    )
 
 
 def build_prefix_workload(
@@ -95,31 +139,11 @@ def build_prefix_workload(
     Shared counts describe generated token sequences, not observed cache hits.
     """
     tokens = list(dict.fromkeys(token_pool))
-    if len(tokens) < 2 or any(type(token) is not int or token < 0 for token in tokens):
-        raise ValueError('At least two distinct non-negative candidate token IDs are required')
-    if arguments.target_ratio > 0 and arguments.prefix_pool_size > arguments.request_count:
-        raise ValueError('Every requested prefix must have at least one profiling request')
+    geometry = validate_prefix_geometry(arguments, tokenizer, tokens)
     seed = hashlib.sha256(f'{arguments.seed}\0{arguments.namespace}'.encode()).digest()
     randomizer = random.Random(int.from_bytes(seed, 'big'))
-    left, right = tokenizer.decode([tokens[0]]), tokenizer.decode([tokens[1]])
-    if not left or not right or left == right:
-        raise ValueError('Candidate tokens do not decode to distinct text')
-    left_rendered, right_rendered = tokenizer.render(left), tokenizer.render(right)
-    if left_rendered == right_rendered:
-        raise ValueError('Candidate tokens are indistinguishable after chat rendering')
-    header = _common_prefix(left_rendered, right_rendered)
-    overhead = len(tokenizer.render(''))
-    budget = arguments.total_input_tokens - overhead
-    target = round(arguments.target_ratio * arguments.total_input_tokens)
-    prefix_length = max(0, target - header) if arguments.target_ratio else 0
-    if budget <= 0 or prefix_length >= budget:
-        raise ValueError('Template and prefix leave no room for a distinct suffix')
-    if arguments.target_ratio > 0 and target < header - arguments.tolerance_tokens:
-        raise ValueError('The fixed template already exceeds the requested shared length')
-    if arguments.target_ratio > 0 and prefix_length == 0:
-        raise ValueError('The requested shared length does not include a primer content token')
-    if not arguments.target_ratio and arguments.request_count > len(tokens):
-        raise ValueError('Zero-ratio inputs need a distinct leading token for each request')
+    header, budget = geometry.header_tokens, geometry.content_budget
+    target, prefix_length = geometry.target_shared_tokens, geometry.prefix_content_tokens
 
     primers = []
     requests = []

@@ -146,7 +146,7 @@ def prepare_single_run(
     else:
         phase.update({'type': 'poisson', 'rate': point.rate})
     endpoint_config = {'urls': [base], 'path': endpoint, 'type': 'chat', 'streaming': True}
-    environment = {}
+    environment = {'AIPERF_UI_REALTIME_METRICS_ENABLED': 'true'}
     if arguments.api_key is not None:
         endpoint_config['api_key'] = '${EVALSCOPE_AIPERF_API_KEY}'
         environment['EVALSCOPE_AIPERF_API_KEY'] = arguments.api_key
@@ -170,6 +170,7 @@ def prepare_single_run(
                 }
             ],
             'phases': [phase],
+            'runtime': {'stats_interval': 2},
             'tokenizer': {'name': arguments.tokenizer_path},
             'server_metrics': {
                 'enabled': bool(targets),

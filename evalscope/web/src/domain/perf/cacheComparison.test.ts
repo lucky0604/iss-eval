@@ -22,3 +22,21 @@ it('rejects source, scope or unit mismatch and keeps zero-baseline change unknow
   expect(relativeChange(0, 3)).toBeNull()
   expect(relativeChange(2, 3)).toBe(.5)
 })
+
+it('requires compatible credential-free experiment configuration across tasks', async () => {
+  const { comparableConfigurations } = await import('./cacheComparison')
+  const config = {
+    task_id: 'one', model: 'model', url: 'http://server/v1', tokenizer_id: 'tok', template_id: 'template',
+    tokenizer_path: '/first', stream: true, deployment_mode: 'pd' as const,
+    telemetry: { required: false, sample_interval_seconds: 2, max_scrape_gap_seconds: null, targets: [] },
+    cache: { target_ratios: [0, .8] as [number, ...number[]], total_input_tokens: 100, prefix_pool_size: 1 },
+    load: { mode: 'closed_loop' as const, points: [{ concurrency: 1 }] as [{ concurrency: number }], repetitions: 1, request_count: 10, output_token_limit: 4 },
+  }
+  const other = { ...config, task_id: 'two', tokenizer_path: '/second', cache: { ...config.cache, target_ratios: [.9] as [number] }, load: { ...config.load, repetitions: 2, points: [{ concurrency: 2 }] as [{ concurrency: number }] } }
+  expect(comparableConfigurations(config, other)).toBe(true)
+  expect(comparableConfigurations(config, { ...other, model: 'other' })).toBe(false)
+  expect(comparableConfigurations(config, { ...other, cache: { ...other.cache, total_input_tokens: 200 } })).toBe(false)
+  expect(comparableConfigurations(config, { ...other, telemetry: { ...other.telemetry, required: true } })).toBe(false)
+  expect(comparableConfigurations(config, null)).toBe(false)
+  expect(comparableRuns(base, { ...base, target_ratio: .8 }, 'ratio', false)).toBe(true)
+})

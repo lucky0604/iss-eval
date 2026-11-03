@@ -8,6 +8,8 @@ import Button from '@/components/ui/Button'
 import NodeWindowPanel from '@/components/perf/NodeWindowPanel'
 import CacheComparisonPanel from '@/components/perf/CacheComparisonPanel'
 import CacheMatrixChart from '@/components/perf/CacheMatrixChart'
+import CrossExperimentComparisonPanel from '@/components/perf/CrossExperimentComparisonPanel'
+import CacheRepetitionsPanel from '@/components/perf/CacheRepetitionsPanel'
 import CacheRequestGroupsPanel from '@/components/perf/CacheRequestGroupsPanel'
 
 function percentage(value: number | null | undefined): string {
@@ -83,6 +85,7 @@ function CacheExperimentReport({ taskId }: { taskId: string }) {
         <p className="break-all text-sm">{zh ? '计划哈希' : 'Plan hash'}: {experiment.plan.plan_hash}</p>
         <p className="break-all text-sm">{zh ? '配置哈希' : 'Configuration hash'}: {experiment.plan.configuration_hash}</p>
         <p className="break-all text-sm">Tokenizer: {experiment.plan.tokenizer_id} · Template: {experiment.plan.template_id}</p>
+        <p className="break-all text-sm">{zh ? '已核验配置（不含凭证）' : 'Verified configuration (credentials excluded)'}: {experiment.plan.configuration ? JSON.stringify(experiment.plan.configuration) : '—'}</p>
         <p className="text-sm">{zh ? '正式 / 预热请求预算' : 'Profiling / primer request budget'}: {experiment.plan.profiling_requests} / {experiment.plan.primer_requests}</p>
       </details>
       <p className="text-sm text-[var(--text-muted)]">{zh ? '目标比例、生成比例与服务端报告的缓存命中彼此独立；缺失值显示为 —。TTFT 和吞吐来自 AIPerf 客户端汇总。' : 'Target, generated reuse, and server-reported cache hits are distinct; missing values are shown as —. TTFT and throughput come from the AIPerf client summary.'}</p>
@@ -110,6 +113,8 @@ function CacheExperimentReport({ taskId }: { taskId: string }) {
       </div>}
       <CacheMatrixChart rows={experiment.plan.subruns.slice(matrixOffset, matrixOffset + 50)} scenarios={scenarios} />
       <CacheComparisonPanel baseline={baseline} candidate={candidate} />
+      <CrossExperimentComparisonPanel experiment={experiment} baseline={baseline} />
+      <CacheRepetitionsPanel rows={experiment.plan.subruns.slice(matrixOffset, matrixOffset + 50)} scenarios={scenarios} />
       {selected && selectedScenario && <section className="space-y-2">
         <h2 className="font-semibold">{selected}</h2>
         {experiment.plan.subruns.filter((row) => row.subrun_id === selected).map((row) => <details key={row.subrun_id} className="rounded border border-[var(--border)] p-3"><summary>{zh ? '输入和执行配置' : 'Input and execution details'}</summary>

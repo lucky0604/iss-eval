@@ -3,11 +3,11 @@
 import hashlib
 import json
 import random
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import Field
 
-from evalscope.perf.executors.arguments import AIPerfArguments, LoadPoint
+from evalscope.perf.executors.arguments import AIPerfArguments, CacheExperiment, LoadConfiguration, LoadPoint
 from evalscope.perf.executors.urls import normalize_chat_url
 from evalscope.perf.integrations.aiperf.single_run import validate_single_run_configuration
 from evalscope.utils import BaseArgument
@@ -29,12 +29,46 @@ class CacheSubrunPlan(BaseArgument):
     output_token_limit: Optional[int] = None
 
 
+class PlannedMetricNode(BaseArgument):
+    """Credential-free identity of a configured telemetry node."""
+
+    node_id: str
+    role: Literal['prefill', 'decode']
+    engine: Literal['vllm', 'sglang']
+    url: str
+    labels: Dict[str, str]
+
+
+class PlannedTelemetry(BaseArgument):
+    required: bool
+    sample_interval_seconds: float
+    max_scrape_gap_seconds: Optional[float]
+    targets: List[PlannedMetricNode]
+
+
+class CachePlanConfiguration(BaseArgument):
+    """Reproducible configuration without inference or telemetry credentials."""
+
+    task_id: str
+    model: str
+    url: str
+    tokenizer_path: str
+    tokenizer_id: str
+    template_id: str
+    stream: bool
+    deployment_mode: Literal['single', 'pd']
+    cache: CacheExperiment
+    load: LoadConfiguration
+    telemetry: PlannedTelemetry
+
+
 class CacheExperimentPlan(BaseArgument):
     """A reproducible plan and its request budget."""
 
     schema_version: Literal['1.0'] = '1.0'
     plan_hash: str
     configuration_hash: str
+    configuration: Optional[CachePlanConfiguration] = None
     tokenizer_id: str
     template_id: str
     subruns: List[CacheSubrunPlan]
@@ -79,6 +113,7 @@ def plan_cache_experiment(
         'load': arguments.load.model_dump(mode='json'),
         'telemetry': arguments.telemetry.model_dump(mode='json', exclude={'targets': {'__all__': {'headers'}}}),
     }
+    configuration = CachePlanConfiguration.model_validate(identity)
     config_hash = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     members = []
     for ratio_index, ratio in enumerate(cache.target_ratios):
@@ -109,6 +144,7 @@ def plan_cache_experiment(
     return CacheExperimentPlan(
         plan_hash=plan_hash,
         configuration_hash=config_hash,
+        configuration=configuration,
         tokenizer_id=tokenizer_id,
         template_id=template_id,
         subruns=members,

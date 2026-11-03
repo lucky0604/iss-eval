@@ -515,6 +515,62 @@
       },
       "type": "object"
     },
+    "CacheExperiment": {
+      "additionalProperties": false,
+      "description": "Target prefix reuse, independent of generated reuse or observed cache hits.",
+      "properties": {
+        "cache_state_policy": {
+          "const": "fresh_namespace",
+          "default": "fresh_namespace",
+          "type": "string"
+        },
+        "mode": {
+          "const": "token_prefix_ratio",
+          "default": "token_prefix_ratio",
+          "type": "string"
+        },
+        "prefix_pool_size": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "routing_coverage": {
+          "const": "observed",
+          "default": "observed",
+          "type": "string"
+        },
+        "routing_policy": {
+          "const": "router_native",
+          "default": "router_native",
+          "type": "string"
+        },
+        "seed": {
+          "default": 42,
+          "type": "integer"
+        },
+        "target_ratios": {
+          "items": {
+            "type": "number"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "total_input_tokens": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "warmup_policy": {
+          "const": "prime_all_prefixes",
+          "default": "prime_all_prefixes",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_ratios",
+        "total_input_tokens"
+      ],
+      "type": "object"
+    },
     "CacheExperimentListItem": {
       "additionalProperties": false,
       "properties": {
@@ -645,6 +701,17 @@
       "additionalProperties": false,
       "description": "A reproducible plan and its request budget.",
       "properties": {
+        "configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CachePlanConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "configuration_hash": {
           "type": "string"
         },
@@ -950,6 +1017,63 @@
       "required": [
         "observed_requests",
         "availability"
+      ],
+      "type": "object"
+    },
+    "CachePlanConfiguration": {
+      "additionalProperties": false,
+      "description": "Reproducible configuration without inference or telemetry credentials.",
+      "properties": {
+        "cache": {
+          "$ref": "#/$defs/CacheExperiment"
+        },
+        "deployment_mode": {
+          "enum": [
+            "single",
+            "pd"
+          ],
+          "type": "string"
+        },
+        "load": {
+          "$ref": "#/$defs/LoadConfiguration"
+        },
+        "model": {
+          "type": "string"
+        },
+        "stream": {
+          "type": "boolean"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "telemetry": {
+          "$ref": "#/$defs/PlannedTelemetry"
+        },
+        "template_id": {
+          "type": "string"
+        },
+        "tokenizer_id": {
+          "type": "string"
+        },
+        "tokenizer_path": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "model",
+        "url",
+        "tokenizer_path",
+        "tokenizer_id",
+        "template_id",
+        "stream",
+        "deployment_mode",
+        "cache",
+        "load",
+        "telemetry"
       ],
       "type": "object"
     },
@@ -1412,6 +1536,76 @@
       "required": [
         "role",
         "content"
+      ],
+      "type": "object"
+    },
+    "ClientProgress": {
+      "additionalProperties": false,
+      "description": "AIPerf client counters, distinct from all server node metrics.",
+      "properties": {
+        "completed_records": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error_records": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rounded_requests_per_second": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sampled_at_ns": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sent_at_ns": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sent_requests": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "const": "aiperf_0.13.0_realtime_log",
+          "default": "aiperf_0.13.0_realtime_log",
+          "type": "string"
+        },
+        "successful_records": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sampled_at_ns",
+        "completed_records",
+        "successful_records",
+        "error_records"
       ],
       "type": "object"
     },
@@ -2205,6 +2399,46 @@
         "node_id",
         "role",
         "engine"
+      ],
+      "type": "object"
+    },
+    "LoadConfiguration": {
+      "additionalProperties": false,
+      "description": "Load points and budgets shared by all experiment scenarios.",
+      "properties": {
+        "mode": {
+          "default": "closed_loop",
+          "enum": [
+            "closed_loop",
+            "open_loop"
+          ],
+          "type": "string"
+        },
+        "output_token_limit": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/LoadPoint"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "repetitions": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "request_count": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "points",
+        "request_count",
+        "output_token_limit"
       ],
       "type": "object"
     },
@@ -3444,6 +3678,17 @@
       "additionalProperties": false,
       "description": "Bounded last node scrapes and the current planned scenario, when available.",
       "properties": {
+        "client": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClientProgress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "concurrency": {
           "anyOf": [
             {
@@ -4344,6 +4589,44 @@
       ],
       "type": "object"
     },
+    "PerfSinglePlanResponse": {
+      "additionalProperties": false,
+      "description": "Preflight for one inline-prompt AIPerf run.",
+      "properties": {
+        "engine_available": {
+          "type": "boolean"
+        },
+        "metrics_probe": {
+          "default": "not_requested",
+          "enum": [
+            "not_requested",
+            "completed"
+          ],
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/NodePreflight"
+          },
+          "type": "array"
+        },
+        "profiling_requests": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "engine_available",
+        "profiling_requests"
+      ],
+      "type": "object"
+    },
     "PerfSummaryColumn": {
       "additionalProperties": false,
       "properties": {
@@ -4397,6 +4680,80 @@
       "required": [
         "values",
         "sample_counts"
+      ],
+      "type": "object"
+    },
+    "PlannedMetricNode": {
+      "additionalProperties": false,
+      "description": "Credential-free identity of a configured telemetry node.",
+      "properties": {
+        "engine": {
+          "enum": [
+            "vllm",
+            "sglang"
+          ],
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "prefill",
+            "decode"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "role",
+        "engine",
+        "url",
+        "labels"
+      ],
+      "type": "object"
+    },
+    "PlannedTelemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "max_scrape_gap_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "sample_interval_seconds": {
+          "type": "number"
+        },
+        "targets": {
+          "items": {
+            "$ref": "#/$defs/PlannedMetricNode"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "required",
+        "sample_interval_seconds",
+        "max_scrape_gap_seconds",
+        "targets"
       ],
       "type": "object"
     },
@@ -5953,6 +6310,9 @@
     "perf_runs_list_response": {
       "$ref": "#/$defs/PerfRunsListResponse"
     },
+    "perf_single_plan_response": {
+      "$ref": "#/$defs/PerfSinglePlanResponse"
+    },
     "prediction_row": {
       "$ref": "#/$defs/PredictionRow"
     },
@@ -6021,6 +6381,7 @@
     "perf_invoke_response",
     "perf_live_response",
     "perf_plan_response",
+    "perf_single_plan_response",
     "cache_experiment_response",
     "cache_experiment_list_response",
     "cache_scenario_response",

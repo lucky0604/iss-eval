@@ -38,6 +38,11 @@ def load_experiment(task_id: str) -> CacheExperimentResponse:
     validate_task_id(task_id)
     raw_plan = _read(task_id, 'perf/experiment_plan.json')
     plan = CacheExperimentPlan.model_validate(raw_plan)
+    if plan.configuration is not None:
+        identity = plan.configuration.model_dump(mode='json')
+        digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        if identity['task_id'] != task_id or digest != plan.configuration_hash:
+            raise ValueError('Experiment configuration does not match its identity')
     state = _read(task_id, 'perf/experiment.json')
     rows = state.get('subruns')
     if (

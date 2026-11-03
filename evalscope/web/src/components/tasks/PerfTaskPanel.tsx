@@ -4,7 +4,7 @@ import { connectionPayload, type ModelConnection, type PerfDraft, type FieldErro
 import PerfConfigForm from '@/components/perf/PerfConfigForm'
 import CacheExperimentForm from '@/components/perf/CacheExperimentForm'
 import TaskRunnerShell, { type TaskSelectionProps } from '@/components/tasks/TaskRunnerShell'
-import { submitPerfTask, submitPerfExperiment, stopPerfTask, getPerfLog } from '@/api/perf'
+import { submitPerfTask, submitPerfExperiment, submitPerfSingle, stopPerfTask, getPerfLog } from '@/api/perf'
 import type { AIPerfDraft } from './aiperfDraft'
 
 interface Props extends TaskSelectionProps {
@@ -44,9 +44,11 @@ export default function PerfTaskPanel({
       configTitle={t('perf.task.config')}
       statusTitle={t('perf.task.status')}
       readyLabel={t('perf.task.ready')}
-      submitTask={(payload, id) => payload.engine === 'aiperf'
-        ? submitPerfExperiment(payload, id)
-        : submitPerfTask({ ...payload, ...connectionPayload(connection, 'perf') }, id)}
+      submitTask={(payload, id) => {
+        if (payload.engine !== 'aiperf') return submitPerfTask({ ...payload, ...connectionPayload(connection, 'perf') }, id)
+        const settings = payload.aiperf as Record<string, unknown>
+        return Array.isArray(settings.input_prompts) ? submitPerfSingle(payload, id) : submitPerfExperiment(payload, id)
+      }}
       stopTask={stopPerfTask}
       getLog={getPerfLog}
       renderForm={({ onSubmit, disabled }) => (

@@ -1,22 +1,25 @@
 import { useState } from 'react'
-import type { CacheScenarioResponse, CacheSubrunPlan } from '@/api/generated/contracts'
-import { comparableMetric, comparableRuns, relativeChange, type ComparisonDimension } from '@/domain/perf/cacheComparison'
+import type { CachePlanConfiguration, CacheScenarioResponse, CacheSubrunPlan } from '@/api/generated/contracts'
+import { comparableConfigurations, comparableMetric, comparableRuns, relativeChange, type ComparisonDimension } from '@/domain/perf/cacheComparison'
 import { useLocale } from '@/contexts/LocaleContext'
 import { formatMetric } from '@/domain/metric'
 
 interface Props {
   baseline?: { plan: CacheSubrunPlan; scenario: CacheScenarioResponse }
   candidate?: { plan: CacheSubrunPlan; scenario: CacheScenarioResponse }
+  configurations?: { baseline?: CachePlanConfiguration | null; candidate?: CachePlanConfiguration | null }
 }
 
-export default function CacheComparisonPanel({ baseline, candidate }: Props) {
+export default function CacheComparisonPanel({ baseline, candidate, configurations }: Props) {
   const { locale } = useLocale()
   const zh = locale === 'zh'
   const [dimension, setDimension] = useState<ComparisonDimension>('ratio')
   const a = baseline?.scenario.result
   const b = candidate?.scenario.result
   const valid = Boolean(baseline && candidate && a && b && a.quality !== 'invalid' && b.quality !== 'invalid' &&
-    a.engine === b.engine && a.executor_version === b.executor_version && comparableRuns(baseline.plan, candidate.plan, dimension))
+    a.engine === b.engine && a.executor_version === b.executor_version &&
+    (!configurations || comparableConfigurations(configurations.baseline, configurations.candidate)) &&
+    comparableRuns(baseline.plan, candidate.plan, dimension, !configurations))
   return <section className="space-y-2 rounded border border-[var(--border)] p-3" aria-label={zh ? '显式子运行对比' : 'Explicit subrun comparison'}>
     <h2 className="font-semibold">{zh ? '显式子运行对比' : 'Explicit subrun comparison'}</h2>
     <p className="text-sm">{zh ? '在矩阵中分别选择基准和候选。固定其他维度及重复序号；不合并各轮 P99。' : 'Select baseline and candidate in the matrix. Other dimensions and repetition are fixed; per-run P99 values are not pooled.'}</p>
@@ -24,7 +27,7 @@ export default function CacheComparisonPanel({ baseline, candidate }: Props) {
       <option value="ratio">{zh ? '目标复用' : 'Target reuse'}</option><option value="load">{zh ? '负载' : 'Load'}</option>
     </select></label>
     <p className="text-sm">{zh ? '基准' : 'Baseline'}: {baseline?.plan.subrun_id ?? '—'} · {zh ? '候选' : 'Candidate'}: {candidate?.plan.subrun_id ?? '—'}</p>
-    {!valid ? <p className="text-sm">{zh ? '请选择同一实验中仅变化所选维度、重复序号一致且结果有效的两组；未经校准的来源或范围不计算变化。' : 'Choose two valid runs from this experiment that differ only in the selected dimension and use the same repetition. Uncalibrated sources or scopes have no delta.'}</p> : <>
+    {!valid ? <p className="text-sm">{zh ? '请选择仅变化所选维度、重复序号一致且结果有效的两组；跨实验还需匹配已核验的配置。未经校准的来源或范围不计算变化。' : 'Choose two valid runs that differ only in the selected dimension and use the same repetition. Cross-experiment runs also require matching verified configurations; uncalibrated sources or scopes have no delta.'}</p> : <>
       <p className="text-sm">{zh ? '质量' : 'Quality'}: {a?.quality} / {b?.quality}; {zh ? '结果为单轮观测，不是聚合结论。' : 'These are individual repetitions, not an aggregate verdict.'}</p>
       <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr>
         <th>{zh ? '指标 / 来源 / 范围' : 'Metric / source / scope'}</th><th>{zh ? '基准 (n)' : 'Baseline (n)'}</th><th>{zh ? '候选 (n)' : 'Candidate (n)'}</th><th>{zh ? '变化' : 'Change'}</th>

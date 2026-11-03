@@ -4,10 +4,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { LocaleProvider } from '@/contexts/LocaleContext'
 import { DEFAULT_AIPERF, type AIPerfDraft } from '@/components/tasks/aiperfDraft'
 import CacheExperimentForm from './CacheExperimentForm'
-import { getPerfEngines, validatePerfExperiment } from '@/api/perf'
+import { getPerfEngines, validatePerfExperiment, validatePerfSingle } from '@/api/perf'
 import type { PerfPlanResponse } from '@/api/generated/contracts'
 
-vi.mock('@/api/perf', () => ({ getPerfEngines: vi.fn(), validatePerfExperiment: vi.fn() }))
+vi.mock('@/api/perf', () => ({ getPerfEngines: vi.fn(), validatePerfExperiment: vi.fn(), validatePerfSingle: vi.fn() }))
 const plan = (requests = 30): PerfPlanResponse => ({ engine_available: true, warnings: [], plan: {
   plan_hash: 'hash', configuration_hash: 'config', tokenizer_id: 'tokenizer', template_id: 'template',
   subruns: [], profiling_requests: requests, primer_requests: 2, max_profiling_output_tokens: 300,
@@ -111,4 +111,20 @@ it('ignores an out-of-order preview and invalidates it when the draft changes', 
   expect(screen.queryByText(/30 profiling requests/)).not.toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('Random seed'), { target: { value: '43' } })
   expect(screen.getByRole('button', { name: 'Start experiment' })).toBeDisabled()
+})
+
+it('preflights and submits one inline-prompt run with exact user text', async () => {
+  const submit = vi.fn().mockResolvedValue(undefined)
+  vi.mocked(validatePerfSingle).mockResolvedValue({ engine_available: true, profiling_requests: 2 })
+  await act(async () => { render(<Harness submit={submit} initial={{ ...DEFAULT_AIPERF, tokenizer: '/tokenizer' }} />) })
+  fireEvent.change(screen.getByLabelText('Workload'), { target: { value: 'single' } })
+  fireEvent.change(screen.getByLabelText('Prompts (one per line; stored in this browser)'), { target: { value: 'first\n second ' } })
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Preview plan' })) })
+  expect(screen.getByText(/2 profiling requests/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Start single run' }))
+  expect(submit).toHaveBeenCalledWith(expect.objectContaining({ engine: 'aiperf', aiperf: expect.objectContaining({
+    input_prompts: ['first', ' second '], load: expect.objectContaining({ request_count: 2, repetitions: 1 }),
+  }) }))
+  const request = vi.mocked(validatePerfSingle).mock.calls[0][0]
+  expect((request.aiperf as Record<string, unknown>).cache_experiment).toBeUndefined()
 })

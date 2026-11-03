@@ -1,5 +1,5 @@
 import { apiDeleteValidated, apiPostValidated, apiValidated } from './client'
-import type { PerfEnginesResponse, PerfInvokeResponse, PerfLiveResponse, PerfPlanResponse, CacheExperimentResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse } from './generated/contracts'
+import type { PerfEnginesResponse, PerfInvokeResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, CacheExperimentResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse } from './generated/contracts'
 import type {
   DeletePerfRunResponse,
   ListPerfRunsResponse,
@@ -38,16 +38,28 @@ export function submitPerfExperiment(payload: Record<string, unknown>, taskId: s
   }))
 }
 
-export function getCacheExperiment(taskId: string): Promise<CacheExperimentResponse> {
-  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}`)
+export function validatePerfSingle(payload: Record<string, unknown>, taskId: string, signal?: AbortSignal,
+                                   probeMetrics = false): Promise<PerfSinglePlanResponse> {
+  return apiPostValidated('/api/v1/perf/validate-single', payload, {
+    headers: { 'EvalScope-Task-Id': taskId }, signal, params: { probe_metrics: probeMetrics ? 1 : 0 },
+  })
+}
+
+export async function submitPerfSingle(payload: Record<string, unknown>, taskId: string): Promise<PerfInvokeResponse> {
+  await validatePerfSingle(payload, taskId)
+  return apiPostValidated('/api/v1/perf/invoke', payload, { headers: { 'EvalScope-Task-Id': taskId } })
+}
+
+export function getCacheExperiment(taskId: string, signal?: AbortSignal): Promise<CacheExperimentResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}`, { signal })
 }
 
 export function listCacheExperiments(offset = 0): Promise<CacheExperimentListResponse> {
   return apiValidated('/api/v1/perf/experiments', { params: { offset, limit: 50 } })
 }
 
-export function getCacheScenario(taskId: string, subrunId: string): Promise<CacheScenarioResponse> {
-  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}`)
+export function getCacheScenario(taskId: string, subrunId: string, signal?: AbortSignal): Promise<CacheScenarioResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}`, { signal })
 }
 
 export function getCacheNodeMetrics(taskId: string, subrunId: string, offset = 0,

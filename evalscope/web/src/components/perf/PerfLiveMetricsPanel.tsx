@@ -58,6 +58,8 @@ export default function PerfLiveMetricsPanel({ taskId, active }: Props) {
   const node = nodes.find((item) => item.node_id === selected) ?? nodes[0]
   const ageMs = node?.sampled_at_ns != null ? now - node.sampled_at_ns / 1_000_000 : null
   const stale = failed || node?.status === 'unavailable' || (ageMs !== null && ageMs > Math.max(15_000, (snapshot?.expected_interval_seconds ?? 1) * 3000))
+  const client = snapshot?.client
+  const clientStale = Boolean(client && (failed || now - client.sampled_at_ns / 1_000_000 > 15_000))
   const queue = node?.gauges?.find((item) => item.key === 'waiting_requests')
   const series = queue ? JSON.stringify([queue.name, queue.labels]) : ''
   const trend = points.filter((point) => point.node === node?.node_id && point.series === series).slice(-60)
@@ -68,7 +70,9 @@ export default function PerfLiveMetricsPanel({ taskId, active }: Props) {
     <h3 className="font-semibold">{t('tasks.live.title')}</h3>
     <p className="text-xs text-[var(--text-muted)]">{t('tasks.live.source')}</p>
     {snapshot?.current_subrun && <p className="text-sm">{t('tasks.live.scenario')}: {snapshot.current_subrun} · {t('tasks.live.target')}: {snapshot.target_ratio == null ? '—' : `${snapshot.target_ratio * 100}%`} · {snapshot.load_mode === 'closed_loop' ? `${t('tasks.live.concurrency')}: ${snapshot.concurrency ?? '—'}` : `${t('tasks.live.rate')}: ${snapshot.rate ?? '—'}`} · {t('tasks.live.repetition')}: {snapshot.repetition == null ? '—' : snapshot.repetition + 1}</p>}
-    <p className="text-sm">{t('tasks.live.requestCounts')}: —</p>
+    <p className="text-sm">{t('tasks.live.requestCounts')}: {client?.sent_requests ?? '—'} / {client?.completed_records ?? '—'} / {client?.rounded_requests_per_second ?? '—'}
+      {client && ` · ${t(clientStale ? 'tasks.live.stale' : 'tasks.live.clientSource')} · ${new Date(client.sampled_at_ns / 1_000_000).toLocaleString()}`}</p>
+    {client?.sent_at_ns != null && <p className="text-xs text-[var(--text-muted)]">{t('tasks.live.sentAt')}: {new Date(client.sent_at_ns / 1_000_000).toLocaleString()}</p>}
     {failed && <p role="status" className="text-sm text-[var(--yellow)]">{t('tasks.live.stale')}</p>}
     {!node ? <p className="text-sm">{t('tasks.live.waiting')}</p> : <>
       <label className="block text-sm">{t('tasks.live.node')} <select value={node.node_id} onChange={(event) => setSelected(event.target.value)}>

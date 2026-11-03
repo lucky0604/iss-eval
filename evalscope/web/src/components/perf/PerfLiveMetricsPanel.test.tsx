@@ -19,7 +19,7 @@ it('shows actual zero, scenario and stale data without inventing throughput', as
   await act(async () => { render(<LocaleProvider><PerfLiveMetricsPanel taskId="task" active /></LocaleProvider>) })
   expect(screen.getByText('0 requests')).toBeInTheDocument()
   expect(screen.getByText(/Target reuse: 80%/)).toBeInTheDocument()
-  expect(screen.getByText('Sent / completed / measured throughput: —')).toBeInTheDocument()
+  expect(screen.getByText('Sent / completed / measured throughput: — / — / —')).toBeInTheDocument()
   await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
   expect(screen.getAllByText('Last sample is stale or unavailable').length).toBeGreaterThan(0)
   expect(screen.getByText('0 requests')).toBeInTheDocument()
@@ -59,4 +59,14 @@ it('marks a hanging request stale and retries without discarding the last sample
   expect(vi.mocked(getLivePerfMetrics).mock.calls[1][1]?.aborted).toBe(true)
   await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
   expect(getLivePerfMetrics).toHaveBeenCalledTimes(3)
+})
+
+it('shows client log progress separately from node telemetry', async () => {
+  const client = { ...sample, client: { sampled_at_ns: sample.nodes![0].sampled_at_ns!, completed_records: 2,
+    successful_records: 2, error_records: 0, sent_requests: null, rounded_requests_per_second: 1.2 } }
+  vi.mocked(getLivePerfMetrics).mockResolvedValue(client)
+  await act(async () => { render(<LocaleProvider><PerfLiveMetricsPanel taskId="task" active /></LocaleProvider>) })
+  expect(screen.getByText(/Sent \/ completed \/ measured throughput: — \/ 2 \/ 1.2/)).toBeInTheDocument()
+  expect(screen.getByText(/AIPerf client log; throughput rounded/)).toBeInTheDocument()
+  expect(screen.getByText('0 requests')).toBeInTheDocument()
 })

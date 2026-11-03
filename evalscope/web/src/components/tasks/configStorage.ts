@@ -43,7 +43,7 @@ export interface Workspace extends ConfigLibrary {
   selectedAIPerf: string
   restoreSavedKey: boolean
 }
-export type StorageResult<T> = { ok: true; value: T } | { ok: false; error: 'invalidStorage' | 'storageFailed' }
+export type StorageResult<T> = { ok: true; value: T } | { ok: false; error: 'invalidStorage' | 'storageFailed' | 'workspaceTooLarge' }
 
 export function emptyWorkspace(): Workspace {
   return {
@@ -107,7 +107,8 @@ function parseAIPerf(value: unknown): AIPerfDraft {
   const defaults = Object.fromEntries(Object.entries(DEFAULT_AIPERF).filter(([key]) => key !== 'nodes')) as Omit<AIPerfDraft, 'nodes'>
   const fields = Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'nodes'))
   const result = parseDraft(fields, defaults)
-  if (!['closed_loop', 'open_loop'].includes(result.mode) || !['single', 'pd'].includes(result.deploymentMode))
+  if (!['closed_loop', 'open_loop'].includes(result.mode) || !['single', 'pd'].includes(result.deploymentMode) ||
+      !['cache', 'single'].includes(result.runType))
     throw new Error('Invalid AIPerf mode')
   const input = raw.nodes ?? []
   if (!Array.isArray(input) || input.length > 64) throw new Error('Invalid metrics nodes')
@@ -293,7 +294,9 @@ export function writeWorkspace(workspace: Workspace): StorageResult<null> {
     ) {
       return { ok: false, error: 'invalidStorage' }
     }
-    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(storageSnapshot(workspace)))
+    const text = JSON.stringify(storageSnapshot(workspace))
+    if (new TextEncoder().encode(text).length > MAX_IMPORT_BYTES) return { ok: false, error: 'workspaceTooLarge' }
+    localStorage.setItem(CONFIG_STORAGE_KEY, text)
     return { ok: true, value: null }
   } catch {
     return { ok: false, error: 'storageFailed' }

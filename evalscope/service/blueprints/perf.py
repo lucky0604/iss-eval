@@ -19,8 +19,10 @@ from evalscope.perf.executors.arguments import AIPerfArguments, parse_perf_task_
 from evalscope.perf.executors.external import supports_external_runner
 from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, ExternalRuntime
 from evalscope.perf.experiments.planner import CacheSubrunPlan, plan_cache_experiment
+from evalscope.perf.experiments.prefix_workload import PrefixWorkloadArguments, validate_prefix_geometry
 from evalscope.perf.experiments.storage import write_experiment_json
 from evalscope.perf.experiments.tokenizer import HuggingFacePrefixTokenizer
+from evalscope.perf.integrations.aiperf.client_progress import read_client_progress
 from evalscope.perf.integrations.aiperf.live import LiveSnapshot
 from evalscope.perf.integrations.aiperf.metrics import analyze_node_metrics, covers_node_ids
 from evalscope.perf.integrations.aiperf.preflight import probe_nodes
@@ -60,6 +62,7 @@ from evalscope.service.api_models import (
     PerfPlanResponse,
     PerfRequestsResponse,
     PerfRunsListResponse,
+    PerfSinglePlanResponse,
     ProgressResponse,
     TaskStatusResponse,
 )
@@ -160,6 +163,7 @@ def get_live_perf_metrics(task_id: str):
         plan_path = task_file_path(task_id, 'perf/experiment_plan.json')
         result = PerfLiveResponse(task_id=task_id)
         snapshot_path = os.path.join(root, 'live_metrics.json')
+        run = root
         if os.path.isfile(plan_path):
             experiment = load_experiment(task_id)
             current = experiment.state.current_subrun
@@ -179,6 +183,10 @@ def get_live_perf_metrics(task_id: str):
             result.rate = item.load_point.rate
             result.repetition = item.repetition
             snapshot_path = os.path.join(run, 'live_metrics.json')
+        try:
+            result.client = read_client_progress(Path(run))
+        except (OSError, ValueError):
+            result.client = None
         if os.path.islink(snapshot_path):
             raise ValueError('Live snapshot cannot be a symlink')
         if os.path.isfile(snapshot_path):
@@ -562,6 +570,29 @@ def get_perf_engines():
     )
 
 
+def _validate_cache_geometry(arguments: AIPerfArguments, tokenizer: HuggingFacePrefixTokenizer) -> None:
+    cache = arguments.cache_experiment
+    if cache is None:
+        raise ValueError('Cache experiment required')
+    candidates = tokenizer.candidate_ids(2)
+    for ratio in cache.target_ratios:
+        validate_prefix_geometry(
+            PrefixWorkloadArguments(
+                target_ratio=ratio,
+                total_input_tokens=cache.total_input_tokens,
+                request_count=arguments.load.request_count,
+                prefix_pool_size=cache.prefix_pool_size,
+                seed=cache.seed,
+                namespace='preflight',
+                tokenizer_id=tokenizer.tokenizer_hash,
+                template_id=tokenizer.template_hash,
+            ),
+            tokenizer,
+            candidates,
+            check_zero_leaders=False,
+        )
+
+
 @bp_perf.route('/validate', methods=['POST'])
 def validate_perf_experiment():
     """Plan a local cache experiment without sending inference or Metrics requests."""
@@ -573,8 +604,11 @@ def validate_perf_experiment():
             raise ValueError('AIPerf configuration is required')
         tokenizer = HuggingFacePrefixTokenizer(task.aiperf.tokenizer_path)
         plan = plan_cache_experiment(task.aiperf, task_id, tokenizer.tokenizer_hash, tokenizer.template_hash)
-    except (ValueError, TypeError, OSError, ImportError):
-        return jsonify({'error': 'Invalid cache experiment configuration or tokenizer'}), 400
+        _validate_cache_geometry(task.aiperf, tokenizer)
+    except (ValueError, TypeError, OSError, ImportError, OverflowError):
+        return jsonify(
+            {'error': 'Invalid cache configuration, tokenizer, or prefix ratio for the requested input length'}
+        ), 400
     flag = request.args.get('probe_metrics', '0')
     if flag not in ('0', '1'):
         return jsonify({'error': 'Invalid metrics probe option'}), 400
@@ -597,6 +631,46 @@ def validate_perf_experiment():
         PerfPlanResponse,
         {
             'plan': plan,
+            'engine_available': available,
+            'metrics_probe': 'completed' if flag == '1' else 'not_requested',
+            'nodes': nodes,
+            'warnings': warnings,
+        },
+    )
+
+
+@bp_perf.route('/validate-single', methods=['POST'])
+def validate_single_aiperf():
+    """Preflight a single inline-prompt run without sending inference requests."""
+    try:
+        validate_task_id(request.headers.get('EvalScope-Task-Id'))
+        task = parse_perf_task_arguments(request.get_json())
+        if task.engine != 'aiperf' or task.aiperf is None or task.aiperf.input_prompts is None:
+            raise ValueError('AIPerf inline input is required')
+        validate_single_run_configuration(task.aiperf)
+    except (ValueError, TypeError, OSError, ImportError):
+        return jsonify({'error': 'Invalid single-run AIPerf configuration'}), 400
+    flag = request.args.get('probe_metrics', '0')
+    if flag not in ('0', '1'):
+        return jsonify({'error': 'Invalid metrics probe option'}), 400
+    try:
+        nodes = probe_nodes(task.aiperf.telemetry.targets) if flag == '1' else []
+    except (ImportError, RuntimeError):
+        return jsonify({'error': 'Metrics preflight is unavailable'}), 503
+    available = _aiperf_runtime() is not None
+    warnings = ([] if available else ['AIPerf 0.13.0 runtime is unavailable']) + [
+        'Node metric semantics and routing coverage are unverified',
+    ]
+    if task.aiperf.telemetry.required and not task.aiperf.telemetry.targets:
+        warnings.append('Required node metrics targets are missing')
+    elif task.aiperf.telemetry.targets and flag == '0':
+        warnings.append('Node metrics have not been probed')
+    elif any(node.status != 'available' for node in nodes):
+        warnings.append('One or more node metrics are unavailable or invalid')
+    return json_response(
+        PerfSinglePlanResponse,
+        {
+            'profiling_requests': task.aiperf.load.request_count,
             'engine_available': available,
             'metrics_probe': 'completed' if flag == '1' else 'not_requested',
             'nodes': nodes,
@@ -651,6 +725,7 @@ def _invoke_aiperf(arguments: AIPerfArguments, task_id: str):
     try:
         tokenizer = HuggingFacePrefixTokenizer(arguments.tokenizer_path)
         plan = plan_cache_experiment(arguments, task_id, tokenizer.tokenizer_hash, tokenizer.template_hash)
+        _validate_cache_geometry(arguments, tokenizer)
         expected = request.headers.get('EvalScope-Plan-Hash')
         if expected is not None and expected != plan.plan_hash:
             return jsonify({'error': 'Experiment plan changed; validate again'}), 409
@@ -661,7 +736,7 @@ def _invoke_aiperf(arguments: AIPerfArguments, task_id: str):
         os.mkdir(os.path.join(OUTPUT_DIR, task_id))
     except FileExistsError:
         return jsonify({'error': 'Task ID already exists'}), 409
-    except (ValueError, TypeError, OSError, ImportError):
+    except (ValueError, TypeError, OSError, ImportError, OverflowError):
         return jsonify({'error': 'Invalid cache experiment configuration or tokenizer'}), 400
     try:
         output_dir = task_file_path(task_id, 'perf')

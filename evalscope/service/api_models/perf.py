@@ -5,6 +5,7 @@ from pydantic import AfterValidator, Field
 
 from evalscope.perf.experiments.orchestrator import CacheExperimentOutcome
 from evalscope.perf.experiments.planner import CacheExperimentPlan
+from evalscope.perf.integrations.aiperf.client_progress import ClientProgress
 from evalscope.perf.integrations.aiperf.live import LiveNode
 from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis
 from evalscope.perf.integrations.aiperf.preflight import NodePreflight
@@ -173,6 +174,16 @@ class PerfPlanResponse(ApiResponseModel):
     nodes: List[NodePreflight] = Field(default_factory=list)
 
 
+class PerfSinglePlanResponse(ApiResponseModel):
+    """Preflight for one inline-prompt AIPerf run."""
+
+    engine_available: bool
+    profiling_requests: int = Field(gt=0)
+    warnings: List[str] = Field(default_factory=list)
+    metrics_probe: Literal['not_requested', 'completed'] = 'not_requested'
+    nodes: List[NodePreflight] = Field(default_factory=list)
+
+
 class PerfLiveResponse(ApiResponseModel):
     """Bounded last node scrapes and the current planned scenario, when available."""
 
@@ -184,6 +195,7 @@ class PerfLiveResponse(ApiResponseModel):
     rate: Optional[float] = None
     repetition: Optional[int] = None
     expected_interval_seconds: Optional[float] = None
+    client: Optional[ClientProgress] = None
     nodes: List[LiveNode] = Field(default_factory=list)
 
 

@@ -15,7 +15,9 @@ export default function CacheMatrixChart({ rows, scenarios }: Props) {
   const candidates = rows.filter((row) => `${loadKey(row)}:${row.repetition}` === active).flatMap((row) => {
     const result = scenarios[row.subrun_id]?.result
     const metrics = result?.metrics?.filter((metric) => metric.key === metricKey && metric.value != null && metric.availability !== 'unavailable') ?? []
-    return result?.quality === 'invalid' || metrics.length !== 1 ? [] : [{ row, result, metric: metrics[0] }]
+    if (result?.quality === 'invalid' || metrics.length !== 1) return []
+    const [metric] = metrics
+    return [{ row, result, metric }]
   })
   const reference = candidates[0]
   const sameSemantics = (metric: MetricStatistics) => reference && metric.scope === reference.metric.scope &&

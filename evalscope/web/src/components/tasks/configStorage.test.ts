@@ -94,6 +94,14 @@ describe('Browser configuration storage', () => {
     expect(localStorage.getItem(LEGACY_AIPERF_STORAGE_KEY)).toBe('{broken')
     expect(localStorage.getItem(CONFIG_STORAGE_KEY)).toBeNull()
   })
+  it('keeps the previous workspace when an oversized draft cannot be persisted', () => {
+    const state = savedWorkspace()
+    expect(writeWorkspace(state).ok).toBe(true)
+    const before = localStorage.getItem(CONFIG_STORAGE_KEY)
+    state.aiperf.prompts = 'x'.repeat(1024 * 1024 + 1)
+    expect(writeWorkspace(state)).toEqual({ ok: false, error: 'workspaceTooLarge' })
+    expect(localStorage.getItem(CONFIG_STORAGE_KEY)).toBe(before)
+  })
   it.each(['connection', 'eval', 'perf'] as const)('restores missing %s fields from defaults', (field) => {
     const expected = emptyWorkspace()
     for (const key of Object.keys(expected[field])) {

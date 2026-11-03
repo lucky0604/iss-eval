@@ -81,6 +81,7 @@ export interface WebApiContracts {
   perf_run_item: PerfRunItem;
   perf_run_summary: PerfRunSummary;
   perf_runs_list_response: PerfRunsListResponse;
+  perf_single_plan_response: PerfSinglePlanResponse;
   prediction_row: PredictionRow;
   prediction_score: PredictionScore;
   predictions_response: PredictionsResponse;
@@ -191,6 +192,7 @@ export interface CacheExperimentResponse {
  * A reproducible plan and its request budget.
  */
 export interface CacheExperimentPlan {
+  configuration?: CachePlanConfiguration | null;
   configuration_hash: string;
   max_primer_output_tokens?: number | null;
   max_profiling_output_tokens?: number | null;
@@ -201,6 +203,77 @@ export interface CacheExperimentPlan {
   subruns: CacheSubrunPlan[];
   template_id: string;
   tokenizer_id: string;
+}
+/**
+ * Reproducible configuration without inference or telemetry credentials.
+ */
+export interface CachePlanConfiguration {
+  cache: CacheExperiment;
+  deployment_mode: "single" | "pd";
+  load: LoadConfiguration;
+  model: string;
+  stream: boolean;
+  task_id: string;
+  telemetry: PlannedTelemetry;
+  template_id: string;
+  tokenizer_id: string;
+  tokenizer_path: string;
+  url: string;
+}
+/**
+ * Target prefix reuse, independent of generated reuse or observed cache hits.
+ */
+export interface CacheExperiment {
+  cache_state_policy?: "fresh_namespace";
+  mode?: "token_prefix_ratio";
+  prefix_pool_size?: number;
+  routing_coverage?: "observed";
+  routing_policy?: "router_native";
+  seed?: number;
+  /**
+   * @minItems 1
+   */
+  target_ratios: [number, ...number[]];
+  total_input_tokens: number;
+  warmup_policy?: "prime_all_prefixes";
+}
+/**
+ * Load points and budgets shared by all experiment scenarios.
+ */
+export interface LoadConfiguration {
+  mode?: "closed_loop" | "open_loop";
+  output_token_limit: number;
+  /**
+   * @minItems 1
+   */
+  points: [LoadPoint, ...LoadPoint[]];
+  repetitions?: number;
+  request_count: number;
+}
+/**
+ * One closed-loop concurrency or open-loop request rate.
+ */
+export interface LoadPoint {
+  concurrency?: number | null;
+  rate?: number | null;
+}
+export interface PlannedTelemetry {
+  max_scrape_gap_seconds: number | null;
+  required: boolean;
+  sample_interval_seconds: number;
+  targets: PlannedMetricNode[];
+}
+/**
+ * Credential-free identity of a configured telemetry node.
+ */
+export interface PlannedMetricNode {
+  engine: "vllm" | "sglang";
+  labels: {
+    [k: string]: string;
+  };
+  node_id: string;
+  role: "prefill" | "decode";
+  url: string;
 }
 /**
  * One uniquely named, independently seeded matrix member.
@@ -217,13 +290,6 @@ export interface CacheSubrunPlan {
   seed: number;
   subrun_id: string;
   target_ratio: number;
-}
-/**
- * One closed-loop concurrency or open-loop request rate.
- */
-export interface LoadPoint {
-  concurrency?: number | null;
-  rate?: number | null;
 }
 export interface CacheExperimentState {
   completed_subruns: number;
@@ -957,6 +1023,7 @@ export interface PublicAIPerfOutcome {
  * Bounded last node scrapes and the current planned scenario, when available.
  */
 export interface PerfLiveResponse {
+  client?: ClientProgress | null;
   concurrency?: number | null;
   current_subrun?: string | null;
   expected_interval_seconds?: number | null;
@@ -966,6 +1033,19 @@ export interface PerfLiveResponse {
   repetition?: number | null;
   target_ratio?: number | null;
   task_id: string;
+}
+/**
+ * AIPerf client counters, distinct from all server node metrics.
+ */
+export interface ClientProgress {
+  completed_records: number;
+  error_records: number;
+  rounded_requests_per_second?: number | null;
+  sampled_at_ns: number;
+  sent_at_ns?: number | null;
+  sent_requests?: number | null;
+  source?: "aiperf_0.13.0_realtime_log";
+  successful_records: number;
 }
 export interface LiveNode {
   attempted_at_ns?: number | null;
@@ -1146,6 +1226,16 @@ export interface PerfRunItem {
 export interface PerfRunsListResponse {
   runs: PerfRunItem[];
   total: number;
+}
+/**
+ * Preflight for one inline-prompt AIPerf run.
+ */
+export interface PerfSinglePlanResponse {
+  engine_available: boolean;
+  metrics_probe?: "not_requested" | "completed";
+  nodes?: NodePreflight[];
+  profiling_requests: number;
+  warnings?: string[];
 }
 export interface PredictionRow {
   AgentTrace?: AgentTrace | null;

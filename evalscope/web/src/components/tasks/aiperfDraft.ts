@@ -12,6 +12,8 @@ export interface AIPerfNodeDraft {
 }
 
 export interface AIPerfDraft {
+  runType: 'cache' | 'single'
+  prompts: string
   tokenizer: string
   ratios: string
   inputTokens: string
@@ -30,7 +32,7 @@ export interface AIPerfDraft {
 }
 
 export const DEFAULT_AIPERF: AIPerfDraft = {
-  tokenizer: '', ratios: '0, 80, 90', inputTokens: '1024', requestCount: '10', outputTokens: '128',
+  runType: 'cache', prompts: '', tokenizer: '', ratios: '0, 80, 90', inputTokens: '1024', requestCount: '10', outputTokens: '128',
   loads: '1', mode: 'closed_loop', deploymentMode: 'single', repetitions: '1', pool: '1', seed: '42', required: false,
   sampleInterval: '1', maxGap: '', nodes: [],
 }
@@ -81,20 +83,26 @@ export function validateAIPerfDraft(draft: AIPerfDraft): FieldErrors {
   const invalid = 'tasks.aiperf.invalid'
   if (!draft.tokenizer.trim()) errors.tokenizer = required
   const ratios = parseList(draft.ratios)
-  if (!ratios || ratios.some((value) => value < 0 || value >= 100) || new Set(ratios).size !== ratios.length)
+  if (draft.runType === 'cache' && (!ratios || ratios.some((value) => value < 0 || value >= 100) || new Set(ratios).size !== ratios.length))
     errors.ratios = 'tasks.aiperf.invalidRatios'
-  const integers = ['inputTokens', 'requestCount', 'outputTokens', 'repetitions', 'pool'] as const
+  const integers = draft.runType === 'cache' ? ['inputTokens', 'requestCount', 'outputTokens', 'repetitions', 'pool'] as const : ['outputTokens'] as const
   for (const field of integers) {
     const value = draft[field].trim()
     if (!value || !Number.isSafeInteger(Number(value)) || Number(value) <= 0) errors[field] = invalid
   }
-  if (!draft.seed.trim() || !Number.isSafeInteger(Number(draft.seed))) errors.seed = invalid
+  if (draft.runType === 'cache' && (!draft.seed.trim() || !Number.isSafeInteger(Number(draft.seed)))) errors.seed = invalid
   const loads = parseList(draft.loads)
   if (!loads || loads.some((value) => value <= 0 || (draft.mode === 'closed_loop' && !Number.isSafeInteger(value))) ||
       new Set(loads).size !== loads.length) errors.loads = invalid
-  if (ratios && ratios.some((value) => value > 0) && Number(draft.pool) > Number(draft.requestCount))
+  if (draft.runType === 'single') {
+    const prompts = draft.prompts.split(/\r?\n/).filter((value) => value.trim())
+    if (!prompts.length || prompts.length > 10000 || new TextEncoder().encode(draft.prompts).length > 512 * 1024)
+      errors.prompts = 'tasks.aiperf.invalidPrompts'
+    if (loads?.length !== 1) errors.loads = 'tasks.aiperf.singleLoad'
+  }
+  if (draft.runType === 'cache' && ratios && ratios.some((value) => value > 0) && Number(draft.pool) > Number(draft.requestCount))
     errors.pool = 'tasks.aiperf.poolTooLarge'
-  if (ratios && loads && ratios.length * loads.length * Number(draft.repetitions) > 10000)
+  if (draft.runType === 'cache' && ratios && loads && ratios.length * loads.length * Number(draft.repetitions) > 10000)
     errors.repetitions = 'tasks.aiperf.matrixTooLarge'
   const interval = Number(draft.sampleInterval)
   if (!draft.sampleInterval.trim() || !Number.isFinite(interval) || interval < 0.001 || interval > 300)
@@ -139,15 +147,16 @@ export function buildAIPerfPayload(draft: AIPerfDraft, connection: ModelConnecti
     aiperf: {
       ...connectionPayload(connection, 'perf'), tokenizer_path: draft.tokenizer.trim(), stream: true,
       deployment_mode: draft.deploymentMode,
-      cache_experiment: {
+      ...(draft.runType === 'single' ? { input_prompts: draft.prompts.split(/\r?\n/).filter((value) => value.trim()) } : { cache_experiment: {
         target_ratios: (parseList(draft.ratios) ?? []).map((value) => value / 100),
         total_input_tokens: Number(draft.inputTokens), prefix_pool_size: Number(draft.pool), seed: Number(draft.seed),
-      },
+      } }),
       load: {
         mode: draft.mode,
         points: (parseList(draft.loads) ?? []).map((value) => draft.mode === 'closed_loop' ? { concurrency: value } : { rate: value }),
-        request_count: Number(draft.requestCount), output_token_limit: Number(draft.outputTokens),
-        repetitions: Number(draft.repetitions),
+        request_count: draft.runType === 'single' ? draft.prompts.split(/\r?\n/).filter((value) => value.trim()).length : Number(draft.requestCount),
+        output_token_limit: Number(draft.outputTokens),
+        repetitions: draft.runType === 'single' ? 1 : Number(draft.repetitions),
       },
       telemetry: {
         required: draft.required, sample_interval_seconds: Number(draft.sampleInterval), targets,

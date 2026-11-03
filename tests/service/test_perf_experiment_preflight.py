@@ -15,6 +15,17 @@ from evalscope.service.utils import log
 from tests.perf.test_experiment_planner import _config
 
 
+class _GeometryTokenizer:
+    def candidate_ids(self, limit: int) -> list[int]:
+        return [1, 2][:limit]
+
+    def decode(self, tokens: list[int]) -> str:
+        return ''.join(chr(64 + value) for value in tokens)
+
+    def render(self, text: str) -> list[int]:
+        return [0, *map(ord, text), 0]
+
+
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(log, 'OUTPUT_DIR', str(tmp_path))
@@ -31,7 +42,7 @@ def test_engine_capabilities_do_not_expose_runtime(client) -> None:
 
 
 def test_preflight_uses_same_plan_without_network_or_secrets(client, monkeypatch: pytest.MonkeyPatch) -> None:
-    class _Tokenizer:
+    class _Tokenizer(_GeometryTokenizer):
         tokenizer_hash = 'tokenizer-hash'
         template_hash = 'template-hash'
 
@@ -57,6 +68,49 @@ def test_preflight_rejects_bad_task_or_wrong_engine(client) -> None:
                        headers={'EvalScope-Task-Id': '../escape'}).status_code == 400
     assert client.post('/api/v1/perf/validate', json=payload,
                        headers={'EvalScope-Task-Id': 'task'}).status_code == 400
+
+
+def test_preflight_rejects_ratio_that_cannot_fit_the_chat_template(client, tmp_path: Path,
+                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    class Tokenizer(_GeometryTokenizer):
+        tokenizer_hash = 'tokenizer-hash'
+        template_hash = 'template-hash'
+
+        def __init__(self, path: str) -> None:
+            pass
+
+    monkeypatch.setattr('evalscope.service.blueprints.perf.HuggingFacePrefixTokenizer', Tokenizer)
+    config = _config().model_dump(mode='json')
+    config['cache_experiment'].update({'target_ratios': [.9], 'total_input_tokens': 4})
+    response = client.post('/api/v1/perf/validate', json={'engine': 'aiperf', 'aiperf': config},
+                           headers={'EvalScope-Task-Id': 'impossible'})
+    assert response.status_code == 400 and 'ratio' in response.json['error']
+    assert not (tmp_path / 'impossible').exists()
+
+
+def test_plan_configuration_is_verified_and_legacy_plan_remains_readable(client, tmp_path: Path) -> None:
+    from evalscope.perf.experiments.planner import plan_cache_experiment
+
+    plan = plan_cache_experiment(_config(), 'identity', 'tokenizer', 'template')
+    root = tmp_path / 'identity' / 'perf'
+    root.mkdir(parents=True)
+    plan_data = plan.model_dump(mode='json')
+    state = {'schema_version': '1.0', 'plan_hash': plan.plan_hash, 'status': 'stopped', 'quality': 'partial',
+             'completed_subruns': 0, 'total_subruns': len(plan.subruns),
+             'subruns': [{'subrun_id': row.subrun_id, 'status': 'not_started'} for row in plan.subruns]}
+    (root / 'experiment.json').write_text(json.dumps(state))
+    (root / 'experiment_plan.json').write_text(json.dumps(plan_data))
+    response = client.get('/api/v1/perf/experiments/identity')
+    assert response.status_code == 200
+    assert response.json['plan']['configuration']['cache']['total_input_tokens'] == 100
+    assert 'secret' not in response.get_data(as_text=True)
+    plan_data['configuration']['cache']['total_input_tokens'] = 101
+    (root / 'experiment_plan.json').write_text(json.dumps(plan_data))
+    assert client.get('/api/v1/perf/experiments/identity').status_code == 400
+    plan_data.pop('configuration')
+    (root / 'experiment_plan.json').write_text(json.dumps(plan_data))
+    legacy = client.get('/api/v1/perf/experiments/identity')
+    assert legacy.status_code == 200 and legacy.json['plan'].get('configuration') is None
 
 
 def test_live_metrics_use_current_planned_subrun_and_reject_redirected_files(client, tmp_path: Path) -> None:
@@ -184,7 +238,7 @@ def test_invoke_uses_validated_plan_and_rejects_stale_preview(client, tmp_path: 
                                                              monkeypatch: pytest.MonkeyPatch) -> None:
     from evalscope.service.blueprints import perf
 
-    class _Tokenizer:
+    class _Tokenizer(_GeometryTokenizer):
         tokenizer_hash = 'tokenizer-hash'
         template_hash = 'template-hash'
 
@@ -271,6 +325,72 @@ def test_partial_experiment_is_discoverable_after_stop_or_failure(
 
 
 @pytest.mark.skipif(not os.environ.get('EVALSCOPE_TEST_AIPERF'), reason='requires isolated AIPerf 0.13.0')
+def test_web_payload_reaches_real_three_ratio_aiperf_and_reports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    from evalscope.service.blueprints import perf
+    from tests.perf.test_prefix_priming import _server
+
+    project = Path(__file__).parents[2]
+    tsx = project / 'evalscope' / 'web' / 'node_modules' / '.bin' / 'tsx'
+    if not tsx.is_file():
+        pytest.skip('requires installed Web dependencies')
+    root = tmp_path / 'outputs'
+    root.mkdir()
+    tokenizer_path = tmp_path / 'tokenizer'
+    vocab = {'[UNK]': 0, 'header': 1, 'tail': 2, 'assistant': 3, **{f't{i}': i + 4 for i in range(200)}}
+    backend = Tokenizer(models.WordLevel(vocab, unk_token='[UNK]'))
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token='[UNK]')
+    tokenizer.chat_template = "header {{ messages[0]['content'] }} tail assistant"
+    tokenizer.save_pretrained(tokenizer_path)
+    monkeypatch.setattr(log, 'OUTPUT_DIR', str(root))
+    monkeypatch.setattr(perf, 'OUTPUT_DIR', str(root))
+    app = create_app(outputs=str(root))
+    app.config['AIPERF_EXECUTABLE'] = os.environ['EVALSCOPE_TEST_AIPERF']
+    client = app.test_client()
+    with _server(tmp_path, 'success') as (url, capture):
+        command = [str(tsx), '--tsconfig', str(project / 'evalscope/web/tsconfig.app.json'),
+                   str(project / 'tests/perf/fixtures/aiperf/web_payload.ts'), url, str(tokenizer_path)]
+        payload = json.loads(subprocess.run(command, check=True, capture_output=True, text=True, timeout=30).stdout)
+        assert payload['aiperf']['cache_experiment']['target_ratios'] == [0, .8, .9]
+        headers = {'EvalScope-Task-Id': 'web-matrix'}
+        preview = client.post('/api/v1/perf/validate', json=payload, headers=headers)
+        assert preview.status_code == 200 and preview.json['engine_available']
+        assert len(preview.json['plan']['subruns']) == 3 and preview.json['plan']['profiling_requests'] == 6
+        headers['EvalScope-Plan-Hash'] = preview.json['plan']['plan_hash']
+        result = client.post('/api/v1/perf/invoke', json=payload, headers=headers)
+    assert result.status_code == 200 and result.json['status'] == 'completed', result.json
+    assert result.json['result']['plan_hash'] == preview.json['plan']['plan_hash']
+    captured = [json.loads(line) for line in capture.read_text().splitlines()]
+    cursor = 0
+    base = '/api/v1/perf/experiments/web-matrix'
+    experiment = client.get(base)
+    assert experiment.status_code == 200 and experiment.json['state']['completed_subruns'] == 3
+    for item in preview.json['plan']['subruns']:
+        cursor += item['primer_requests']
+        observed = captured[cursor:cursor + item['request_count']]
+        cursor += item['request_count']
+        document = json.loads((root / 'web-matrix' / 'perf' / 'runs' / item['subrun_id'] / 'scenario.json').read_text())
+        actual = {hashlib.sha256(row['body']['messages'][0]['content'].encode()).hexdigest() for row in observed}
+        assert actual == {row['sha256'] for row in document['workload']['requests']}
+        assert document['workload']['total_input_tokens'] == 40
+        detail = client.get(f"{base}/runs/{item['subrun_id']}")
+        assert detail.status_code == 200 and detail.json['target_ratio'] == item['target_ratio']
+        expected = sum(row['shared_tokens'] for row in document['workload']['requests']) / sum(
+            row['input_tokens'] for row in document['workload']['requests']
+        )
+        assert detail.json['generated_ratio'] == expected
+        assert detail.json['cache'].get('ratio') is None
+    assert cursor == len(captured)
+    report = client.get(base + '/report').get_data(as_text=True)
+    assert all(item['subrun_id'] in report for item in preview.json['plan']['subruns'])
+
+
+@pytest.mark.skipif(not os.environ.get('EVALSCOPE_TEST_AIPERF'), reason='requires isolated AIPerf 0.13.0')
 def test_http_invoke_reaches_real_aiperf_with_local_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from tokenizers import Tokenizer, models, pre_tokenizers
     from transformers import PreTrainedTokenizerFast
@@ -335,7 +455,7 @@ def test_optional_metrics_preflight_is_read_only_and_filters_labels(client, tmp_
     from evalscope.service.blueprints import perf
     from tests.perf.test_prefix_priming import _server
 
-    class Tokenizer:
+    class Tokenizer(_GeometryTokenizer):
         tokenizer_hash = 'tokenizer-hash'
         template_hash = 'template-hash'
 
@@ -374,7 +494,7 @@ def test_missing_required_node_is_rejected_before_task_creation(client, tmp_path
                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
     from evalscope.service.blueprints import perf
 
-    class Tokenizer:
+    class Tokenizer(_GeometryTokenizer):
         tokenizer_hash = 'tokenizer-hash'
         template_hash = 'template-hash'
 

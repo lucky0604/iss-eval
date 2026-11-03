@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { getPerfEngines, validatePerfExperiment } from '@/api/perf'
-import type { PerfPlanResponse } from '@/api/generated/contracts'
+import { getPerfEngines, validatePerfExperiment, validatePerfSingle } from '@/api/perf'
+import type { PerfPlanResponse, PerfSinglePlanResponse } from '@/api/generated/contracts'
 import { useLocale } from '@/contexts/LocaleContext'
 import { useAsyncResource } from '@/hooks/useAsyncResource'
 import { useTaskForm } from '@/components/tasks/useTaskForm'
@@ -22,13 +22,22 @@ interface Props {
   onValidateConnection: () => FieldErrors
 }
 
-type TextField = Exclude<keyof AIPerfDraft, 'nodes' | 'required' | 'mode' | 'deploymentMode'>
+type TextField = Exclude<keyof AIPerfDraft, 'nodes' | 'required' | 'mode' | 'deploymentMode' | 'runType' | 'prompts'>
+type Preview = { kind: 'cache'; value: PerfPlanResponse } | { kind: 'single'; value: PerfSinglePlanResponse }
+const FIELD_LABELS: Record<TextField, string> = {
+  tokenizer: 'tasks.aiperf.tokenizer', ratios: 'tasks.aiperf.ratios', inputTokens: 'tasks.aiperf.inputTokens',
+  requestCount: 'tasks.aiperf.requestCount', outputTokens: 'tasks.aiperf.outputTokens', loads: 'tasks.aiperf.loads',
+  repetitions: 'tasks.aiperf.repetitions', pool: 'tasks.aiperf.pool', seed: 'tasks.aiperf.seed',
+  sampleInterval: 'tasks.aiperf.sampleInterval', maxGap: 'tasks.aiperf.maxGap',
+}
+const NODE_LABELS = { nodeId: 'tasks.aiperf.nodeId', url: 'tasks.aiperf.url', labels: 'tasks.aiperf.labels',
+  bearerToken: 'tasks.aiperf.token' } as const
 
 export default function CacheExperimentForm({ connection, onSubmit, disabled, draft, onChange, toolbar, onValidateConnection }: Props) {
   const { t } = useLocale()
   const engines = useAsyncResource((signal) => getPerfEngines(signal), [])
   const capability = engines.data?.engines.find((item) => item.engine === 'aiperf')
-  const [preview, setPreview] = useState<{ key: string; value: PerfPlanResponse } | null>(null)
+  const [preview, setPreview] = useState<{ key: string; result: Preview } | null>(null)
   const [error, setError] = useState('')
   const [checkingKey, setCheckingKey] = useState<string | null>(null)
   const [probe, setProbe] = useState(false)
@@ -37,7 +46,8 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
   const payload = buildAIPerfPayload(draft, connection)
   const key = JSON.stringify({ payload, probe })
   const checking = checkingKey === key
-  const current = preview?.key === key ? preview.value : null
+  const result = preview?.key === key ? preview.result : null
+  const current = result?.value ?? null
   const requiredNodesFailed = Boolean(draft.required && current?.metrics_probe === 'completed' &&
     current.nodes?.some((node) => node.status !== 'available'))
 
@@ -56,7 +66,7 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
       values[`aiperf-node-${node.id}-${name}`] = node[name]
   }
   const domOrder = ['connection-api', 'connection-model', 'connection-url',
-    ...['tokenizer', 'ratios', 'inputTokens', 'requestCount', 'outputTokens', 'loads', 'repetitions', 'pool',
+    ...['prompts', 'tokenizer', 'ratios', 'inputTokens', 'requestCount', 'outputTokens', 'loads', 'repetitions', 'pool',
       'seed', 'sampleInterval', 'maxGap'].map((name) => `aiperf-${name}`),
     ...draft.nodes.flatMap((node) => ['nodeId', 'url', 'labels', 'bearerToken'].map((name) => `aiperf-node-${node.id}-${name}`)),
     'aiperf-nodes']
@@ -79,8 +89,11 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
     setCheckingKey(key)
     setError('')
     try {
-      const value = await validatePerfExperiment(payload, `preview_${Date.now()}_${request}`, controller.signal, probe)
-      if (!controller.signal.aborted && sequence.current === request) setPreview({ key, value })
+      const taskId = `preview_${Date.now()}_${request}`
+      const result: Preview = draft.runType === 'single'
+        ? { kind: 'single', value: await validatePerfSingle(payload, taskId, controller.signal, probe) }
+        : { kind: 'cache', value: await validatePerfExperiment(payload, taskId, controller.signal, probe) }
+      if (!controller.signal.aborted && sequence.current === request) setPreview({ key, result })
     } catch (err) {
       if (!controller.signal.aborted && sequence.current === request)
         setError(err instanceof Error ? err.message : String(err))
@@ -91,7 +104,7 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
   const textField = (name: TextField, type = 'text') => {
     const id = `aiperf-${name}`
     const error = errorFor(id)
-    return <Field id={id} name={name} labelKey={`tasks.aiperf.${name}`} error={error}>
+    return <Field id={id} name={name} labelKey={FIELD_LABELS[name]} error={error}>
       {(aria) => <input {...aria} type={type} step={name === 'sampleInterval' || name === 'maxGap' ? 'any' : undefined}
         className={inputClass(error)} value={draft[name]}
         onChange={(event) => update(name, event.target.value)} />}
@@ -100,8 +113,7 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
   const nodeField = (node: AIPerfNodeDraft, name: 'nodeId' | 'url' | 'labels' | 'bearerToken', type = 'text') => {
     const id = `aiperf-node-${node.id}-${name}`
     const error = errorFor(id)
-    const label = name === 'bearerToken' ? 'token' : name
-    return <Field id={id} name={id} labelKey={`tasks.aiperf.${label}`} error={error}
+    return <Field id={id} name={id} labelKey={NODE_LABELS[name]} error={error}
       autoComplete={name === 'bearerToken' ? 'off' : undefined}>
       {(aria) => <input {...aria} type={type} className={inputClass(error)} value={node[name]}
         onChange={(event) => updateNode(node.id, { [name]: event.target.value })} />}
@@ -116,10 +128,20 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
       <p className="text-sm" role="status">AIPerf 0.13.0: {engines.loading ? t('tasks.aiperf.checking') : capability?.available ? t('tasks.aiperf.available') : t('tasks.aiperf.unavailable')}
         {!capability?.available && (capability?.reason || engines.error) ? ` — ${capability?.reason || engines.error}` : ''}</p>
       <fieldset disabled={disabled} className="space-y-4">
+        <Field id="aiperf-runType" name="runType" labelKey="tasks.aiperf.runType">
+          {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={draft.runType}
+            onChange={(event) => update('runType', event.target.value as AIPerfDraft['runType'])}>
+            <option value="cache">{t('tasks.aiperf.cacheRun')}</option><option value="single">{t('tasks.aiperf.singleRun')}</option>
+          </select>}
+        </Field>
+        {draft.runType === 'single' && <Field id="aiperf-prompts" name="prompts" labelKey="tasks.aiperf.prompts" error={errorFor('aiperf-prompts')}>
+          {(aria) => <textarea {...aria} className={inputClass(errorFor('aiperf-prompts'))} rows={5} value={draft.prompts}
+            onChange={(event) => update('prompts', event.target.value)} />}
+        </Field>}
         <div className="grid min-w-0 gap-3 md:grid-cols-2">
-          {textField('tokenizer')}{textField('ratios')}{textField('inputTokens', 'number')}
-          {textField('requestCount', 'number')}{textField('outputTokens', 'number')}{textField('loads')}
-          {textField('repetitions', 'number')}{textField('pool', 'number')}{textField('seed', 'number')}
+          {textField('tokenizer')}{draft.runType === 'cache' && <>{textField('ratios')}{textField('inputTokens', 'number')}
+            {textField('requestCount', 'number')}</>}{textField('outputTokens', 'number')}{textField('loads')}
+          {draft.runType === 'cache' && <>{textField('repetitions', 'number')}{textField('pool', 'number')}{textField('seed', 'number')}</>}
           <Field id="aiperf-mode" name="mode" labelKey="tasks.aiperf.loadMode">
             {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={draft.mode}
               onChange={(event) => update('mode', event.target.value as AIPerfDraft['mode'])}>
@@ -170,9 +192,10 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
           onChange={(event) => setProbe(event.target.checked)} />{t('tasks.aiperf.probe')}</label>
         <p className="text-xs text-[var(--text-muted)]">{t('tasks.aiperf.limitations')}</p>
         {error && <p role="alert" className="text-sm text-[var(--danger)]">{error}</p>}
-        {current && <div className="text-sm" role="status">
-          <p>{t('tasks.aiperf.plan')}: {current.plan.subruns.length} {t('tasks.aiperf.runs')}, {current.plan.profiling_requests} {t('tasks.aiperf.requests')}, {current.plan.primer_requests} {t('tasks.aiperf.primers')}</p>
-          <p>{t('tasks.aiperf.maxOutput')}: {current.plan.max_profiling_output_tokens ?? '—'}</p>
+        {current && result && <div className="text-sm" role="status">
+          {result.kind === 'cache' ? <><p>{t('tasks.aiperf.plan')}: {result.value.plan.subruns.length} {t('tasks.aiperf.runs')}, {result.value.plan.profiling_requests} {t('tasks.aiperf.requests')}, {result.value.plan.primer_requests} {t('tasks.aiperf.primers')}</p>
+            <p>{t('tasks.aiperf.maxOutput')}: {result.value.plan.max_profiling_output_tokens ?? '—'}</p></> :
+            <p>{t('tasks.aiperf.plan')}: {result.value.profiling_requests} {t('tasks.aiperf.requests')}</p>}
           {current.nodes?.map((node) => <p key={node.node_id}>{node.node_id}: {node.status} ({node.metric_names?.join(', ') || '—'})</p>)}
           {current.warnings?.map((warning) => <p key={warning}>{warning}</p>)}
           {requiredNodesFailed && <p className="text-[var(--danger)]">{t('tasks.aiperf.nodeUnavailable')}</p>}
@@ -180,7 +203,7 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
         <div className="flex flex-wrap gap-3">
           <Button type="submit" variant="outline" disabled={checking || !capability?.available}>{t('tasks.aiperf.preview')}</Button>
           <Button type="button" disabled={checking || !current?.engine_available || requiredNodesFailed}
-            onClick={() => void onSubmit(payload)}>{t('tasks.aiperf.start')}</Button>
+            onClick={() => void onSubmit(payload)}>{t(draft.runType === 'single' ? 'tasks.aiperf.startSingle' : 'tasks.aiperf.start')}</Button>
         </div>
       </fieldset>
     </form>

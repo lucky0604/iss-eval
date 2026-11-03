@@ -30,6 +30,18 @@ def _payload() -> dict:
     }}
 
 
+def test_single_preflight_validates_without_creating_a_task(client, tmp_path: Path) -> None:
+    headers = {'EvalScope-Task-Id': 'preview-single'}
+    result = client.post('/api/v1/perf/validate-single', json=_payload(), headers=headers)
+    assert result.status_code == 200 and result.json['profiling_requests'] == 2 and result.json['engine_available']
+    assert not (tmp_path / 'preview-single').exists()
+    assert 'fake-secret' not in result.get_data(as_text=True) and 'first prompt' not in result.get_data(as_text=True)
+    bad = _payload()
+    bad['aiperf']['load']['request_count'] = 3
+    assert client.post('/api/v1/perf/validate-single', json=bad, headers=headers).status_code == 400
+    assert client.post('/api/v1/perf/validate-single?probe_metrics=2', json=_payload(), headers=headers).status_code == 400
+
+
 def test_single_task_materializes_private_inputs_and_hides_runtime(client, monkeypatch: pytest.MonkeyPatch) -> None:
     from evalscope.service.blueprints import perf
 
@@ -115,6 +127,63 @@ def test_single_task_does_not_report_unconfirmed_cleanup_as_stopped(
     monkeypatch.setattr(perf, 'run_single_aiperf_in_subprocess', execute)
     response = client.post('/api/v1/perf/invoke', json=_payload(), headers={'EvalScope-Task-Id': 'single-result'})
     assert response.status_code == 200 and response.json['status'] == expected
+
+
+@pytest.mark.skipif(not os.environ.get('EVALSCOPE_TEST_AIPERF'), reason='requires isolated AIPerf 0.13.0')
+def test_real_single_run_emits_client_progress_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    import time
+
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    from evalscope.perf.integrations.aiperf.client_progress import read_client_progress
+    from evalscope.service.blueprints import perf
+    from tests.perf.test_prefix_priming import _server
+
+    root = tmp_path / 'outputs'
+    root.mkdir()
+    tokenizer_path = tmp_path / 'tokenizer'
+    backend = Tokenizer(models.WordLevel({'[UNK]': 0, 'prompt': 1}, unk_token='[UNK]'))
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    PreTrainedTokenizerFast(tokenizer_object=backend, unk_token='[UNK]').save_pretrained(tokenizer_path)
+    monkeypatch.setattr(log, 'OUTPUT_DIR', str(root))
+    monkeypatch.setattr(perf, 'OUTPUT_DIR', str(root))
+    app = create_app(outputs=str(root))
+    app.config['AIPERF_EXECUTABLE'] = os.environ['EVALSCOPE_TEST_AIPERF']
+    payload = _payload()
+    payload['aiperf']['tokenizer_path'] = str(tokenizer_path)
+    payload['aiperf']['input_prompts'] = ['prompt'] * 60
+    payload['aiperf']['load'].update({'request_count': 60, 'points': [{'concurrency': 1}]})
+    with _server(tmp_path / 'inference', 'slow_success') as (url, _):
+        payload['aiperf']['url'] = url
+        responses = []
+
+        def invoke() -> None:
+            responses.append(app.test_client().post('/api/v1/perf/invoke', json=payload,
+                                                    headers={'EvalScope-Task-Id': 'client-progress'}))
+
+        thread = threading.Thread(target=invoke)
+        thread.start()
+        live = None
+        deadline = time.monotonic() + 90
+        try:
+            while thread.is_alive() and time.monotonic() < deadline:
+                response = app.test_client().get('/api/v1/perf/live/client-progress')
+                if response.status_code == 200 and response.json.get('client'):
+                    live = response.json['client']
+                    break
+                time.sleep(.2)
+        finally:
+            thread.join(timeout=90)
+        assert not thread.is_alive()
+        assert live is not None and live['source'] == 'aiperf_0.13.0_realtime_log'
+        assert live['completed_records'] > 0 and live['rounded_requests_per_second'] is not None
+        result = responses[0]
+    assert result.status_code == 200 and result.json['status'] == 'completed'
+    progress = read_client_progress(root / 'client-progress' / 'perf')
+    assert progress is not None and progress.completed_records > 0 and progress.rounded_requests_per_second is not None
+    assert progress.sent_requests == 60
 
 
 @pytest.mark.skipif(not os.environ.get('EVALSCOPE_TEST_AIPERF'), reason='requires isolated AIPerf 0.13.0')
