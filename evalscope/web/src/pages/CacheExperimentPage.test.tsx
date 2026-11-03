@@ -2,10 +2,10 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LocaleProvider } from '@/contexts/LocaleContext'
-import { getCacheExperiment, getCacheNodeMetrics, getCacheRequests, getCacheScenario } from '@/api/perf'
+import { getCacheExperiment, getCacheNodeMetrics, getCacheRequests, getCacheScenario, getCacheRepetitions } from '@/api/perf'
 import CacheExperimentPage from './CacheExperimentPage'
 
-vi.mock('@/api/perf', () => ({ getCacheExperiment: vi.fn(), getCacheNodeMetrics: vi.fn(), getCacheRequests: vi.fn(), getCacheScenario: vi.fn() }))
+vi.mock('@/api/perf', () => ({ getCacheExperiment: vi.fn(), getCacheNodeMetrics: vi.fn(), getCacheRequests: vi.fn(), getCacheScenario: vi.fn(), getCacheRepetitions: vi.fn() }))
 afterEach(cleanup)
 
 it('shows target, generated reuse and unknown server cache separately', async () => {
@@ -20,6 +20,7 @@ it('shows target, generated reuse and unknown server cache separately', async ()
   vi.mocked(getCacheScenario).mockResolvedValue({ subrun_id: 'r000-l000-n000', status: 'error', target_ratio: 0.8,
     generated_ratio: 0.75, generated_count: 2, quality_reasons: ['profiling_failed'],
     cache: { availability: 'unavailable', ratio: null, observed_requests: 0, successful_requests: 2 } })
+  vi.mocked(getCacheRepetitions).mockResolvedValue({ plan_hash: 'hash', total: 1, offset: 0, limit: 100, repetitions: [{ subrun_id: 'r000-l000-n000', repetition: 0, status: 'error' }] })
   vi.mocked(getCacheNodeMetrics).mockResolvedValue({ total: 0, offset: 0, limit: 500, samples: [] })
   vi.mocked(getCacheRequests).mockResolvedValue({ total: 1, offset: 0, limit: 50, requests: [{ index: 0,
     phase: 'profiling', status: 'success', cached_tokens: 0, cached_tokens_source: 'server_usage' }] })

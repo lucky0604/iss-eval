@@ -48,6 +48,7 @@ from evalscope.service.api_models import (
     CacheExperimentListResponse,
     CacheExperimentResponse,
     CacheNodeMetricsResponse,
+    CacheRepetitionsResponse,
     CacheRequestGroupsResponse,
     CacheRequestsResponse,
     CacheScenarioResponse,
@@ -395,6 +396,22 @@ n={{ node.histogram.count if node.histogram.count is not none else 'unavailable'
         return jsonify({'error': 'Experiment not found'}), 404
     except (ValueError, OSError):
         return jsonify({'error': 'Invalid experiment data or task ID'}), 400
+
+
+@bp_perf.route('/experiments/<task_id>/runs/<subrun_id>/repetitions', methods=['GET'])
+def get_cache_repetitions(task_id: str, subrun_id: str):
+    """Read a bounded page of comparable-dimension repetition observations."""
+    from ..perf_experiments import load_repetition_page
+
+    try:
+        offset = int(request.args.get('offset', '0'))
+        limit = int(request.args.get('limit', '100'))
+        metric = request.args.get('metric', 'time_to_first_token')
+        return json_response(CacheRepetitionsResponse, load_repetition_page(task_id, subrun_id, metric, offset, limit))
+    except FileNotFoundError:
+        return jsonify({'error': 'Experiment not found'}), 404
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid repetition page or experiment identity'}), 400
 
 
 @bp_perf.route('/experiments/<task_id>/runs/<subrun_id>', methods=['GET'])

@@ -114,7 +114,7 @@ function CacheExperimentReport({ taskId }: { taskId: string }) {
       <CacheMatrixChart rows={experiment.plan.subruns.slice(matrixOffset, matrixOffset + 50)} scenarios={scenarios} />
       <CacheComparisonPanel baseline={baseline} candidate={candidate} />
       <CrossExperimentComparisonPanel experiment={experiment} baseline={baseline} />
-      <CacheRepetitionsPanel rows={experiment.plan.subruns.slice(matrixOffset, matrixOffset + 50)} scenarios={scenarios} />
+      <CacheRepetitionsPanel taskId={taskId} planHash={experiment.plan.plan_hash} rows={experiment.plan.subruns.slice(matrixOffset, matrixOffset + 50)} />
       {selected && selectedScenario && <section className="space-y-2">
         <h2 className="font-semibold">{selected}</h2>
         {experiment.plan.subruns.filter((row) => row.subrun_id === selected).map((row) => <details key={row.subrun_id} className="rounded border border-[var(--border)] p-3"><summary>{zh ? '输入和执行配置' : 'Input and execution details'}</summary>

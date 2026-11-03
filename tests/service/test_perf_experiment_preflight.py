@@ -168,6 +168,7 @@ def test_html_streams_the_complete_matrix_with_node_provenance(client, tmp_path:
         row['metrics']['request_latency']['value'] = latency
         records.append(row)
     (raw / 'profile_export.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in records))
+    shutil.copyfile(fixture.parent / 'profile_export_aiperf.json', raw / 'profile_export_aiperf.json')
     import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(run / 'normalized')))
     (root / 'experiment_plan.json').write_text(plan.model_dump_json())
     state = {'schema_version': '1.0', 'plan_hash': plan.plan_hash, 'status': 'completed',
@@ -188,6 +189,11 @@ def test_html_streams_the_complete_matrix_with_node_provenance(client, tmp_path:
     assert api.status_code == 200 and api.json['node_analysis']['cache_ratios'][0]['ratio'] == .8
     assert api.json['input_tokens_per_request'] == 100
     assert api.json['request_hashes_sha256'] == hashlib.sha256(('a' * 64).encode()).hexdigest()
+    repetitions = client.get(f'/api/v1/perf/experiments/full-report/runs/{first.subrun_id}/repetitions')
+    assert repetitions.status_code == 200 and repetitions.json['total'] == 17
+    actual = next(item for item in repetitions.json['repetitions'] if item['subrun_id'] == first.subrun_id)
+    expected = next(metric for metric in api.json['result']['metrics'] if metric['key'] == 'time_to_first_token')
+    assert actual['metric'] == expected
     groups = client.get(f'/api/v1/perf/experiments/full-report/runs/{first.subrun_id}/request-cache-groups')
     assert groups.status_code == 200 and groups.json['groups'][1]['latency']['p99'] == .005
     report = client.get('/api/v1/perf/experiments/full-report/report')
@@ -526,3 +532,52 @@ def test_metrics_probe_distinguishes_malformed_from_unreachable(tmp_path: Path) 
         ])
     assert [node.status for node in nodes] == ['invalid', 'unreachable']
     assert nodes[0].reason == 'invalid_prometheus_payload' and nodes[1].reason == 'metrics_probe_failed'
+
+
+def test_repetition_pages_cover_the_full_matching_group(client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from evalscope.perf.experiments.planner import plan_cache_experiment
+    from evalscope.perf.results.models import MetricStatistics, PerfRunResult
+
+    config = _config()
+    config.cache_experiment.target_ratios = [.0, .8]
+    config.load.points = config.load.points[:1]
+    config.load.repetitions = 61
+    plan = plan_cache_experiment(config, 'repetitions', 'tokenizer', 'template')
+    root = tmp_path / 'repetitions' / 'perf'
+    root.mkdir(parents=True)
+    states = []
+    for row in plan.subruns:
+        available = row.repetition != 60
+        states.append({'subrun_id': row.subrun_id, 'status': 'completed' if available else 'error',
+                       'scenario': f'runs/{row.subrun_id}/scenario.json' if available else None})
+        if available:
+            run = root / 'runs' / row.subrun_id
+            (run / 'normalized').mkdir(parents=True)
+            (run / 'scenario.json').write_text(json.dumps({'target_ratio': row.target_ratio, 'normalized': 'normalized'}))
+    (root / 'experiment_plan.json').write_text(plan.model_dump_json())
+    (root / 'experiment.json').write_text(json.dumps({'schema_version': '1.0', 'plan_hash': plan.plan_hash,
+        'status': 'completed', 'completed_subruns': len(states), 'total_subruns': len(states), 'subruns': states}))
+
+    def load_result(path: str) -> PerfRunResult:
+        repetition = int(Path(path).parent.name.split('-n')[1])
+        return PerfRunResult(executor_version='0.13.0', quality='invalid' if repetition == 59 else 'complete',
+                             profiling_requests=1, profiling_successes=1, profiling_errors=0,
+                             metrics=[MetricStatistics(key='time_to_first_token', source='aiperf', scope='request',
+                                                       unit='s', value=float(repetition), count=1)])
+
+    damaged = next(row for row in plan.subruns if row.target_ratio == .8 and row.repetition == 58)
+    (root / 'runs' / damaged.subrun_id / 'scenario.json').write_text('{invalid')
+    monkeypatch.setattr('evalscope.service.perf_experiments.load_aiperf_run', load_result)
+    row = next(row for row in plan.subruns if row.target_ratio == .8)
+    url = f'/api/v1/perf/experiments/repetitions/runs/{row.subrun_id}/repetitions'
+    first = client.get(url, query_string={'offset': 0, 'limit': 50}).get_json()
+    second = client.get(url, query_string={'offset': 50, 'limit': 50}).get_json()
+    assert first['total'] == second['total'] == 61
+    assert [item['repetition'] for item in first['repetitions'] + second['repetitions']] == list(range(61))
+    assert second['repetitions'][8]['unavailable_reason'] == 'result_unavailable'
+    assert second['repetitions'][9]['quality'] == 'invalid'
+    assert second['repetitions'][10].get('metric') is None
+    assert second['repetitions'][10]['unavailable_reason'] == 'scenario_unavailable'
+    assert client.get(url, query_string={'limit': 101}).status_code == 400
+    assert client.get(url, query_string={'metric': 'unknown'}).status_code == 400
+    assert client.get(url.replace(row.subrun_id, 'r999-l999-n999')).status_code == 400

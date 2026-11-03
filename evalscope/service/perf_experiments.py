@@ -10,7 +10,7 @@ from typing import Any, Dict, Tuple
 from evalscope.perf.experiments.planner import CacheExperimentPlan, CacheSubrunPlan
 from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis
 from evalscope.perf.results.aiperf_import import load_aiperf_run, observed_cache_usage
-from evalscope.service.api_models import CacheExperimentResponse, CacheScenarioResponse
+from evalscope.service.api_models import CacheExperimentResponse, CacheRepetitionsResponse, CacheScenarioResponse
 from evalscope.service.utils import active_task_ids, task_file_path, validate_task_id
 
 _SUBRUN = re.compile(r'^r\d{3,}-l\d{3,}-n\d{3,}$')
@@ -69,6 +69,67 @@ def load_experiment(task_id: str) -> CacheExperimentResponse:
     if state.get('status') == 'running' and task_id not in active_task_ids():
         state['status'] = 'unknown'
     return CacheExperimentResponse(task_id=task_id, plan=plan, state=state)
+
+
+def load_repetition_page(
+    task_id: str,
+    reference_id: str,
+    metric_key: str,
+    offset: int,
+    limit: int,
+) -> CacheRepetitionsResponse:
+    """Page all repetitions with the reference's fixed experiment dimensions."""
+    if metric_key not in ('time_to_first_token', 'request_throughput') or offset < 0 or not 1 <= limit <= 100:
+        raise ValueError('Invalid repetition page')
+    experiment = load_experiment(task_id)
+    reference = next((row for row in experiment.plan.subruns if row.subrun_id == reference_id), None)
+    if reference is None:
+        raise ValueError('Unknown reference subrun')
+
+    def dimensions(row: CacheSubrunPlan) -> tuple:
+        return (
+            row.target_ratio,
+            row.load_mode,
+            row.load_point.concurrency,
+            row.load_point.rate,
+            row.seed,
+            row.request_count,
+            row.output_token_limit,
+        )
+
+    pairs = sorted(
+        (
+            (row, state)
+            for row, state in zip(experiment.plan.subruns, experiment.state.subruns)
+            if dimensions(row) == dimensions(reference)
+        ),
+        key=lambda pair: (pair[0].repetition, pair[0].subrun_id),
+    )
+    repetitions = []
+    for row, state in pairs[offset : offset + limit]:
+        item = {'subrun_id': row.subrun_id, 'repetition': row.repetition, 'status': state.status}
+        if state.scenario is None:
+            item['unavailable_reason'] = 'scenario_unavailable'
+            repetitions.append(item)
+            continue
+        try:
+            normalized = _scenario_normalized_path(task_id, row)
+            document = _read(task_id, f'perf/runs/{row.subrun_id}/scenario.json')
+            if document.get('target_ratio') != row.target_ratio or document.get('normalized') != 'normalized':
+                raise ValueError('Invalid normalized scenario')
+            result = load_aiperf_run(normalized)
+            item.update(quality=result.quality, engine=result.engine, executor_version=result.executor_version)
+            metrics = [metric for metric in result.metrics if metric.key == metric_key]
+            if len(metrics) != 1 or metrics[0].value is None or not math.isfinite(metrics[0].value):
+                item['unavailable_reason'] = 'metric_unavailable'
+            else:
+                item['metric'] = metrics[0]
+        except (OSError, ValueError):
+            item['unavailable_reason'] = 'result_unavailable'
+        repetitions.append(item)
+    return CacheRepetitionsResponse(
+        plan_hash=experiment.plan.plan_hash, total=len(pairs), offset=offset, limit=limit, repetitions=repetitions
+    )
 
 
 def scenario_path(task_id: str, subrun_id: str) -> Tuple[CacheSubrunPlan, str]:

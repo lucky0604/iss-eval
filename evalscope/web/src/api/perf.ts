@@ -1,5 +1,5 @@
 import { apiDeleteValidated, apiPostValidated, apiValidated } from './client'
-import type { PerfEnginesResponse, PerfInvokeResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, CacheExperimentResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse } from './generated/contracts'
+import type { PerfEnginesResponse, PerfInvokeResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, CacheExperimentResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse, CacheRepetitionsResponse } from './generated/contracts'
 import type {
   DeletePerfRunResponse,
   ListPerfRunsResponse,
@@ -60,6 +60,13 @@ export function listCacheExperiments(offset = 0): Promise<CacheExperimentListRes
 
 export function getCacheScenario(taskId: string, subrunId: string, signal?: AbortSignal): Promise<CacheScenarioResponse> {
   return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}`, { signal })
+}
+
+export function getCacheRepetitions(taskId: string, subrunId: string, metric: string, offset: number,
+                                    signal?: AbortSignal): Promise<CacheRepetitionsResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/repetitions`, {
+    params: { metric, offset, limit: 100 }, signal,
+  })
 }
 
 export function getCacheNodeMetrics(taskId: string, subrunId: string, offset = 0,

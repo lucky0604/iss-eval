@@ -1077,6 +1077,124 @@
       ],
       "type": "object"
     },
+    "CacheRepetitionItem": {
+      "additionalProperties": false,
+      "description": "One planned repetition with its independently observed metric.",
+      "properties": {
+        "engine": {
+          "anyOf": [
+            {
+              "const": "aiperf",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "executor_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metric": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MetricStatistics"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "repetition": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "subrun_id": {
+          "type": "string"
+        },
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "subrun_id",
+        "repetition",
+        "status"
+      ],
+      "type": "object"
+    },
+    "CacheRepetitionsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 100,
+          "type": "integer"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "plan_hash": {
+          "type": "string"
+        },
+        "repetitions": {
+          "items": {
+            "$ref": "#/$defs/CacheRepetitionItem"
+          },
+          "type": "array"
+        },
+        "total": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "plan_hash",
+        "total",
+        "offset",
+        "limit",
+        "repetitions"
+      ],
+      "type": "object"
+    },
     "CacheRequestGroup": {
       "additionalProperties": false,
       "description": "A group defined only by the server's request-level cached token count.",
@@ -6211,6 +6329,9 @@
     "cache_node_metrics_response": {
       "$ref": "#/$defs/CacheNodeMetricsResponse"
     },
+    "cache_repetitions_response": {
+      "$ref": "#/$defs/CacheRepetitionsResponse"
+    },
     "cache_request_groups_response": {
       "$ref": "#/$defs/CacheRequestGroupsResponse"
     },
@@ -6387,6 +6508,7 @@
     "cache_scenario_response",
     "cache_requests_response",
     "cache_request_groups_response",
+    "cache_repetitions_response",
     "cache_node_metrics_response",
     "perf_run_item",
     "perf_runs_list_response",

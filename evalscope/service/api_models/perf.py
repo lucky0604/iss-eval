@@ -12,6 +12,7 @@ from evalscope.perf.integrations.aiperf.preflight import NodePreflight
 from evalscope.perf.results.models import (
     CacheObservation,
     CacheRequestGroup,
+    MetricStatistics,
     NodeMetricSample,
     PerfRequestRecord,
     PerfRunResult,
@@ -252,6 +253,27 @@ class CacheScenarioResponse(ApiResponseModel):
     result: Optional[PerfRunResult] = None
     node_analysis: Optional[NodeMetricsAnalysis] = None
     quality_reasons: List[str] = Field(default_factory=list)
+
+
+class CacheRepetitionItem(ApiResponseModel):
+    """One planned repetition with its independently observed metric."""
+
+    subrun_id: str
+    repetition: int = Field(ge=0)
+    status: str
+    quality: Optional[Literal['complete', 'partial', 'invalid']] = None
+    engine: Optional[Literal['aiperf']] = None
+    executor_version: Optional[str] = None
+    metric: Optional[MetricStatistics] = None
+    unavailable_reason: Optional[str] = None
+
+
+class CacheRepetitionsResponse(ApiResponseModel):
+    plan_hash: str
+    total: int = Field(ge=0)
+    offset: int = Field(ge=0)
+    limit: int = Field(gt=0, le=100)
+    repetitions: List[CacheRepetitionItem]
 
 
 class CacheRequestsResponse(ApiResponseModel):

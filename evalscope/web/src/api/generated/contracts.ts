@@ -48,6 +48,7 @@ export interface WebApiContracts {
   cache_experiment_list_response: CacheExperimentListResponse;
   cache_experiment_response: CacheExperimentResponse;
   cache_node_metrics_response: CacheNodeMetricsResponse;
+  cache_repetitions_response: CacheRepetitionsResponse;
   cache_request_groups_response: CacheRequestGroupsResponse;
   cache_requests_response: CacheRequestsResponse;
   cache_scenario_response: CacheScenarioResponse;
@@ -340,6 +341,42 @@ export interface NodeMetricSample {
   semantics?: "unverified";
   timestamp_ns: number;
 }
+export interface CacheRepetitionsResponse {
+  limit: number;
+  offset: number;
+  plan_hash: string;
+  repetitions: CacheRepetitionItem[];
+  total: number;
+}
+/**
+ * One planned repetition with its independently observed metric.
+ */
+export interface CacheRepetitionItem {
+  engine?: "aiperf" | null;
+  executor_version?: string | null;
+  metric?: MetricStatistics | null;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  repetition: number;
+  status: string;
+  subrun_id: string;
+  unavailable_reason?: string | null;
+}
+/**
+ * A metric with explicit unit, scope, source, and observation count.
+ */
+export interface MetricStatistics {
+  availability?: "available" | "unavailable";
+  count?: number | null;
+  key: string;
+  reason?: string | null;
+  scope: "request" | "run" | "node_window";
+  source: string;
+  statistics?: {
+    [k: string]: number;
+  };
+  unit: string;
+  value?: number | null;
+}
 export interface CacheRequestGroupsResponse {
   availability: "available" | "unavailable";
   groups?: CacheRequestGroup[];
@@ -560,22 +597,6 @@ export interface PerfRunResult {
   schema_version?: "1.0";
   server_metrics_schema?: string | null;
   summary_schema?: string | null;
-}
-/**
- * A metric with explicit unit, scope, source, and observation count.
- */
-export interface MetricStatistics {
-  availability?: "available" | "unavailable";
-  count?: number | null;
-  key: string;
-  reason?: string | null;
-  scope: "request" | "run" | "node_window";
-  source: string;
-  statistics?: {
-    [k: string]: number;
-  };
-  unit: string;
-  value?: number | null;
 }
 export interface ChatMessage {
   content: string | ContentBlock[];
