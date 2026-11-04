@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { CacheScenarioResponse, CacheSubrunPlan, MetricStatistics } from '@/api/generated/contracts'
 import { useLocale } from '@/contexts/LocaleContext'
+import { PANEL_SELECT } from './panelControls'
 
 interface Props { rows: CacheSubrunPlan[]; scenarios: Record<string, CacheScenarioResponse> }
 const loadKey = (row: CacheSubrunPlan) => `${row.load_mode}:${row.load_point.concurrency ?? row.load_point.rate}`
@@ -31,14 +32,14 @@ export default function CacheMatrixChart({ rows, scenarios }: Props) {
   const minimum = axis === 'ratio' ? 0 : Math.min(...points.map(({ row }) => xValue(row)))
   const maximum = axis === 'ratio' ? 1 : Math.max(...points.map(({ row }) => xValue(row)))
   const xPosition = (row: CacheSubrunPlan) => maximum === minimum ? 50 : 2 + (xValue(row) - minimum) / (maximum - minimum) * 96
-  return <section className="space-y-2 rounded border border-[var(--border)] p-3" aria-label={zh ? '矩阵散点图' : 'Matrix scatter plot'}>
-    <h2 className="font-semibold">{zh ? '矩阵散点图' : 'Matrix scatter plot'}</h2>
-    <p className="text-sm">{zh ? '仅显示当前页，固定其他维度和重复序号；缺失点不补零、不连线。' : 'Current page only; other dimensions and repetition are fixed. Missing points are neither filled nor connected.'}</p>
-    <label className="text-sm">{zh ? '横轴' : 'Horizontal axis'} <select value={axis} onChange={(event) => { setAxis(event.target.value as 'ratio' | 'load'); setGroup('') }}><option value="ratio">{zh ? '目标比例' : 'Target ratio'}</option><option value="load">{zh ? '负载' : 'Load'}</option></select></label>{' '}
-    {active && <label className="text-sm">{axis === 'ratio' ? (zh ? '负载 / 重复' : 'Load / repetition') : (zh ? '目标比例 / 模式 / 重复' : 'Target ratio / mode / repetition')} <select value={active} onChange={(event) => setGroup(event.target.value)}>
+  return <section className="space-y-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-[var(--shadow-sm)]" aria-label={zh ? '矩阵散点图' : 'Matrix scatter plot'}>
+    <h2 className="type-label-xs">{zh ? '矩阵散点图' : 'Matrix scatter plot'}</h2>
+    <p className="type-body-xs text-[var(--text-muted)]">{zh ? '仅显示当前页，固定其他维度和重复序号；缺失点不补零、不连线。' : 'Current page only; other dimensions and repetition are fixed. Missing points are neither filled nor connected.'}</p>
+    <label className="text-sm">{zh ? '横轴' : 'Horizontal axis'} <select className={PANEL_SELECT} value={axis} onChange={(event) => { setAxis(event.target.value as 'ratio' | 'load'); setGroup('') }}><option value="ratio">{zh ? '目标比例' : 'Target ratio'}</option><option value="load">{zh ? '负载' : 'Load'}</option></select></label>{' '}
+    {active && <label className="text-sm">{axis === 'ratio' ? (zh ? '负载 / 重复' : 'Load / repetition') : (zh ? '目标比例 / 模式 / 重复' : 'Target ratio / mode / repetition')} <select className={PANEL_SELECT} value={active} onChange={(event) => setGroup(event.target.value)}>
       {groups.map((value) => { const row = rows.find((item) => groupKey(item) === value)!
         return <option value={value} key={value}>{axis === 'ratio' ? loadKey(row) : `${row.target_ratio * 100}% / ${row.load_mode}`} / {row.repetition + 1}</option> })}</select></label>}
-    {' '}<label className="text-sm">{zh ? '指标' : 'Metric'} <select value={metricKey} onChange={(event) => setMetricKey(event.target.value)}>
+    {' '}<label className="text-sm">{zh ? '指标' : 'Metric'} <select className={PANEL_SELECT} value={metricKey} onChange={(event) => setMetricKey(event.target.value)}>
       <option value="time_to_first_token">TTFT</option><option value="request_throughput">{zh ? '请求吞吐' : 'Request throughput'}</option></select></label>
     {points.length ? <><p className="text-xs">{reference?.metric.source} / {reference?.metric.scope} / {reference?.metric.unit}; n={points.length}</p>
       <svg role="img" aria-label={axis === 'ratio' ? (zh ? '目标比例与指标散点图' : 'Target ratio versus metric scatter plot') : (zh ? '负载与指标散点图' : 'Load versus metric scatter plot')} viewBox="0 0 100 40" className="h-28 w-full" preserveAspectRatio="none">

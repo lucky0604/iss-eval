@@ -1,23 +1,108 @@
-"""Local Hugging Face tokenizer adapter for prefix workload validation."""
+"""Hugging Face tokenizer adapter for prefix workload validation."""
 
 import hashlib
 import json
+import re
+from pathlib import Path
 from typing import List, Optional, Sequence
 
 from evalscope.perf.executors.external import Cancellation
 from evalscope.perf.experiments.prefix_workload import WorkloadCancelled
 
+_MODEL_ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')
+# Tokenizer-only files keep a ModelScope download small: weights are never fetched.
+_TOKENIZER_FILES = [
+    'tokenizer.json',
+    'tokenizer_config.json',
+    'special_tokens_map.json',
+    'added_tokens.json',
+    'vocab.json',
+    'merges.txt',
+    'tokenizer.model',
+    'chat_template.jinja',
+    'chat_template.json',
+    '*.tiktoken',
+]
+
+
+def _looks_like_local_path(reference: str) -> bool:
+    return (
+        reference.startswith(('/', './', '../', '~'))
+        or '\\' in reference
+        or re.match(r'^[A-Za-z]:[\\/]', reference) is not None
+    )
+
+
+def _snapshot_tokenizer_files(model_id: str, **options: object) -> str:
+    """Ask ModelScope for tokenizer-only files, tolerating older keyword names."""
+    try:
+        from modelscope import snapshot_download
+    except ImportError as error:  # pragma: no cover - modelscope is a framework dependency
+        raise ImportError('ModelScope is required to download a remote tokenizer') from error
+    try:
+        return snapshot_download(model_id, allow_patterns=_TOKENIZER_FILES, **options)
+    except TypeError:
+        return snapshot_download(model_id, allow_file_pattern=_TOKENIZER_FILES, **options)
+
+
+def _download_tokenizer_files(model_id: str) -> str:
+    """Fetch only tokenizer files for a ModelScope model ID and return the cache directory."""
+
+    def fetch(**options: object) -> str:
+        directory = _snapshot_tokenizer_files(model_id, **options)
+        if not isinstance(directory, str) or not Path(directory).is_dir():
+            raise OSError(f'ModelScope returned no tokenizer directory for {model_id}')
+        return directory
+
+    try:
+        return fetch(local_files_only=True)
+    except Exception:
+        pass
+    try:
+        return fetch()
+    except Exception as error:
+        raise OSError(f'ModelScope tokenizer download failed for {model_id}: {error}') from error
+
+
+def resolve_tokenizer_directory(source: str) -> str:
+    """Return a local tokenizer directory, downloading tokenizer files for a ModelScope ID."""
+    reference = source.strip()
+    if not reference:
+        raise ValueError('Tokenizer source must not be blank')
+    directory = Path(reference).expanduser()
+    if directory.is_dir():
+        return str(directory)
+    if _looks_like_local_path(reference):
+        raise OSError(f'Tokenizer directory is not readable by the service process: {reference}')
+    if not _MODEL_ID.fullmatch(reference):
+        raise ValueError(
+            'Tokenizer source must be a readable local directory or a ModelScope model ID '
+            f'such as Qwen/Qwen2.5-0.5B-Instruct: {reference}'
+        )
+    return _download_tokenizer_files(reference)
+
 
 class HuggingFacePrefixTokenizer:
-    """Render the locally supplied model's chat template without remote code."""
+    """Render the supplied model's chat template without remote code."""
 
     def __init__(self, tokenizer_path: str) -> None:
         from transformers import AutoTokenizer
 
-        self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=True, trust_remote_code=False)
+        directory = resolve_tokenizer_directory(tokenizer_path)
+        # AIPerf receives this directory so it never re-resolves the source itself.
+        self.directory = directory
+        self._tokenizer = AutoTokenizer.from_pretrained(directory, local_files_only=True, trust_remote_code=False)
         template = self._tokenizer.chat_template
+        if isinstance(template, dict):
+            raise ValueError(f'Multiple chat templates are configured for the tokenizer: {sorted(map(str, template))}')
+        if isinstance(template, (list, tuple)):
+            names = [str(item.get('name')) for item in template if isinstance(item, dict)]
+            raise ValueError(f'Multiple chat templates are configured for the tokenizer: {names}')
         if not isinstance(template, str) or not template:
-            raise ValueError('A single explicit chat template is required for prefix experiments')
+            raise ValueError(
+                'A single explicit chat template is required for prefix experiments; '
+                f'add chat_template to tokenizer_config.json in {directory}'
+            )
         backend = getattr(self._tokenizer, 'backend_tokenizer', None)
         if backend is None:
             raise ValueError('A fast tokenizer with a serializable backend is required')

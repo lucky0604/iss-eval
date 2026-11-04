@@ -47,11 +47,14 @@ def test_scenario_primes_then_profiles_generated_input(tmp_path: Path, ratio: fl
 
     root = tmp_path / 'run'
     root.mkdir()
+    tokenizer = _Tokenizer()
+    tokenizer.directory = '/resolved/tokenizer'
     monkeypatch.setattr(module, 'probe_version', lambda context, cancel: '0.13.0')
     observed = []
 
     def fake_run(arguments: AIPerfArguments, context: ExecutionContext, input_file: str, version: str,
                  cancel_event: object, on_draining: object) -> ExecutionOutcome:
+        assert arguments.tokenizer_path == '/resolved/tokenizer'
         primers_sent = capture.read_text().splitlines() if capture.exists() else []
         assert len(primers_sent) == (0 if ratio == 0 else 2)
         observed.extend(json.loads(line)['text'] for line in Path(input_file).read_text().splitlines())
@@ -66,7 +69,7 @@ def test_scenario_primes_then_profiles_generated_input(tmp_path: Path, ratio: fl
     with _server(tmp_path, 'success') as (url, capture):
         result = run_cache_scenario(_config(url), _context(root), CacheScenarioArguments(
             target_ratio=ratio, namespace='run', tokenizer_id='fixture', template_id='fixture-template',
-        ), _Tokenizer(), list(range(200)))
+        ), tokenizer, list(range(200)))
     assert result.status == 'completed' and result.quality == 'partial'
     assert result.cache is not None and result.cache.ratio is None
     manifest = json.loads((root / 'scenario.json').read_text())

@@ -88,6 +88,44 @@ def test_preflight_rejects_ratio_that_cannot_fit_the_chat_template(client, tmp_p
     assert not (tmp_path / 'impossible').exists()
 
 
+def test_preflight_reports_the_unreadable_tokenizer_path_without_secrets(client) -> None:
+    config = _config().model_dump(mode='json')
+    config.update({'tokenizer_path': '/definitely/missing/tokenizer', 'api_key': 'super-secret-key'})
+    response = client.post('/api/v1/perf/validate', json={'engine': 'aiperf', 'aiperf': config},
+                           headers={'EvalScope-Task-Id': 'missing-tokenizer'})
+    body = response.get_json()
+    assert response.status_code == 400
+    assert '/definitely/missing/tokenizer' in body['error'] and body['reason'] in body['error']
+    assert 'super-secret-key' not in response.get_data(as_text=True)
+
+
+def test_preflight_accepts_a_model_scope_tokenizer_id(client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    directory = tmp_path / 'tokenizer-cache'
+    vocab = {'[UNK]': 0, 'header': 1, 'tail': 2, 'assistant': 3, **{f't{i}': i + 4 for i in range(200)}}
+    backend = Tokenizer(models.WordLevel(vocab, unk_token='[UNK]'))
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token='[UNK]')
+    tokenizer.chat_template = "header {{ messages[0]['content'] }} tail assistant"
+    tokenizer.save_pretrained(directory)
+    downloads = []
+
+    def download(model_id: str, **kwargs) -> str:
+        downloads.append(model_id)
+        return str(directory)
+
+    monkeypatch.setattr('modelscope.snapshot_download', download)
+    config = _config().model_dump(mode='json')
+    config['tokenizer_path'] = 'Qwen/Qwen2.5-0.5B-Instruct'
+    response = client.post('/api/v1/perf/validate', json={'engine': 'aiperf', 'aiperf': config},
+                           headers={'EvalScope-Task-Id': 'remote-tokenizer'})
+    assert response.status_code == 200, response.get_json()
+    assert downloads == ['Qwen/Qwen2.5-0.5B-Instruct']
+    assert response.json['plan']['tokenizer_id']
+
+
 def test_plan_configuration_is_verified_and_legacy_plan_remains_readable(client, tmp_path: Path) -> None:
     from evalscope.perf.experiments.planner import plan_cache_experiment
 

@@ -107,6 +107,7 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
     return <Field id={id} name={name} labelKey={FIELD_LABELS[name]} error={error}>
       {(aria) => <input {...aria} type={type} step={name === 'sampleInterval' || name === 'maxGap' ? 'any' : undefined}
         className={inputClass(error)} value={draft[name]}
+        placeholder={name === 'tokenizer' ? 'Qwen/Qwen2.5-0.5B-Instruct' : undefined}
         onChange={(event) => update(name, event.target.value)} />}
     </Field>
   }
@@ -160,6 +161,7 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
           onChange={(event) => update('required', event.target.checked)} />{t('tasks.aiperf.required')}</label>
         <section className="space-y-3" aria-labelledby="aiperf-nodes-title">
           <h3 id="aiperf-nodes-title" className="text-sm font-semibold">{t('tasks.aiperf.nodes')}</h3>
+          <p className="text-xs text-[var(--text-muted)]">{t('tasks.aiperf.nodesHint')}</p>
           {draft.nodes.map((node, index) => <fieldset key={node.id} className="min-w-0 space-y-3 rounded border border-[var(--border)] p-3">
             <legend className="px-1 text-sm">{t('tasks.aiperf.node', { number: index + 1 })}</legend>
             <div className="grid min-w-0 gap-3 md:grid-cols-2">

@@ -1,6 +1,6 @@
 # AIPerf 前缀缓存实验
 
-性能任务页面保留原有 EvalScope 执行器，并提供可选的 AIPerf 执行器；默认仍为 EvalScope。AIPerf 0.13.0 支持 OpenAI 兼容的流式 chat completions、单次提示词压测，以及前缀复用比例、负载和重复次数构成的实验矩阵。服务端必须能读取 tokenizer，且其 chat template 应与模型服务一致。
+性能任务页面保留原有 EvalScope 执行器，并提供可选的 AIPerf 执行器；默认仍为 EvalScope。AIPerf 0.13.0 支持 OpenAI 兼容的流式 chat completions、单次提示词压测，以及前缀复用比例、负载和重复次数构成的实验矩阵。服务端必须能读取 tokenizer（本地目录，或 `Qwen/Qwen2.5-0.5B-Instruct` 这类 ModelScope 模型 ID；远程来源只下载 tokenizer 文件并复用缓存），且其 chat template 应与模型服务一致。
 
 ## 安装隔离运行环境
 
@@ -57,6 +57,8 @@ npm --prefix evalscope/web run build
 ## 配置与运行
 
 填写模型连接，选择 **AIPerf**，再选择 **前缀缓存实验** 或 **单次运行**。单次运行的每个非空行对应一个请求；浏览器草稿和模板可能保存提示词，请勿在共享浏览器输入秘密。Web 限制提示词总量为 512 KiB；API 最多接受 10,000 条、4 MiB。单次运行只有一个负载点，不含缓存实验。
+
+tokenizer 可填服务端可读的本地目录，或 ModelScope 模型 ID；使用模型 ID 时服务端只下载 `tokenizer.json`、`tokenizer_config.json`、`chat_template.jinja` 等 tokenizer 文件，不会拉取模型权重。
 
 实验可设置 `0, 80, 90` 等百分比、总输入 token、前缀池、随机种子、负载点、请求数及重复次数。预检展示子运行、正式请求和预热请求预算。chat template 的固定部分可能使短输入无法达到某些比例；预检会拒绝已知不可行的组合。实际生成时仍会验证分词，无法生成所需输入时会明确失败。每个共享前缀完成 primer 后才开始对应正式运行。新的命名空间不能证明服务端缓存已清空，也不能证明所有后端都收到预热。
 

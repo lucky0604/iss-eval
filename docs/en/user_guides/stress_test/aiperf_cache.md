@@ -1,6 +1,6 @@
 # AIPerf prefix-cache experiments
 
-The performance task page supports the existing EvalScope executor and the optional AIPerf executor. EvalScope remains the default. AIPerf 0.13.0 supports streaming OpenAI-compatible chat completions, one inline-prompt run, or a matrix of prefix-reuse targets, load points and repetitions. The tokenizer must be accessible to the service and use the same chat template as the model server.
+The performance task page supports the existing EvalScope executor and the optional AIPerf executor. EvalScope remains the default. AIPerf 0.13.0 supports streaming OpenAI-compatible chat completions, one inline-prompt run, or a matrix of prefix-reuse targets, load points and repetitions. The tokenizer must be readable by the service (a local directory, or a ModelScope model ID such as `Qwen/Qwen2.5-0.5B-Instruct` that downloads tokenizer files only and reuses the cache), and it must use the same chat template as the model server.
 
 ## Install the isolated runtime
 
@@ -57,6 +57,8 @@ The service detects the configured executable and requires version 0.13.0. It do
 ## Configure and run
 
 Set the model connection, choose **AIPerf**, and select either **Prefix cache experiment** or **Single run**. A single run sends each nonblank line as one request. Its browser draft and templates may contain prompt text; do not enter secrets in prompts on a shared browser. The Web form accepts at most 512 KiB of prompt text; the API accepts at most 10,000 prompts and 4 MiB. A single run has one load point and no cache experiment.
+
+The tokenizer field accepts a service-local directory or a ModelScope model ID; a model ID downloads only `tokenizer.json`, `tokenizer_config.json`, `chat_template.jinja` and related tokenizer files, never model weights.
 
 For an experiment, enter percentages such as `0, 80, 90`, total input tokens, prefix pool size, seed, load points, request count and repetitions. Preview displays the planned subruns, profiling requests and primer requests. A template can make a short input/ratio combination impossible; preflight rejects known geometry failures. The actual generation still verifies tokenization and can fail closed if the tokenizer cannot construct the requested inputs. Each shared prefix completes its primer before the associated profiling run starts. A fresh namespace is not proof that the server cache was cleared or that every backend received a primer.
 

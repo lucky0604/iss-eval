@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from flask import Blueprint, current_app, jsonify, make_response, request, send_file, stream_template_string
+from pydantic import ValidationError
 from tabulate import tabulate
 
 from evalscope.metrics.semantics import resolve_perf_semantics
@@ -652,14 +653,34 @@ def _validate_cache_geometry(arguments: AIPerfArguments, tokenizer: HuggingFaceP
     candidates = tokenizer.candidate_ids(2)
     for input_tokens in cache.input_lengths:
         for ratio in cache.target_ratios:
+            try:
+                validate_prefix_geometry(
+                    PrefixWorkloadArguments(
+                        target_ratio=ratio,
+                        total_input_tokens=input_tokens,
+                        request_count=arguments.load.request_count,
+                        prefix_pool_size=cache.prefix_pool_size,
+                        seed=cache.seed,
+                        namespace='preflight',
+                        tokenizer_id=tokenizer.tokenizer_hash,
+                        template_id=tokenizer.template_hash,
+                    ),
+                    tokenizer,
+                    candidates,
+                    check_zero_leaders=False,
+                )
+            except ValueError as error:
+                raise ValueError(f'input length {input_tokens} with target ratio {ratio}: {error}') from error
+    if cache.warmup is not None:
+        try:
             validate_prefix_geometry(
                 PrefixWorkloadArguments(
-                    target_ratio=ratio,
-                    total_input_tokens=input_tokens,
-                    request_count=arguments.load.request_count,
-                    prefix_pool_size=cache.prefix_pool_size,
+                    target_ratio=0,
+                    total_input_tokens=cache.warmup.total_input_tokens,
+                    request_count=cache.warmup.request_count,
+                    prefix_pool_size=1,
                     seed=cache.seed,
-                    namespace='preflight',
+                    namespace='preflight-warmup',
                     tokenizer_id=tokenizer.tokenizer_hash,
                     template_id=tokenizer.template_hash,
                 ),
@@ -667,22 +688,18 @@ def _validate_cache_geometry(arguments: AIPerfArguments, tokenizer: HuggingFaceP
                 candidates,
                 check_zero_leaders=False,
             )
-    if cache.warmup is not None:
-        validate_prefix_geometry(
-            PrefixWorkloadArguments(
-                target_ratio=0,
-                total_input_tokens=cache.warmup.total_input_tokens,
-                request_count=cache.warmup.request_count,
-                prefix_pool_size=1,
-                seed=cache.seed,
-                namespace='preflight-warmup',
-                tokenizer_id=tokenizer.tokenizer_hash,
-                template_id=tokenizer.template_hash,
-            ),
-            tokenizer,
-            candidates,
-            check_zero_leaders=False,
+        except ValueError as error:
+            raise ValueError(f'warmup of {cache.warmup.total_input_tokens} input tokens: {error}') from error
+
+
+def _preflight_failure_reason(error: BaseException) -> str:
+    """Describe a preflight failure without echoing submitted secrets."""
+    if isinstance(error, ValidationError):
+        return '; '.join(
+            f'{".".join(str(part) for part in item["loc"]) or "config"}: {item["msg"]}'
+            for item in error.errors(include_input=False, include_url=False)
         )
+    return str(error) or type(error).__name__
 
 
 @bp_perf.route('/validate', methods=['POST'])
@@ -697,9 +714,15 @@ def validate_perf_experiment():
         tokenizer = HuggingFacePrefixTokenizer(task.aiperf.tokenizer_path)
         plan = plan_cache_experiment(task.aiperf, task_id, tokenizer.tokenizer_hash, tokenizer.template_hash)
         _validate_cache_geometry(task.aiperf, tokenizer)
-    except (ValueError, TypeError, OSError, ImportError, OverflowError):
+    except (ValueError, TypeError, OSError, ImportError, OverflowError) as error:
+        reason = _preflight_failure_reason(error)
+        logger.warning(f'Cache experiment preflight failed for {task_id}: {reason}')
         return jsonify(
-            {'error': 'Invalid cache configuration, tokenizer, or prefix ratio for the requested input length'}
+            {
+                'error': 'Invalid cache configuration, tokenizer, or prefix ratio for the requested '
+                f'input length: {reason}',
+                'reason': reason,
+            }
         ), 400
     flag = request.args.get('probe_metrics', '0')
     if flag not in ('0', '1'):

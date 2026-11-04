@@ -64,7 +64,7 @@ def test_invalid_or_unverifiable_tokenization_is_rejected() -> None:
         build_prefix_workload(_arguments(0.8), _NonRoundTrip(), list(range(200)))
 
 
-def test_real_bpe_merges_cannot_silently_change_length() -> None:
+def test_real_bpe_merges_are_absorbed_into_an_exact_length() -> None:
     from tokenizers import Tokenizer, decoders, models
 
     backend = Tokenizer(models.BPE({'a': 0, 'b': 1, 'aa': 2, 'ab': 3, 'ba': 4, 'bb': 5},
@@ -78,8 +78,10 @@ def test_real_bpe_merges_cannot_silently_change_length() -> None:
         def render(self, user_text: str) -> list[int]:
             return backend.encode(user_text).ids
 
-    with pytest.raises(ValueError, match='Tokenizer/template'):
-        build_prefix_workload(_arguments(0.8), _BPE(), [0, 1])
+    workload = build_prefix_workload(_arguments(0.8), _BPE(), [0, 1])
+    assert all(len(_BPE().render(item.text)) == 20 for item in workload.requests)
+    assert {item.shared_tokens for item in workload.requests} == {16}
+    assert len({item.text for item in workload.requests}) == len(workload.requests)
 
 
 def test_local_huggingface_chat_template_is_rendered_and_hashed(tmp_path: Path) -> None:
@@ -98,6 +100,30 @@ def test_local_huggingface_chat_template_is_rendered_and_hashed(tmp_path: Path) 
     assert len(adapter.template_hash) == 64
     assert workload.template_id == adapter.template_hash
     assert all(len(adapter.render(item.text)) == 20 and item.shared_tokens == 16 for item in workload.requests)
+
+
+def test_tokenizer_diagnostics_name_unreadable_paths_and_template_problems(tmp_path: Path) -> None:
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    with pytest.raises(OSError, match='not readable'):
+        HuggingFacePrefixTokenizer(str(tmp_path / 'missing'))
+
+    backend = Tokenizer(models.WordLevel({'[UNK]': 0, 't0': 1, 't1': 2}, unk_token='[UNK]'))
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token='[UNK]')
+    tokenizer.chat_template = [
+        {'name': 'default', 'template': "t0 {{ messages[0]['content'] }} t1"},
+        {'name': 'tool_use', 'template': "t0 {{ messages[0]['content'] }} t1"},
+    ]
+    tokenizer.save_pretrained(tmp_path / 'multi')
+    with pytest.raises(ValueError, match='Multiple chat templates'):
+        HuggingFacePrefixTokenizer(str(tmp_path / 'multi'))
+
+    tokenizer.chat_template = None
+    tokenizer.save_pretrained(tmp_path / 'plain')
+    with pytest.raises(ValueError, match='single explicit chat template'):
+        HuggingFacePrefixTokenizer(str(tmp_path / 'plain'))
 
 
 def test_distinct_prefix_pool_is_checked_after_tokenizer_normalization() -> None:

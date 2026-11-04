@@ -99,7 +99,9 @@ def run_cache_scenario(
         raise ValueError('Tokenizer identity does not match the scenario')
     if getattr(tokenizer, 'template_hash', scenario.template_id) != scenario.template_id:
         raise ValueError('Tokenizer template identity does not match the scenario')
-    single = arguments.model_copy(update={'cache_experiment': None})
+    single = arguments.model_copy(
+        update={'cache_experiment': None, 'tokenizer_path': getattr(tokenizer, 'directory', arguments.tokenizer_path)}
+    )
     validate_single_run_configuration(single)
     root = Path(context.output_dir).resolve(strict=True)
     if any((root / path).exists() for path in ('scenario.json', 'prefix_inputs.jsonl', 'raw/aiperf', 'normalized')):

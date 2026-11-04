@@ -23,9 +23,9 @@ export default function NodeWindowPanel({ analysis, taskId, subrunId, archive }:
   const allGauges = rows.filter((row) => row.metric.kind === 'gauge')
   const gauges = allGauges.slice(0, 200)
   const selectedGauge = gauges[Number(seriesIndex)] ?? gauges[0]
-  return <section className="space-y-2 rounded border border-[var(--border)] p-3" aria-label={zh ? '节点窗口指标' : 'Node-window metrics'}>
-    <h3 className="font-semibold">{zh ? '节点窗口指标' : 'Node-window metrics'}</h3>
-    <p className="text-sm">{zh ? '范围是节点共享流量，不是逐请求 P/D 耗时；部署版本、标签和路由覆盖待核验。' : 'Node windows include shared traffic; they are not per-request P/D timings. Verify deployment version, labels and routing coverage.'}</p>
+  return <section className="space-y-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-[var(--shadow-sm)]" aria-label={zh ? '节点窗口指标' : 'Node-window metrics'}>
+    <h3 className="type-label-xs">{zh ? '节点窗口指标' : 'Node-window metrics'}</h3>
+    <p className="type-body-xs text-[var(--text-muted)]">{zh ? '范围是节点共享流量，不是逐请求 P/D 耗时；部署版本、标签和路由覆盖待核验。' : 'Node windows include shared traffic; they are not per-request P/D timings. Verify deployment version, labels and routing coverage.'}</p>
     <p className="text-sm">{zh ? '状态 / 窗口来源' : 'Availability / window source'}: {analysis?.availability ?? '—'} / {analysis?.window_source ?? '—'}
       {analysis?.window && ` · ${analysis.window.start_ns}–${analysis.window.end_ns} ns`}</p>
     {analysis?.reason && <p className="text-sm">{analysis.reason}</p>}
@@ -39,7 +39,7 @@ export default function NodeWindowPanel({ analysis, taskId, subrunId, archive }:
         {zh ? 'vLLM 节点查询 token 命中率' : 'vLLM node lookup-token hit ratio'}: {display(ratio.ratio)}
         {' '}({display(ratio.hit_tokens)} / {display(ratio.lookup_tokens)}, {ratio.availability}, {ratio.reason ?? '—'}, {JSON.stringify(ratio.labels)})
       </p>)}
-      {rows.length ? <div className="overflow-x-auto"><table className="w-full min-w-max whitespace-nowrap text-left text-xs [&_th]:px-2 [&_td]:px-2"><thead><tr>
+      {rows.length ? <div className="overflow-x-auto"><table className="w-full min-w-max border-collapse whitespace-nowrap text-left text-xs [&_th]:border-b [&_th]:border-[var(--border)] [&_th]:px-3 [&_th]:py-2 [&_td]:border-b [&_td]:border-[var(--border)] [&_td]:px-3 [&_td]:py-2"><thead><tr>
         <th>{zh ? '节点 / 指标' : 'Role / metric'}</th><th>{zh ? '标签' : 'Labels'}</th><th>{zh ? '窗口值' : 'Window value'}</th>
         <th>{zh ? '样本峰值' : 'Sample peak'}</th><th>{zh ? '样本 / 覆盖' : 'Count / coverage'}</th><th>{zh ? '状态 / 边界 / 原因' : 'Status / boundary / reason'}</th>
       </tr></thead><tbody>{rows.slice(page * 50, page * 50 + 50).map((row, index) => {

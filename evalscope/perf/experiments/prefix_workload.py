@@ -2,7 +2,7 @@
 
 import hashlib
 import random
-from typing import List, Optional, Protocol, Sequence
+from typing import List, Optional, Protocol, Sequence, Tuple
 
 from pydantic import Field, StrictInt, field_validator
 
@@ -91,6 +91,49 @@ def _hash_text(text: str) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
+def _fit_rendered_text(
+    tokenizer: PrefixTokenizer,
+    randomizer: random.Random,
+    tokens: Sequence[int],
+    prefix: str,
+    target_rendered: int,
+    leader: Optional[int] = None,
+) -> Optional[Tuple[str, Tuple[int, ...]]]:
+    """Return text whose chat rendering has exactly ``target_rendered`` tokens.
+
+    Random token IDs do not round-trip through ``decode``/``render`` with a
+    stable length (byte-level BPE merges across token boundaries), so a fixed
+    random sequence is grown by bisection until the rendered prompt hits the
+    requested count. The sequence is reused across probes, which keeps the
+    rendered length monotone in the content length.
+    """
+    for scale in (1.4, 2.8):
+        pool = [randomizer.choice(tokens) for _ in range(max(256, int(target_rendered * scale)))]
+        if leader is not None:
+            pool[0] = leader
+
+        def render_at(count: int) -> Tuple[str, Tuple[int, ...]]:
+            suffix = tokenizer.decode(pool[:count])
+            text = f'{prefix} {suffix}' if prefix else suffix
+            return text, tuple(tokenizer.render(text))
+
+        longest = 0
+        low, high = 1, len(pool)
+        while low <= high:
+            middle = (low + high) // 2
+            text, rendered = render_at(middle)
+            longest = max(longest, len(rendered))
+            if len(rendered) == target_rendered:
+                return text, rendered
+            if len(rendered) < target_rendered:
+                low = middle + 1
+            else:
+                high = middle - 1
+        if longest >= target_rendered:
+            return None
+    return None
+
+
 def validate_prefix_geometry(
     arguments: PrefixWorkloadArguments,
     tokenizer: PrefixTokenizer,
@@ -142,8 +185,9 @@ def build_prefix_workload(
     geometry = validate_prefix_geometry(arguments, tokenizer, tokens)
     seed = hashlib.sha256(f'{arguments.seed}\0{arguments.namespace}'.encode()).digest()
     randomizer = random.Random(int.from_bytes(seed, 'big'))
-    header, budget = geometry.header_tokens, geometry.content_budget
+    header = geometry.header_tokens
     target, prefix_length = geometry.target_shared_tokens, geometry.prefix_content_tokens
+    overhead = len(tokenizer.render(''))
     header_prefix = tuple(tokenizer.render(tokenizer.decode([tokens[0]]))[:header])
 
     primers = []
@@ -161,16 +205,18 @@ def build_prefix_workload(
     for prefix_id in range(pool_size):
         if cancel_event is not None and cancel_event.is_set():
             raise WorkloadCancelled()
-        for _ in range(128):
+        for _ in range(16):
             if cancel_event is not None and cancel_event.is_set():
                 raise WorkloadCancelled()
-            text = tokenizer.decode([randomizer.choice(tokens) for _ in range(prefix_length)])
-            if not text or text in used_prefixes:
+            fitted = _fit_rendered_text(tokenizer, randomizer, tokens, '', overhead + prefix_length)
+            if fitted is None:
                 continue
-            rendered = tokenizer.render(text)
+            text, rendered = fitted
             token_prefix = tuple(rendered[:target])
             if (
-                tuple(rendered[:header]) != header_prefix
+                not text
+                or text in used_prefixes
+                or tuple(rendered[:header]) != header_prefix
                 or len(token_prefix) < target
                 or token_prefix in used_token_prefixes
             ):
@@ -192,21 +238,21 @@ def build_prefix_workload(
             raise WorkloadCancelled()
         prefix_id = index % pool_size if pool_size else None
         prefix = prefix_texts[prefix_id] if prefix_id is not None else ''
-        for _ in range(128):
+        for _ in range(16):
             if cancel_event is not None and cancel_event.is_set():
                 raise WorkloadCancelled()
-            suffix_ids = [randomizer.choice(tokens) for _ in range(budget - prefix_length)]
-            if prefix_id is None:
-                suffix_ids[0] = zero_ratio_leaders[index]
-            suffix = tokenizer.decode(suffix_ids)
-            text = f'{prefix} {suffix}' if prefix else suffix
-            rendered = tokenizer.render(text)
-            if (
-                not text
-                or text in seen_texts
-                or len(rendered) != arguments.total_input_tokens
-                or tuple(rendered[:header]) != header_prefix
-            ):
+            fitted = _fit_rendered_text(
+                tokenizer,
+                randomizer,
+                tokens,
+                prefix,
+                arguments.total_input_tokens,
+                zero_ratio_leaders[index] if prefix_id is None else None,
+            )
+            if fitted is None:
+                continue
+            text, rendered = fitted
+            if not text or text in seen_texts or tuple(rendered[:header]) != header_prefix:
                 continue
             rendered_key = tuple(rendered)
             if rendered_key in seen_rendered:

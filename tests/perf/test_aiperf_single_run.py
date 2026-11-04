@@ -50,6 +50,7 @@ def test_prepared_config_preserves_inputs_without_secret(tmp_path: Path) -> None
         assert config['endpoint']['api_key'] == '${EVALSCOPE_AIPERF_API_KEY}'
         assert config['phases'][0]['concurrency'] == 1
         assert config['phases'][0]['requests'] == 2
+        assert config['server_metrics']['enabled'] is False and config['server_metrics']['urls'] == []
         assert config_path.stat().st_mode & 0o077 == 0
         assert Path(prepared.artifact_dir).stat().st_mode & 0o077 == 0
         assert prepared.invocation.log_file == str(tmp_path / 'benchmark.log')
