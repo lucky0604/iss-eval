@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -155,6 +156,22 @@ def _payload(url: str, tokenizer_path: Path) -> dict:
     }
 
 
+def _capture_count(capture: Path) -> int:
+    try:
+        return sum(1 for line in capture.read_text(encoding='utf-8').splitlines() if line.strip())
+    except OSError:
+        return 0
+
+
+def _wait_for_requests(capture: Path, minimum: int, timeout: float = 90) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _capture_count(capture) >= minimum:
+            return
+        time.sleep(.1)
+    raise AssertionError(f'Mock server received fewer than {minimum} requests')
+
+
 def test_restart_reads_archive_without_runtime(tmp_path: Path) -> None:
     runtime = os.environ['EVALSCOPE_TEST_AIPERF']
     root = tmp_path / 'outputs'
@@ -257,3 +274,59 @@ def test_restart_reads_archive_without_runtime(tmp_path: Path) -> None:
     sent = [json.loads(line) for line in capture.read_text().splitlines()]
     assert len(sent) == 4
     assert {item['body']['messages'][0]['content'] for item in sent[2:]} == {'first prompt', 'second prompt'}
+
+
+def test_crashed_service_stops_traffic_and_does_not_fabricate_completion(tmp_path: Path) -> None:
+    runtime = os.environ['EVALSCOPE_TEST_AIPERF']
+    root = tmp_path / 'outputs'
+    root.mkdir()
+    tokenizer_path = _tokenizer(tmp_path / 'tokenizer')
+
+    with _server(tmp_path / 'inference', 'slow_success') as (url, capture):
+        payload = _payload(url, tokenizer_path)
+        payload['aiperf']['input_prompts'] = ['prompt'] * 120
+        payload['aiperf']['load'] = {'points': [{'concurrency': 1}], 'request_count': 120, 'output_token_limit': 7}
+        outcome = {}
+        with ServiceProcess(root, runtime, tmp_path / 'crashed-service.log') as first:
+            assert first.process is not None
+
+            def invoke() -> None:
+                try:
+                    outcome['response'] = first.json(
+                        'POST', '/api/v1/perf/invoke', payload, headers={'EvalScope-Task-Id': 'crash-run'}, timeout=120
+                    )
+                except BaseException as error:
+                    outcome['error'] = repr(error)
+
+            thread = threading.Thread(target=invoke, daemon=True)
+            thread.start()
+            try:
+                _wait_for_requests(capture, 3)
+                first.process.kill()
+                first.process.wait(timeout=10)
+                before = _capture_count(capture)
+                time.sleep(5)
+                stable = _capture_count(capture)
+                time.sleep(2)
+                assert _capture_count(capture) == stable
+                assert stable - before <= 1
+                thread.join(timeout=15)
+                assert not thread.is_alive()
+                assert 'error' in outcome and 'response' not in outcome
+            finally:
+                thread.join(timeout=15)
+        assert first.process.poll() is not None
+
+        # The replacement process must not resurrect the interrupted task or invent a completed run.
+        with ServiceProcess(root, None, tmp_path / 'after-crash.log') as second:
+            status, active = second.json('GET', '/api/v1/tasks/active')
+            assert status == 200 and active['total'] == 0
+            status, task = second.json('GET', '/api/v1/tasks/crash-run')
+            assert status == 200 and task['status'] == 'unknown'
+            assert task['report_url'] is None and task['html_report_url'] is None
+
+            status, listing = second.json(
+                'GET', f"/api/v1/perf/list?{urllib.parse.urlencode({'root_path': str(root)})}"
+            )
+            assert status == 200 and listing['total'] == 0
+        assert _capture_count(capture) == stable
