@@ -91,3 +91,9 @@ print(result.quality, result.quality_reasons)
 节点归属需要原始节点引用；不提供时节点身份不可用。该操作不会自动替换已发布场景或重新计算其节点分析。重新执行会创建新任务，并非续跑。
 
 回滚时先停止活动 AIPerf 任务并等待清理确认，再从服务环境移除 `EVALSCOPE_AIPERF_EXECUTABLE` 并重启。已有报告与原始产物仍可读取，新任务可手动选择 EvalScope。迁移会保留旧版 v1 浏览器数据，但旧客户端读取的是 v1 快照，不会读取之后的 v2 编辑。
+
+以下本地回滚演练使用锁定版本的 AIPerf 虚拟环境和 loopback 模拟服务，检查新建未配置执行器的服务应用后已有 AIPerf 报告仍可读取、新 AIPerf 任务明确失败，以及手动选择的原生任务能够发送并完成请求。它不能替代服务器部署演练。
+
+```bash
+EVALSCOPE_TEST_AIPERF="$AIPERF_VENV/bin/aiperf" "$FRAMEWORK_VENV/bin/python" -m pytest tests/service/test_aiperf_single_run.py::test_local_rollback_keeps_history_and_allows_explicit_native_run -q
+```

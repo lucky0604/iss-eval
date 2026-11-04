@@ -91,3 +91,9 @@ print(result.quality, result.quality_reasons)
 Node attribution needs the original node references; omitting them leaves node identity unavailable. This operation does not automatically replace a published scenario or recompute its node analysis. Rerunning a test creates a new task and is not a resume.
 
 For rollback, stop active AIPerf tasks and wait for confirmed cleanup, then remove `EVALSCOPE_AIPERF_EXECUTABLE` from the service environment and restart it. Existing reports and raw artifacts remain readable; users can explicitly select EvalScope for new tests. Old v1 browser data is retained during migration, but old clients read their old v1 snapshot rather than subsequent v2 edits.
+
+The local rollback drill below uses the pinned AIPerf virtual environment and a loopback mock server. It checks that an archived AIPerf run remains readable after a fresh service app is created without the runtime, a new AIPerf task fails explicitly, and a manually selected native task sends and completes requests. It does not replace the server deployment drill.
+
+```bash
+EVALSCOPE_TEST_AIPERF="$AIPERF_VENV/bin/aiperf" "$FRAMEWORK_VENV/bin/python" -m pytest tests/service/test_aiperf_single_run.py::test_local_rollback_keeps_history_and_allows_explicit_native_run -q
+```

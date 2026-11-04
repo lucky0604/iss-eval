@@ -236,6 +236,63 @@ def test_http_single_task_reaches_real_aiperf(tmp_path: Path, monkeypatch: pytes
 
 
 @pytest.mark.skipif(not os.environ.get('EVALSCOPE_TEST_AIPERF'), reason='requires isolated AIPerf 0.13.0')
+def test_local_rollback_keeps_history_and_allows_explicit_native_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    from evalscope.service.blueprints import perf, tasks
+    from tests.perf.test_prefix_priming import _server
+
+    root = tmp_path / 'outputs'
+    root.mkdir()
+    tokenizer_path = tmp_path / 'tokenizer'
+    tokenizer = Tokenizer(models.WordLevel({'[UNK]': 0, 'first': 1, 'second': 2, 'prompt': 3}, unk_token='[UNK]'))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token='[UNK]').save_pretrained(tokenizer_path)
+    monkeypatch.setattr(log, 'OUTPUT_DIR', str(root))
+    monkeypatch.setattr(perf, 'OUTPUT_DIR', str(root))
+    monkeypatch.setattr(tasks, 'OUTPUT_DIR', str(root))
+    runtime = os.environ['EVALSCOPE_TEST_AIPERF']
+    monkeypatch.delenv('EVALSCOPE_AIPERF_EXECUTABLE', raising=False)
+    dataset = tmp_path / 'native.txt'
+    dataset.write_text('first prompt\nsecond prompt\n')
+
+    with _server(tmp_path / 'server', 'success') as (url, capture):
+        app = create_app(outputs=str(root))
+        app.config['AIPERF_EXECUTABLE'] = runtime
+        payload = _payload()
+        payload['aiperf'].update({'url': url, 'tokenizer_path': str(tokenizer_path), 'api_key': 'fixture-key'})
+        before = app.test_client().post('/api/v1/perf/invoke', json=payload,
+                                        headers={'EvalScope-Task-Id': 'before-rollback'})
+        assert before.status_code == 200 and before.json['status'] == 'completed', before.json
+        assert len(capture.read_text().splitlines()) == 2
+
+        # Create a fresh service app without the executable; no process restart is simulated.
+        client = create_app(outputs=str(root)).test_client()
+        engines = {engine['engine']: engine for engine in client.get('/api/v1/perf/engines').json['engines']}
+        assert engines['evalscope']['available'] and not engines['aiperf']['available']
+        rejected = client.post('/api/v1/perf/invoke', json=payload, headers={'EvalScope-Task-Id': 'after-rollback'})
+        assert rejected.status_code == 503 and 'runtime is unavailable' in rejected.json['error']
+        assert not (root / 'after-rollback').exists() and len(capture.read_text().splitlines()) == 2
+        params = {'root_path': str(root), 'path': 'before-rollback/perf'}
+        assert client.get('/api/v1/perf/detail', query_string=params).json['engine'] == 'aiperf'
+        assert client.get('/api/v1/perf/history/report', query_string=params).status_code == 200
+
+        native = {'model': 'model', 'url': url, 'api_key': 'fixture-key', 'api': 'openai',
+                  'dataset': 'custom', 'dataset_path': str(dataset), 'number': 2, 'parallel': 1,
+                  'max_tokens': 7}
+        result = client.post('/api/v1/perf/invoke', json={'engine': 'evalscope', 'native': native},
+                             headers={'EvalScope-Task-Id': 'native-after-rollback'})
+        assert result.status_code == 200 and result.json['status'] == 'completed', result.json
+        requests = [json.loads(line) for line in capture.read_text().splitlines()]
+        assert len(requests) == 4
+        assert {row['body']['messages'][0]['content'] for row in requests[2:]} == {'first prompt', 'second prompt'}
+        native_params = {'root_path': str(root), 'path': 'native-after-rollback/perf'}
+        runs = client.get('/api/v1/perf/runs', query_string=native_params)
+        assert runs.status_code == 200 and runs.json['runs'][0]['succeed_requests'] == 2
+
+
+@pytest.mark.skipif(not os.environ.get('EVALSCOPE_TEST_AIPERF'), reason='requires isolated AIPerf 0.13.0')
 def test_http_single_run_exposes_authenticated_pd_metrics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from tokenizers import Tokenizer, models, pre_tokenizers
     from transformers import PreTrainedTokenizerFast
