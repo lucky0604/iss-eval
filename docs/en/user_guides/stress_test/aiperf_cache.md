@@ -18,7 +18,7 @@ The Linux x86_64 glibc/Python 3.12 binary lock at `requirements/aiperf-linux-x86
 
 ### Linux server preparation and local regression
 
-Run these commands from the project root. Use two separate Python virtual environments: install service dependencies in the framework environment and the locked runtime in the AIPerf environment. First verify `python3.12`, `/bin/ps`, network access and disk capacity on the target host. Adjust the environment paths for your deployment. Docker is not required for these checks.
+Run these commands from the project root. Use two separate Python virtual environments: install service dependencies in the framework environment and the locked runtime in the AIPerf environment. First verify `python3.12`, `/bin/ps`, network access and disk capacity on the target host. Building the Web UI from source also requires Node.js 20.19 or later in the 20.x series, or 22.12 or later. Adjust the environment paths for your deployment. Docker is not required for these checks.
 
 ```bash
 FRAMEWORK_VENV="$HOME/.venvs/iss-eval-framework"
@@ -33,6 +33,8 @@ export EVALSCOPE_AIPERF_EXECUTABLE="$AIPERF_VENV/bin/aiperf"
 export EVALSCOPE_TEST_AIPERF="$EVALSCOPE_AIPERF_EXECUTABLE"
 "$FRAMEWORK_VENV/bin/python" -m pytest tests/perf/test_external_runner_lifecycle.py tests/perf/test_experiment_orchestration.py -q
 "$FRAMEWORK_VENV/bin/python" -m pytest tests/service/test_aiperf_single_run.py::test_real_single_run_emits_client_progress_log -q
+npm --prefix evalscope/web ci
+npm --prefix evalscope/web run build
 "$FRAMEWORK_VENV/bin/evalscope" service --host 127.0.0.1 --port 9000
 ```
 

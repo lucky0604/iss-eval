@@ -18,7 +18,7 @@ evalscope service
 
 ### Linux 服务器准备与本地回归
 
-以下命令从项目根目录执行。使用两个不同的 Python 虚拟环境：框架环境安装服务依赖，AIPerf 环境只安装锁文件。先在目标服务器确认 `python3.12`、`/bin/ps`、网络及磁盘容量；下面的命令不需要 Docker。请根据部署位置修改虚拟环境路径。
+以下命令从项目根目录执行。使用两个不同的 Python 虚拟环境：框架环境安装服务依赖，AIPerf 环境只安装锁文件。先在目标服务器确认 `python3.12`、`/bin/ps`、网络及磁盘容量；从源码构建 Web 还需要 Node.js 20.19 或更高的 20.x 版本，或 22.12 及以上版本。下面的命令不需要 Docker。请根据部署位置修改虚拟环境路径。
 
 ```bash
 FRAMEWORK_VENV="$HOME/.venvs/iss-eval-framework"
@@ -33,6 +33,8 @@ export EVALSCOPE_AIPERF_EXECUTABLE="$AIPERF_VENV/bin/aiperf"
 export EVALSCOPE_TEST_AIPERF="$EVALSCOPE_AIPERF_EXECUTABLE"
 "$FRAMEWORK_VENV/bin/python" -m pytest tests/perf/test_external_runner_lifecycle.py tests/perf/test_experiment_orchestration.py -q
 "$FRAMEWORK_VENV/bin/python" -m pytest tests/service/test_aiperf_single_run.py::test_real_single_run_emits_client_progress_log -q
+npm --prefix evalscope/web ci
+npm --prefix evalscope/web run build
 "$FRAMEWORK_VENV/bin/evalscope" service --host 127.0.0.1 --port 9000
 ```
 
