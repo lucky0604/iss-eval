@@ -1,7 +1,6 @@
 """Sequential primer barrier for validated prefix workloads."""
 
 import asyncio
-import json
 import math
 import multiprocessing
 from typing import List, Literal, Optional
@@ -13,6 +12,7 @@ from evalscope.perf.executors.arguments import AIPerfArguments
 from evalscope.perf.executors.external import Cancellation
 from evalscope.perf.executors.urls import normalize_chat_url
 from evalscope.perf.experiments.prefix_workload import PrefixWorkload
+from evalscope.perf.experiments.stream_probe import request_stream_completion
 from evalscope.utils import BaseArgument
 
 
@@ -24,49 +24,6 @@ class PrimingResult(BaseArgument):
     failed_prefix_id: Optional[int] = None
     reason: Optional[str] = None
     routing_coverage: Literal['unknown'] = 'unknown'
-
-
-async def _send_primer(session: aiohttp.ClientSession, url: str, model: str, text: str) -> str:
-    payload = {
-        'model': model,
-        'messages': [{'role': 'user', 'content': text}],
-        'stream': True,
-        'max_completion_tokens': 1,
-    }
-    try:
-        async with session.post(url, json=payload, allow_redirects=False) as response:
-            if response.status < 200 or response.status >= 300:
-                return 'http_error'
-            finished = False
-            async for line in response.content:
-                line = line.strip()
-                if not line.startswith(b'data:'):
-                    continue
-                payload_data = line[5:].strip()
-                if payload_data == b'[DONE]':
-                    return 'completed' if finished else 'invalid_stream'
-                try:
-                    value = json.loads(payload_data)
-                except (ValueError, UnicodeError):
-                    return 'invalid_stream'
-                if not isinstance(value, dict) or 'error' in value:
-                    return 'invalid_stream'
-                choices = value.get('choices')
-                if choices is not None and not isinstance(choices, list):
-                    return 'invalid_stream'
-                if choices:
-                    for choice in choices:
-                        if not isinstance(choice, dict):
-                            return 'invalid_stream'
-                        reason = choice.get('finish_reason')
-                        if reason is not None and reason not in ('stop', 'length'):
-                            return 'invalid_stream'
-                        finished = finished or reason in ('stop', 'length')
-            return 'incomplete_stream'
-    except asyncio.TimeoutError:
-        return 'timeout'
-    except (aiohttp.ClientError, OSError, ValueError):
-        return 'transport_error'
 
 
 async def prime_prefixes(
@@ -100,7 +57,7 @@ async def prime_prefixes(
             parent = multiprocessing.parent_process()
             if (cancel_event is not None and cancel_event.is_set()) or (parent is not None and not parent.is_alive()):
                 return PrimingResult(status='cancelled', completed_prefix_ids=completed, reason='cancelled')
-            task = asyncio.create_task(_send_primer(session, url, arguments.model, primer.text))
+            task = asyncio.create_task(request_stream_completion(session, url, arguments.model, primer.text, 1))
             try:
                 while not task.done():
                     if (cancel_event is not None and cancel_event.is_set()) or (

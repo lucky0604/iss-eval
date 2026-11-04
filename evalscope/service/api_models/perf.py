@@ -206,6 +206,18 @@ class CacheSubrunState(ApiResponseModel):
     status: Literal['not_started', 'running', 'completed', 'cancelled', 'error']
     quality: Optional[Literal['complete', 'partial', 'invalid']] = None
     scenario: Optional[str] = None
+    input_tokens: Optional[int] = None
+
+
+class CacheWarmupState(ApiResponseModel):
+    status: Literal['completed', 'failed', 'cancelled']
+    reason: Optional[str] = None
+    request_count: Optional[int] = None
+    completed_requests: Optional[int] = None
+    failed_requests: Optional[int] = None
+    concurrency: Optional[int] = None
+    total_input_tokens: Optional[int] = None
+    output_token_limit: Optional[int] = None
 
 
 class CacheExperimentState(ApiResponseModel):
@@ -218,6 +230,7 @@ class CacheExperimentState(ApiResponseModel):
     completed_subruns: int = Field(ge=0)
     total_subruns: int = Field(ge=0)
     quality: Optional[Literal['complete', 'partial', 'invalid']] = None
+    warmup: Optional[CacheWarmupState] = None
     subruns: List[CacheSubrunState]
 
 
@@ -246,6 +259,7 @@ class CacheScenarioResponse(ApiResponseModel):
     subrun_id: str
     status: str
     target_ratio: float
+    workload_mode: Optional[Literal['token_prefix_ratio', 'synthetic_isl']] = None
     generated_ratio: Optional[float] = None
     generated_count: int = Field(ge=0)
     input_tokens_per_request: Optional[int] = None

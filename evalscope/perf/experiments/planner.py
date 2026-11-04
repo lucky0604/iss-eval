@@ -7,7 +7,13 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import Field
 
-from evalscope.perf.executors.arguments import AIPerfArguments, CacheExperiment, LoadConfiguration, LoadPoint
+from evalscope.perf.executors.arguments import (
+    AIPerfArguments,
+    CacheExperiment,
+    LoadConfiguration,
+    LoadPoint,
+    cache_identity_payload,
+)
 from evalscope.perf.executors.urls import normalize_chat_url
 from evalscope.perf.integrations.aiperf.single_run import validate_single_run_configuration
 from evalscope.utils import BaseArgument
@@ -27,6 +33,7 @@ class CacheSubrunPlan(BaseArgument):
     request_count: int
     primer_requests: int
     output_token_limit: Optional[int] = None
+    input_tokens: Optional[int] = None
 
 
 class PlannedMetricNode(BaseArgument):
@@ -74,8 +81,10 @@ class CacheExperimentPlan(BaseArgument):
     subruns: List[CacheSubrunPlan]
     profiling_requests: int = Field(ge=0)
     primer_requests: int = Field(ge=0)
+    warmup_requests: int = Field(default=0, ge=0)
     max_profiling_output_tokens: Optional[int] = Field(default=None, ge=0)
     max_primer_output_tokens: Optional[int] = Field(default=None, ge=0)
+    max_warmup_output_tokens: Optional[int] = Field(default=None, ge=0)
 
 
 def plan_cache_experiment(
@@ -94,7 +103,8 @@ def plan_cache_experiment(
         raise ValueError('Duplicate target ratios are not supported')
     if len({point.model_dump_json() for point in arguments.load.points}) != len(arguments.load.points):
         raise ValueError('Duplicate load points are not supported')
-    size = len(cache.target_ratios) * len(arguments.load.points) * arguments.load.repetitions
+    input_lengths = cache.input_lengths
+    size = len(input_lengths) * len(cache.target_ratios) * len(arguments.load.points) * arguments.load.repetitions
     if size > 10000:
         raise ValueError('Experiment exceeds the maximum of 10000 subruns')
     if any(ratio > 0 for ratio in cache.target_ratios) and cache.prefix_pool_size > arguments.load.request_count:
@@ -109,38 +119,42 @@ def plan_cache_experiment(
         'template_id': template_id,
         'stream': arguments.stream,
         'deployment_mode': arguments.deployment_mode,
-        'cache': cache.model_dump(mode='json'),
+        'cache': cache_identity_payload(cache),
         'load': arguments.load.model_dump(mode='json'),
         'telemetry': arguments.telemetry.model_dump(mode='json', exclude={'targets': {'__all__': {'headers'}}}),
     }
     configuration = CachePlanConfiguration.model_validate(identity)
     config_hash = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     members = []
-    for ratio_index, ratio in enumerate(cache.target_ratios):
-        for load_index, point in enumerate(arguments.load.points):
-            for repetition in range(arguments.load.repetitions):
-                subrun_id = f'r{ratio_index:03d}-l{load_index:03d}-n{repetition:03d}'
-                namespace = hashlib.sha256(f'{config_hash}:{subrun_id}'.encode()).hexdigest()
-                members.append(
-                    CacheSubrunPlan(
-                        subrun_id=subrun_id,
-                        order=0,
-                        target_ratio=ratio,
-                        load_mode=arguments.load.mode,
-                        load_point=point,
-                        repetition=repetition,
-                        seed=cache.seed,
-                        namespace=namespace,
-                        request_count=arguments.load.request_count,
-                        primer_requests=cache.prefix_pool_size if ratio else 0,
-                        output_token_limit=arguments.load.output_token_limit,
+    for input_index, input_tokens in enumerate(input_lengths):
+        input_prefix = f'i{input_index:03d}-' if len(input_lengths) > 1 else ''
+        for ratio_index, ratio in enumerate(cache.target_ratios):
+            for load_index, point in enumerate(arguments.load.points):
+                for repetition in range(arguments.load.repetitions):
+                    subrun_id = f'{input_prefix}r{ratio_index:03d}-l{load_index:03d}-n{repetition:03d}'
+                    namespace = hashlib.sha256(f'{config_hash}:{subrun_id}'.encode()).hexdigest()
+                    members.append(
+                        CacheSubrunPlan(
+                            subrun_id=subrun_id,
+                            order=0,
+                            target_ratio=ratio,
+                            load_mode=arguments.load.mode,
+                            load_point=point,
+                            repetition=repetition,
+                            seed=cache.seed,
+                            namespace=namespace,
+                            request_count=arguments.load.request_count,
+                            primer_requests=cache.prefix_pool_size if ratio else 0,
+                            output_token_limit=arguments.load.output_token_limit,
+                            input_tokens=input_tokens,
+                        )
                     )
-                )
     random.Random(cache.seed).shuffle(members)
     for index, member in enumerate(members):
         member.order = index
     payload = {'config_hash': config_hash, 'subruns': [member.model_dump(mode='json') for member in members]}
     plan_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    warmup = cache.warmup
     return CacheExperimentPlan(
         plan_hash=plan_hash,
         configuration_hash=config_hash,
@@ -150,6 +164,8 @@ def plan_cache_experiment(
         subruns=members,
         profiling_requests=sum(member.request_count for member in members),
         primer_requests=sum(member.primer_requests for member in members),
+        warmup_requests=warmup.request_count if warmup else 0,
         max_profiling_output_tokens=sum(member.request_count * arguments.load.output_token_limit for member in members),
         max_primer_output_tokens=sum(member.primer_requests for member in members),
+        max_warmup_output_tokens=warmup.request_count * warmup.output_token_limit if warmup else 0,
     )

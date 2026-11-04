@@ -328,11 +328,14 @@ completed: {{ experiment.state.completed_subruns }}/{{ experiment.state.total_su
 Node windows include shared traffic and are not per-request P/D timings. Deployment metric semantics,
 chat-template match and routing coverage are unverified.</p>
 <p>Plan: {{ experiment.plan.plan_hash }}; configuration: {{ experiment.plan.configuration_hash }};
-tokenizer: {{ experiment.plan.tokenizer_id }}; template: {{ experiment.plan.template_id }}.</p>
-<table border="1"><thead><tr><th>Run</th><th>Load mode</th><th>Load</th><th>Repetition</th>
+tokenizer: {{ experiment.plan.tokenizer_id }}; template: {{ experiment.plan.template_id }}.
+Workload: {{ experiment.plan.configuration.cache.mode if experiment.plan.configuration else 'unavailable' }};
+warmup requests: {{ experiment.plan.warmup_requests }}.</p>
+<table border="1"><thead><tr><th>Run</th><th>Input tokens</th><th>Load mode</th><th>Load</th><th>Repetition</th>
 <th>Status</th><th>Target reuse</th><th>Generated reuse</th><th>Server cache reads</th>
 <th>Observed requests</th><th>Quality reasons / client metrics / node windows</th></tr></thead><tbody>
-{% for item, state, scenario, request_groups, requests in rows %}<tr><td>{{ item.subrun_id }}</td><td>{{ item.load_mode }}</td>
+{% for item, state, scenario, request_groups, requests in rows %}<tr><td>{{ item.subrun_id }}</td>
+<td>{{ item.input_tokens if item.input_tokens is not none else 'unavailable' }}</td><td>{{ item.load_mode }}</td>
 <td>{{ item.load_point.concurrency if item.load_point.concurrency is not none else item.load_point.rate }}</td>
 <td>{{ item.repetition + 1 }}</td><td>{{ state.status }}</td><td>{{ item.target_ratio }}</td>
 <td>{{ scenario.generated_ratio if scenario and scenario.generated_ratio is not none else 'unavailable' }}</td>
@@ -647,15 +650,32 @@ def _validate_cache_geometry(arguments: AIPerfArguments, tokenizer: HuggingFaceP
     if cache is None:
         raise ValueError('Cache experiment required')
     candidates = tokenizer.candidate_ids(2)
-    for ratio in cache.target_ratios:
+    for input_tokens in cache.input_lengths:
+        for ratio in cache.target_ratios:
+            validate_prefix_geometry(
+                PrefixWorkloadArguments(
+                    target_ratio=ratio,
+                    total_input_tokens=input_tokens,
+                    request_count=arguments.load.request_count,
+                    prefix_pool_size=cache.prefix_pool_size,
+                    seed=cache.seed,
+                    namespace='preflight',
+                    tokenizer_id=tokenizer.tokenizer_hash,
+                    template_id=tokenizer.template_hash,
+                ),
+                tokenizer,
+                candidates,
+                check_zero_leaders=False,
+            )
+    if cache.warmup is not None:
         validate_prefix_geometry(
             PrefixWorkloadArguments(
-                target_ratio=ratio,
-                total_input_tokens=cache.total_input_tokens,
-                request_count=arguments.load.request_count,
-                prefix_pool_size=cache.prefix_pool_size,
+                target_ratio=0,
+                total_input_tokens=cache.warmup.total_input_tokens,
+                request_count=cache.warmup.request_count,
+                prefix_pool_size=1,
                 seed=cache.seed,
-                namespace='preflight',
+                namespace='preflight-warmup',
                 tokenizer_id=tokenizer.tokenizer_hash,
                 template_id=tokenizer.template_hash,
             ),

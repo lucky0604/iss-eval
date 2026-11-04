@@ -44,18 +44,29 @@ class LoadConfiguration(BaseArgument):
         return self
 
 
+class WarmupConfiguration(BaseArgument):
+    """Synthetic pre-run traffic sent once before a cache experiment matrix."""
+
+    request_count: StrictInt = Field(gt=0)
+    concurrency: StrictInt = Field(gt=0)
+    total_input_tokens: StrictInt = Field(gt=0)
+    output_token_limit: StrictInt = Field(gt=0)
+
+
 class CacheExperiment(BaseArgument):
     """Target prefix reuse, independent of generated reuse or observed cache hits."""
 
-    mode: Literal['token_prefix_ratio'] = 'token_prefix_ratio'
+    mode: Literal['token_prefix_ratio', 'synthetic_isl'] = 'token_prefix_ratio'
     target_ratios: List[float] = Field(min_length=1)
     total_input_tokens: StrictInt = Field(gt=0)
+    input_token_values: Optional[List[StrictInt]] = None
     prefix_pool_size: StrictInt = Field(default=1, gt=0)
     seed: StrictInt = 42
     warmup_policy: Literal['prime_all_prefixes'] = 'prime_all_prefixes'
     cache_state_policy: Literal['fresh_namespace'] = 'fresh_namespace'
     routing_policy: Literal['router_native'] = 'router_native'
     routing_coverage: Literal['observed'] = 'observed'
+    warmup: Optional[WarmupConfiguration] = None
 
     @field_validator('target_ratios', mode='before')
     @classmethod
@@ -69,6 +80,28 @@ class CacheExperiment(BaseArgument):
         ):
             raise ValueError('target ratios must be finite numbers between 0 and 1')
         return value
+
+    @field_validator('input_token_values')
+    @classmethod
+    def validate_input_token_values(cls, value: Optional[List[int]]) -> Optional[List[int]]:
+        if value is None:
+            return None
+        if any(item <= 0 for item in value) or len(set(value)) != len(value):
+            raise ValueError('input token values must be distinct positive integers')
+        return value
+
+    @model_validator(mode='after')
+    def validate_workload(self) -> 'CacheExperiment':
+        if self.input_token_values is not None and self.input_token_values[0] != self.total_input_tokens:
+            raise ValueError('total input tokens must match the first input token value')
+        if self.mode == 'synthetic_isl' and any(ratio != 0 for ratio in self.target_ratios):
+            raise ValueError('synthetic no-reuse baseline requires target ratios of zero')
+        return self
+
+    @property
+    def input_lengths(self) -> List[int]:
+        """Return the input lengths expanded into the experiment matrix."""
+        return list(self.input_token_values) if self.input_token_values is not None else [self.total_input_tokens]
 
 
 class TelemetryTarget(BaseArgument):
@@ -196,6 +229,15 @@ class PerfTaskArguments(BaseArgument):
         ):
             raise ValueError('exactly one matching executor configuration is required')
         return self
+
+
+def cache_identity_payload(cache: CacheExperiment) -> Dict[str, Any]:
+    """Serialize only fields that existed or are set, preserving legacy plan hashes."""
+    data = cache.model_dump(mode='json')
+    for key in ('input_token_values', 'warmup'):
+        if data.get(key) is None:
+            data.pop(key, None)
+    return data
 
 
 def parse_perf_task_arguments(payload: Dict[str, Any]) -> PerfTaskArguments:

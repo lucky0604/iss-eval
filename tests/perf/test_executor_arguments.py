@@ -103,6 +103,50 @@ def test_invalid_envelopes_are_rejected(payload: dict, change: Callable[[dict], 
         parse_perf_task_arguments(changed)
 
 
+def test_input_lengths_and_generic_warmup_are_typed(payload: dict) -> None:
+    config = payload['aiperf']
+    config['cache_experiment'].update(
+        {
+            'input_token_values': [100, 8000],
+            'warmup': {
+                'request_count': 3,
+                'concurrency': 1,
+                'total_input_tokens': 16000,
+                'output_token_limit': 1000,
+            },
+        }
+    )
+    args = parse_perf_task_arguments(payload).aiperf
+    assert args is not None and args.cache_experiment is not None
+    assert args.cache_experiment.input_lengths == [100, 8000]
+    assert args.cache_experiment.warmup is not None
+    assert args.cache_experiment.warmup.request_count == 3
+
+
+@pytest.mark.parametrize('change', [
+    lambda c: c.update(input_token_values=[8000, 100]),
+    lambda c: c.update(input_token_values=[100, 100]),
+    lambda c: c.update(input_token_values=[100, 0]),
+    lambda c: c.update(input_token_values=[200]),
+    lambda c: c.update(mode='synthetic_isl', target_ratios=[0.8]),
+    lambda c: c.update(warmup={'request_count': True, 'concurrency': 1, 'total_input_tokens': 1, 'output_token_limit': 1}),
+])
+def test_invalid_input_lengths_and_baseline_are_rejected(payload: dict, change: Callable[[dict], None]) -> None:
+    config = payload['aiperf']['cache_experiment']
+    change(config)
+    with pytest.raises((ValueError, ValidationError)):
+        parse_perf_task_arguments(payload)
+
+
+def test_synthetic_baseline_uses_zero_ratios(payload: dict) -> None:
+    config = payload['aiperf']['cache_experiment']
+    config.update(mode='synthetic_isl', target_ratios=[0])
+    args = parse_perf_task_arguments(payload).aiperf
+    assert args is not None and args.cache_experiment is not None
+    assert args.cache_experiment.mode == 'synthetic_isl'
+    assert args.cache_experiment.input_lengths == [100]
+
+
 def test_single_run_inline_prompts_must_match_the_request_budget(payload: dict) -> None:
     config = payload['aiperf']
     config['cache_experiment'] = None

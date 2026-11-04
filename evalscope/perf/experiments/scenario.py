@@ -44,6 +44,7 @@ class CacheScenarioArguments(BaseArgument):
     tokenizer_id: str = Field(min_length=1)
     template_id: str = Field(min_length=1)
     tolerance_tokens: int = Field(default=0, ge=0, strict=True)
+    input_tokens: Optional[int] = Field(default=None, gt=0, strict=True)
 
     @field_validator('target_ratio', mode='before')
     @classmethod
@@ -91,6 +92,9 @@ def run_cache_scenario(
     cache_config = arguments.cache_experiment
     if cache_config is None or scenario.target_ratio not in cache_config.target_ratios:
         raise ValueError('Scenario target is not in the configured cache experiment')
+    input_tokens = scenario.input_tokens if scenario.input_tokens is not None else cache_config.total_input_tokens
+    if input_tokens not in cache_config.input_lengths:
+        raise ValueError('Scenario input length is not in the configured cache experiment')
     if getattr(tokenizer, 'tokenizer_hash', scenario.tokenizer_id) != scenario.tokenizer_id:
         raise ValueError('Tokenizer identity does not match the scenario')
     if getattr(tokenizer, 'template_hash', scenario.template_id) != scenario.template_id:
@@ -107,6 +111,8 @@ def run_cache_scenario(
         'schema_version': '1.0',
         'status': 'preflight',
         'target_ratio': scenario.target_ratio,
+        'input_tokens': input_tokens,
+        'workload_mode': cache_config.mode,
         'namespace': scenario.namespace,
         'routing_coverage': 'unknown',
         'template_match': 'unverified',
@@ -161,7 +167,7 @@ def run_cache_scenario(
         publish()
         plan = PrefixWorkloadArguments(
             target_ratio=scenario.target_ratio,
-            total_input_tokens=cache_config.total_input_tokens,
+            total_input_tokens=input_tokens,
             request_count=arguments.load.request_count,
             prefix_pool_size=cache_config.prefix_pool_size,
             seed=cache_config.seed,
@@ -312,7 +318,9 @@ def run_cache_scenario(
                 'import_completed_ns': time.time_ns(),
             }
         )
-        quality_reasons = [*result.quality_reasons, 'template_match_unverified', 'routing_coverage_unknown']
+        quality_reasons = [*result.quality_reasons, 'template_match_unverified']
+        if cache_config.mode == 'token_prefix_ratio':
+            quality_reasons.append('routing_coverage_unknown')
         if result.profiling_requests != arguments.load.request_count:
             quality_reasons.append('planned_request_count_mismatch')
         quality_reasons.append(

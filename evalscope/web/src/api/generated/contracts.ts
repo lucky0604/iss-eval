@@ -198,6 +198,7 @@ export interface CacheExperimentPlan {
   configuration_hash: string;
   max_primer_output_tokens?: number | null;
   max_profiling_output_tokens?: number | null;
+  max_warmup_output_tokens?: number | null;
   plan_hash: string;
   primer_requests: number;
   profiling_requests: number;
@@ -205,6 +206,7 @@ export interface CacheExperimentPlan {
   subruns: CacheSubrunPlan[];
   template_id: string;
   tokenizer_id: string;
+  warmup_requests?: number;
 }
 /**
  * Reproducible configuration without inference or telemetry credentials.
@@ -227,7 +229,8 @@ export interface CachePlanConfiguration {
  */
 export interface CacheExperiment {
   cache_state_policy?: "fresh_namespace";
-  mode?: "token_prefix_ratio";
+  input_token_values?: number[] | null;
+  mode?: "token_prefix_ratio" | "synthetic_isl";
   prefix_pool_size?: number;
   routing_coverage?: "observed";
   routing_policy?: "router_native";
@@ -237,7 +240,17 @@ export interface CacheExperiment {
    */
   target_ratios: [number, ...number[]];
   total_input_tokens: number;
+  warmup?: WarmupConfiguration | null;
   warmup_policy?: "prime_all_prefixes";
+}
+/**
+ * Synthetic pre-run traffic sent once before a cache experiment matrix.
+ */
+export interface WarmupConfiguration {
+  concurrency: number;
+  output_token_limit: number;
+  request_count: number;
+  total_input_tokens: number;
 }
 /**
  * Load points and budgets shared by all experiment scenarios.
@@ -281,6 +294,7 @@ export interface PlannedMetricNode {
  * One uniquely named, independently seeded matrix member.
  */
 export interface CacheSubrunPlan {
+  input_tokens?: number | null;
   load_mode: "closed_loop" | "open_loop";
   load_point: LoadPoint;
   namespace: string;
@@ -304,12 +318,24 @@ export interface CacheExperimentState {
   status: "running" | "completed" | "stopped" | "error" | "unknown";
   subruns: CacheSubrunState[];
   total_subruns: number;
+  warmup?: CacheWarmupState | null;
 }
 export interface CacheSubrunState {
+  input_tokens?: number | null;
   quality?: ("complete" | "partial" | "invalid") | null;
   scenario?: string | null;
   status: "not_started" | "running" | "completed" | "cancelled" | "error";
   subrun_id: string;
+}
+export interface CacheWarmupState {
+  completed_requests?: number | null;
+  concurrency?: number | null;
+  failed_requests?: number | null;
+  output_token_limit?: number | null;
+  reason?: string | null;
+  request_count?: number | null;
+  status: "completed" | "failed" | "cancelled";
+  total_input_tokens?: number | null;
 }
 export interface CacheNodeMetricsResponse {
   aggregation?: "raw";
@@ -462,6 +488,7 @@ export interface CacheScenarioResponse {
   status: string;
   subrun_id: string;
   target_ratio: number;
+  workload_mode?: ("token_prefix_ratio" | "synthetic_isl") | null;
 }
 /**
  * Server-reported cache-read token totals and their actual coverage.

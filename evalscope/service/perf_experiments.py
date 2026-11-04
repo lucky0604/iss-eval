@@ -7,13 +7,14 @@ import os
 import re
 from typing import Any, Dict, Tuple
 
+from evalscope.perf.executors.arguments import cache_identity_payload
 from evalscope.perf.experiments.planner import CacheExperimentPlan, CacheSubrunPlan
 from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis
 from evalscope.perf.results.aiperf_import import load_aiperf_run, observed_cache_usage
 from evalscope.service.api_models import CacheExperimentResponse, CacheRepetitionsResponse, CacheScenarioResponse
 from evalscope.service.utils import active_task_ids, task_file_path, validate_task_id
 
-_SUBRUN = re.compile(r'^r\d{3,}-l\d{3,}-n\d{3,}$')
+_SUBRUN = re.compile(r'^(i\d{3,}-)?r\d{3,}-l\d{3,}-n\d{3,}$')
 
 
 def _read(task_id: str, subpath: str) -> Dict[str, Any]:
@@ -40,6 +41,7 @@ def load_experiment(task_id: str) -> CacheExperimentResponse:
     plan = CacheExperimentPlan.model_validate(raw_plan)
     if plan.configuration is not None:
         identity = plan.configuration.model_dump(mode='json')
+        identity['cache'] = cache_identity_payload(plan.configuration.cache)
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         if identity['task_id'] != task_id or digest != plan.configuration_hash:
             raise ValueError('Experiment configuration does not match its identity')
@@ -89,6 +91,7 @@ def load_repetition_page(
     def dimensions(row: CacheSubrunPlan) -> tuple:
         return (
             row.target_ratio,
+            row.input_tokens,
             row.load_mode,
             row.load_point.concurrency,
             row.load_point.rate,
@@ -115,7 +118,15 @@ def load_repetition_page(
         try:
             normalized = _scenario_normalized_path(task_id, row)
             document = _read(task_id, f'perf/runs/{row.subrun_id}/scenario.json')
-            if document.get('target_ratio') != row.target_ratio or document.get('normalized') != 'normalized':
+            if (
+                document.get('target_ratio') != row.target_ratio
+                or (
+                    row.input_tokens is not None
+                    and document.get('input_tokens') is not None
+                    and document.get('input_tokens') != row.input_tokens
+                )
+                or document.get('normalized') != 'normalized'
+            ):
                 raise ValueError('Invalid normalized scenario')
             result = load_aiperf_run(normalized)
             item.update(quality=result.quality, engine=result.engine, executor_version=result.executor_version)
@@ -176,6 +187,12 @@ def _load_scenario(task_id: str, item: CacheSubrunPlan, normalized: str) -> Cach
     state = _read(task_id, f'perf/runs/{subrun_id}/scenario.json')
     if state.get('target_ratio') != item.target_ratio:
         raise ValueError('Scenario target does not match plan')
+    if (
+        item.input_tokens is not None
+        and state.get('input_tokens') is not None
+        and state.get('input_tokens') != item.input_tokens
+    ):
+        raise ValueError('Scenario input length does not match plan')
     workload = state.get('workload')
     requests = workload.get('requests', []) if isinstance(workload, dict) else []
     if not isinstance(requests, list) or len(requests) > item.request_count:
@@ -226,6 +243,7 @@ def _load_scenario(task_id: str, item: CacheSubrunPlan, normalized: str) -> Cach
         subrun_id=subrun_id,
         status=str(state.get('status', 'unknown')),
         target_ratio=item.target_ratio,
+        workload_mode=state.get('workload_mode'),
         generated_ratio=ratio,
         generated_count=count,
         input_tokens_per_request=token_count,

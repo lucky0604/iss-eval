@@ -288,3 +288,80 @@ def test_invalid_workload_log_does_not_follow_redirects_or_block(
     outcome = run_cache_experiment(_config(), context, _Tokenizer(), list(range(200)), 'tokenizer', 'template')
     assert outcome.status == 'error' and outcome.cleanup_confirmed
     assert destination.read_text() == 'unchanged'
+
+
+def _warmup_arguments():
+    from evalscope.perf.executors.arguments import WarmupConfiguration
+
+    arguments = _config()
+    assert arguments.cache_experiment is not None
+    arguments.cache_experiment.warmup = WarmupConfiguration(
+        request_count=3, concurrency=1, total_input_tokens=20, output_token_limit=5
+    )
+    return arguments
+
+
+def test_failed_warmup_blocks_the_matrix_and_records_its_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import evalscope.perf.experiments.orchestrator as module
+    from evalscope.perf.experiments.warmup import WarmupResult
+
+    calls = []
+
+    async def warmup(*args, **kwargs) -> WarmupResult:
+        return WarmupResult(status='failed', request_count=3, completed_requests=1, failed_requests=2,
+                            concurrency=1, total_input_tokens=20, output_token_limit=5, reason='http_error')
+
+    monkeypatch.setattr(module, 'run_warmup', warmup)
+    monkeypatch.setattr(module, 'run_cache_scenario', lambda *args, **kwargs: calls.append(True))
+    context = ExecutionContext(task_id='task', output_dir=str(tmp_path), runtime=ExternalRuntime(executable='/aiperf'))
+    outcome = run_cache_experiment(_warmup_arguments(), context, _Tokenizer(), list(range(200)), 'tokenizer', 'template')
+    manifest = json.loads((tmp_path / 'experiment.json').read_text())
+    assert outcome.status == 'error' and outcome.quality == 'invalid' and outcome.completed_subruns == 0
+    assert not calls and list((tmp_path / 'runs').iterdir()) == []
+    assert all(row['status'] == 'not_started' for row in manifest['subruns'])
+    assert manifest['status'] == 'error' and manifest['quality'] == 'invalid'
+    assert manifest['last_phase'] == 'warmup' and manifest['phase'] is None
+    assert manifest['warmup']['status'] == 'failed' and manifest['warmup']['reason'] == 'http_error'
+
+
+def test_completed_warmup_precedes_every_subrun(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import evalscope.perf.experiments.orchestrator as module
+    from evalscope.perf.experiments.warmup import WarmupResult
+
+    order = []
+
+    async def warmup(*args, **kwargs) -> WarmupResult:
+        order.append('warmup')
+        return WarmupResult(status='completed', request_count=3, completed_requests=3, failed_requests=0,
+                            concurrency=1, total_input_tokens=20, output_token_limit=5)
+
+    def scenario(*args, **kwargs) -> CacheScenarioOutcome:
+        order.append('scenario')
+        return CacheScenarioOutcome(status='completed', quality='partial', cleanup_confirmed=True)
+
+    monkeypatch.setattr(module, 'run_warmup', warmup)
+    monkeypatch.setattr(module, 'run_cache_scenario', scenario)
+    context = ExecutionContext(task_id='task', output_dir=str(tmp_path), runtime=ExternalRuntime(executable='/aiperf'))
+    outcome = run_cache_experiment(_warmup_arguments(), context, _Tokenizer(), list(range(200)), 'tokenizer', 'template')
+    manifest = json.loads((tmp_path / 'experiment.json').read_text())
+    assert outcome.status == 'completed' and outcome.completed_subruns == outcome.total_subruns == 18
+    assert order[0] == 'warmup' and order.count('scenario') == 18
+    assert manifest['warmup']['status'] == 'completed' and manifest['warmup']['completed_requests'] == 3
+    assert manifest['quality'] == 'partial' and manifest['phase'] is None
+
+
+def test_warmup_preflight_failure_marks_the_experiment_invalid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import evalscope.perf.experiments.orchestrator as module
+
+    def broken(*args, **kwargs) -> None:
+        raise ValueError('unrepresentable warmup workload')
+
+    monkeypatch.setattr(module, 'build_prefix_workload', broken)
+    context = ExecutionContext(task_id='task', output_dir=str(tmp_path), runtime=ExternalRuntime(executable='/aiperf'))
+    outcome = run_cache_experiment(_warmup_arguments(), context, _Tokenizer(), list(range(200)), 'tokenizer', 'template')
+    manifest = json.loads((tmp_path / 'experiment.json').read_text())
+    assert outcome.status == 'error' and outcome.quality == 'invalid'
+    assert manifest['warmup'] == {'status': 'failed', 'reason': 'invalid_warmup_workload'}
+    assert manifest['last_phase'] == 'warmup' and manifest['quality'] == 'invalid'

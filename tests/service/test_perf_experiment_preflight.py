@@ -113,6 +113,28 @@ def test_plan_configuration_is_verified_and_legacy_plan_remains_readable(client,
     assert legacy.status_code == 200 and legacy.json['plan'].get('configuration') is None
 
 
+def test_multi_input_plan_is_readable_and_keeps_prefixed_ids(client, tmp_path: Path) -> None:
+    from evalscope.perf.experiments.planner import plan_cache_experiment
+
+    config = _config()
+    assert config.cache_experiment is not None
+    config.cache_experiment.input_token_values = [100, 200]
+    plan = plan_cache_experiment(config, 'multi', 'tokenizer', 'template')
+    root = tmp_path / 'multi' / 'perf'
+    root.mkdir(parents=True)
+    state = {'schema_version': '1.0', 'plan_hash': plan.plan_hash, 'status': 'stopped', 'quality': 'partial',
+             'completed_subruns': 0, 'total_subruns': len(plan.subruns),
+             'subruns': [{'subrun_id': row.subrun_id, 'status': 'not_started', 'input_tokens': row.input_tokens}
+                         for row in plan.subruns]}
+    (root / 'experiment.json').write_text(json.dumps(state))
+    (root / 'experiment_plan.json').write_text(json.dumps(plan.model_dump(mode='json')))
+    response = client.get('/api/v1/perf/experiments/multi')
+    assert response.status_code == 200
+    rows = response.json['state']['subruns']
+    assert len(rows) == 36 and {row['input_tokens'] for row in rows} == {100, 200}
+    assert all(row['subrun_id'].startswith(('i000-', 'i001-')) for row in rows)
+
+
 def test_live_metrics_use_current_planned_subrun_and_reject_redirected_files(client, tmp_path: Path) -> None:
     from evalscope.perf.executors.arguments import TelemetryTarget
     from evalscope.perf.experiments.planner import plan_cache_experiment

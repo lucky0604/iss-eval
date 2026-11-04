@@ -1,17 +1,24 @@
 """Serial execution of a reproducible prefix-cache experiment matrix."""
 
+import asyncio
 import os
 import stat
 from pathlib import Path
-from typing import Literal, Optional, Sequence
+from typing import Any, Dict, Literal, Optional, Sequence
 
 from evalscope.perf.executors.arguments import AIPerfArguments
 from evalscope.perf.executors.external import Cancellation
 from evalscope.perf.executors.models import ExecutionContext
 from evalscope.perf.experiments.planner import plan_cache_experiment
-from evalscope.perf.experiments.prefix_workload import PrefixTokenizer
+from evalscope.perf.experiments.prefix_workload import (
+    PrefixTokenizer,
+    PrefixWorkloadArguments,
+    WorkloadCancelled,
+    build_prefix_workload,
+)
 from evalscope.perf.experiments.scenario import CacheScenarioArguments, _ScenarioCancellation, run_cache_scenario
 from evalscope.perf.experiments.storage import write_experiment_json
+from evalscope.perf.experiments.warmup import run_warmup
 from evalscope.utils import BaseArgument
 
 
@@ -57,7 +64,15 @@ def run_cache_experiment(
     except BaseException:
         lock_path.unlink(missing_ok=True)
         raise
-    rows = [{'subrun_id': item.subrun_id, 'status': 'not_started', 'quality': None} for item in plan.subruns]
+    rows = [
+        {
+            'subrun_id': item.subrun_id,
+            'status': 'not_started',
+            'quality': None,
+            'input_tokens': item.input_tokens,
+        }
+        for item in plan.subruns
+    ]
     state = {
         'schema_version': '1.0',
         'plan_hash': plan.plan_hash,
@@ -73,6 +88,68 @@ def run_cache_experiment(
     cancellation = _ScenarioCancellation(cancel_event)
     status = 'completed'
     cleanup_confirmed = True
+
+    def finish(
+        final_status: Literal['completed', 'stopped', 'error'],
+        quality: Literal['partial', 'invalid'],
+        warmup_state: Optional[Dict[str, Any]] = None,
+    ) -> CacheExperimentOutcome:
+        state.update(
+            {
+                'status': final_status,
+                'last_phase': state.get('phase'),
+                'phase': None,
+                'current_subrun': None,
+                'quality': quality,
+            }
+        )
+        if warmup_state is not None:
+            state['warmup'] = warmup_state
+        write_experiment_json(manifest, state)
+        return CacheExperimentOutcome(
+            status=final_status,
+            quality=quality,
+            plan_hash=plan.plan_hash,
+            completed_subruns=state['completed_subruns'],
+            total_subruns=len(rows),
+            cleanup_confirmed=cleanup_confirmed,
+        )
+
+    cache = arguments.cache_experiment
+    if cache is not None and cache.warmup is not None:
+        warmup = cache.warmup
+        state.update({'phase': 'warmup'})
+        write_experiment_json(manifest, state)
+        try:
+            warmup_workload = build_prefix_workload(
+                PrefixWorkloadArguments(
+                    target_ratio=0,
+                    total_input_tokens=warmup.total_input_tokens,
+                    request_count=warmup.request_count,
+                    prefix_pool_size=1,
+                    seed=cache.seed,
+                    namespace=f'warmup:{plan.plan_hash}',
+                    tokenizer_id=tokenizer_id,
+                    template_id=template_id,
+                ),
+                tokenizer,
+                token_pool,
+                cancellation,
+            )
+            warmup_result = asyncio.run(run_warmup(arguments, warmup, warmup_workload, cancellation))
+        except WorkloadCancelled:
+            return finish('stopped', 'partial', {'status': 'cancelled', 'reason': 'cancelled'})
+        except Exception:
+            return finish('error', 'invalid', {'status': 'failed', 'reason': 'invalid_warmup_workload'})
+        if warmup_result.status != 'completed':
+            final_status: Literal['stopped', 'error'] = 'stopped' if warmup_result.status == 'cancelled' else 'error'
+            return finish(
+                final_status,
+                'partial' if final_status == 'stopped' else 'invalid',
+                warmup_result.model_dump(mode='json'),
+            )
+        state['warmup'] = warmup_result.model_dump(mode='json')
+        write_experiment_json(manifest, state)
     for index, item in enumerate(plan.subruns):
         if cancellation.is_set():
             status = 'stopped'
@@ -89,6 +166,7 @@ def run_cache_experiment(
             sub_context = context.model_copy(update={'output_dir': str(run_dir)})
             scenario = CacheScenarioArguments(
                 target_ratio=item.target_ratio,
+                input_tokens=item.input_tokens,
                 namespace=item.namespace,
                 tokenizer_id=tokenizer_id,
                 template_id=template_id,
@@ -147,21 +225,4 @@ def run_cache_experiment(
             cleanup_confirmed = False
             status = 'error'
             break
-    state.update(
-        {
-            'status': status,
-            'last_phase': state.get('phase'),
-            'phase': None,
-            'current_subrun': None,
-            'quality': 'invalid' if status == 'error' else 'partial',
-        }
-    )
-    write_experiment_json(manifest, state)
-    return CacheExperimentOutcome(
-        status=status,
-        quality='invalid' if status == 'error' else 'partial',
-        plan_hash=plan.plan_hash,
-        completed_subruns=state['completed_subruns'],
-        total_subruns=len(rows),
-        cleanup_confirmed=cleanup_confirmed,
-    )
+    return finish(status, 'invalid' if status == 'error' else 'partial')
