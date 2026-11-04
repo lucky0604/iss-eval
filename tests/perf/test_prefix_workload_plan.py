@@ -98,3 +98,63 @@ def test_local_huggingface_chat_template_is_rendered_and_hashed(tmp_path: Path) 
     assert len(adapter.template_hash) == 64
     assert workload.template_id == adapter.template_hash
     assert all(len(adapter.render(item.text)) == 20 and item.shared_tokens == 16 for item in workload.requests)
+
+
+def test_distinct_prefix_pool_is_checked_after_tokenizer_normalization() -> None:
+    class CollapsingTokenizer:
+        def decode(self, token_ids: Sequence[int]) -> str:
+            return ' '.join(f't{item}' for item in token_ids)
+
+        def render(self, text: str) -> list[int]:
+            return [10000, *(int(token[1:]) % 2 for token in text.split()), 10001]
+
+    arguments = PrefixWorkloadArguments(
+        target_ratio=.2, total_input_tokens=10, request_count=3, prefix_pool_size=3, seed=42,
+        namespace='normalization', tokenizer_id='fixture', template_id='template',
+    )
+    with pytest.raises(ValueError, match='distinct token prefix pool'):
+        build_prefix_workload(arguments, CollapsingTokenizer(), list(range(20)))
+
+    possible = arguments.model_copy(update={'prefix_pool_size': 2})
+    workload = build_prefix_workload(possible, CollapsingTokenizer(), list(range(20)))
+    prefixes = [tuple(CollapsingTokenizer().render(item.text)[:2]) for item in workload.primers]
+    assert len(set(prefixes)) == 2
+    rendered = [tuple(CollapsingTokenizer().render(item.text)) for item in workload.requests]
+    assert len(set(rendered)) == len(workload.requests)
+
+
+def test_distinct_texts_cannot_hide_duplicate_rendered_requests() -> None:
+    class CollapsingSuffixTokenizer:
+        def decode(self, token_ids: Sequence[int]) -> str:
+            return ' '.join(f't{item}' for item in token_ids)
+
+        def render(self, text: str) -> list[int]:
+            content = [int(token[1:]) % 2 for token in text.split()]
+            if len(content) > 1:
+                content[1:] = [0] * (len(content) - 1)
+            return [10000, *content, 10001]
+
+    arguments = PrefixWorkloadArguments(
+        target_ratio=.5, total_input_tokens=4, request_count=3, prefix_pool_size=2, seed=42,
+        namespace='duplicate', tokenizer_id='fixture', template_id='template',
+    )
+    with pytest.raises(ValueError, match='Tokenizer/template cannot produce'):
+        build_prefix_workload(arguments, CollapsingSuffixTokenizer(), list(range(20)))
+
+
+def test_content_dependent_template_header_cannot_change_reuse_silently() -> None:
+    class ConditionalHeaderTokenizer:
+        def decode(self, token_ids: Sequence[int]) -> str:
+            return ' '.join(f't{item}' for item in token_ids)
+
+        def render(self, text: str) -> list[int]:
+            content = [int(token[1:]) for token in text.split()]
+            header = 10001 if content and content[0] == 2 else 10000
+            return [header, *content, 10002]
+
+    arguments = PrefixWorkloadArguments(
+        target_ratio=0, total_input_tokens=5, request_count=3, prefix_pool_size=1, seed=42,
+        namespace='dynamic-header', tokenizer_id='fixture', template_id='template',
+    )
+    with pytest.raises(ValueError, match='Tokenizer/template cannot produce'):
+        build_prefix_workload(arguments, ConditionalHeaderTokenizer(), [0, 1, 2])

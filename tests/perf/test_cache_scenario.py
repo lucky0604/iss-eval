@@ -218,3 +218,30 @@ def test_real_aiperf_receives_the_generated_scenario(tmp_path: Path, ratio: floa
     hashes = {row['sha256'] for row in manifest['workload']['requests']}
     sent_hashes = {hashlib.sha256(item['body']['messages'][0]['content'].encode()).hexdigest() for item in sent[primers:]}
     assert hashes == sent_hashes and len(sent_hashes) == 6
+
+
+def test_normalized_prefix_collision_stops_before_any_requests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import evalscope.perf.experiments.scenario as module
+
+    class CollapsingTokenizer:
+        def decode(self, token_ids: list[int]) -> str:
+            return ' '.join(f't{item}' for item in token_ids)
+
+        def render(self, text: str) -> list[int]:
+            return [10000, *(int(token[1:]) % 2 for token in text.split()), 10001]
+
+    arguments = _config('http://127.0.0.1:1/v1')
+    arguments.cache_experiment.target_ratios = [.2]
+    arguments.cache_experiment.total_input_tokens = 10
+    arguments.cache_experiment.prefix_pool_size = 3
+    arguments.load.request_count = 3
+    launched = []
+    monkeypatch.setattr(module, 'probe_version', lambda *args: '0.13.0')
+    monkeypatch.setattr(module, 'prime_prefixes', lambda *args, **kwargs: launched.append('primer'))
+    monkeypatch.setattr(module, '_run_verified', lambda *args, **kwargs: launched.append('profiling'))
+    outcome = run_cache_scenario(arguments, _context(tmp_path), CacheScenarioArguments(
+        target_ratio=.2, namespace='collision', tokenizer_id='fixture', template_id='fixture-template',
+    ), CollapsingTokenizer(), list(range(20)))
+    assert outcome.status == 'error' and outcome.reason == 'invalid_prefix_workload'
+    assert outcome.cleanup_confirmed and launched == []
+    assert json.loads((tmp_path / 'scenario.json').read_text())['status'] == 'error'

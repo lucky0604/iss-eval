@@ -167,7 +167,14 @@ def run_cache_scenario(
             template_id=scenario.template_id,
             tolerance_tokens=scenario.tolerance_tokens,
         )
-        workload = build_prefix_workload(plan, tokenizer, token_pool, cancellation)
+        try:
+            workload = build_prefix_workload(plan, tokenizer, token_pool, cancellation)
+        except ValueError:
+            state.update({'status': 'error', 'reason': 'invalid_prefix_workload'})
+            publish()
+            return CacheScenarioOutcome(
+                status='error', quality='invalid', reason='invalid_prefix_workload', cleanup_confirmed=True
+            )
         state['workload'] = workload.model_dump(
             exclude={'primers': {'__all__': {'text'}}, 'requests': {'__all__': {'text'}}}
         )

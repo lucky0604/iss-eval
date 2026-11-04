@@ -144,13 +144,16 @@ def build_prefix_workload(
     randomizer = random.Random(int.from_bytes(seed, 'big'))
     header, budget = geometry.header_tokens, geometry.content_budget
     target, prefix_length = geometry.target_shared_tokens, geometry.prefix_content_tokens
+    header_prefix = tuple(tokenizer.render(tokenizer.decode([tokens[0]]))[:header])
 
     primers = []
     requests = []
-    rendered_requests: list[Sequence[int]] = []
+    rendered_requests: list[tuple[int, ...]] = []
     zero_ratio_prefixes: set[tuple[int, ...]] = set()
     seen_texts: set[str] = set()
+    seen_rendered: set[tuple[int, ...]] = set()
     used_prefixes: set[str] = set()
+    used_token_prefixes: set[tuple[int, ...]] = set()
     pool_size = arguments.prefix_pool_size if arguments.target_ratio else 0
     prefix_texts: list[str] = []
     primer_tokens: list[Sequence[int]] = []
@@ -162,13 +165,22 @@ def build_prefix_workload(
             if cancel_event is not None and cancel_event.is_set():
                 raise WorkloadCancelled()
             text = tokenizer.decode([randomizer.choice(tokens) for _ in range(prefix_length)])
-            if text and text not in used_prefixes:
-                break
+            if not text or text in used_prefixes:
+                continue
+            rendered = tokenizer.render(text)
+            token_prefix = tuple(rendered[:target])
+            if (
+                tuple(rendered[:header]) != header_prefix
+                or len(token_prefix) < target
+                or token_prefix in used_token_prefixes
+            ):
+                continue
+            break
         else:
-            raise ValueError('Unable to generate a distinct prefix pool')
+            raise ValueError('Tokenizer/template cannot generate a distinct token prefix pool')
         used_prefixes.add(text)
+        used_token_prefixes.add(token_prefix)
         prefix_texts.append(text)
-        rendered = tokenizer.render(text)
         primer_tokens.append(rendered)
         primers.append(
             PrefixWorkloadItem(
@@ -189,7 +201,15 @@ def build_prefix_workload(
             suffix = tokenizer.decode(suffix_ids)
             text = f'{prefix} {suffix}' if prefix else suffix
             rendered = tokenizer.render(text)
-            if not text or text in seen_texts or len(rendered) != arguments.total_input_tokens:
+            if (
+                not text
+                or text in seen_texts
+                or len(rendered) != arguments.total_input_tokens
+                or tuple(rendered[:header]) != header_prefix
+            ):
+                continue
+            rendered_key = tuple(rendered)
+            if rendered_key in seen_rendered:
                 continue
             shared = _common_prefix(primer_tokens[prefix_id], rendered) if prefix_id is not None else None
             if shared is not None and abs(shared - target) > arguments.tolerance_tokens:
@@ -200,9 +220,10 @@ def build_prefix_workload(
         else:
             raise ValueError('Tokenizer/template cannot produce the requested length and prefix within tolerance')
         seen_texts.add(text)
+        seen_rendered.add(rendered_key)
         if prefix_id is None:
             zero_ratio_prefixes.add(tuple(rendered[: header + 1]))
-        rendered_requests.append(rendered)
+        rendered_requests.append(rendered_key)
         requests.append(
             PrefixWorkloadItem(
                 index=index,
