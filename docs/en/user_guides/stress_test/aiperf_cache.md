@@ -92,8 +92,8 @@ Node attribution needs the original node references; omitting them leaves node i
 
 For rollback, stop active AIPerf tasks and wait for confirmed cleanup, then remove `EVALSCOPE_AIPERF_EXECUTABLE` from the service environment and restart it. Existing reports and raw artifacts remain readable; users can explicitly select EvalScope for new tests. Old v1 browser data is retained during migration, but old clients read their old v1 snapshot rather than subsequent v2 edits.
 
-The local rollback drill below uses the pinned AIPerf virtual environment and a loopback mock server. It checks that an archived AIPerf run remains readable after a fresh service app is created without the runtime, a new AIPerf task fails explicitly, and a manually selected native task sends and completes requests. It does not replace the server deployment drill.
+The local restart drill below launches a real Flask service process with the pinned AIPerf virtual environment and a loopback mock server, stops that process, and starts a second process on the same output root without `EVALSCOPE_AIPERF_EXECUTABLE`. It checks that the archived run remains readable through the listing, detail, run, request, chart and HTML endpoints, that the in-memory active-task registry is empty, that a new AIPerf task returns 503 without sending traffic, and that a legacy flat native payload still completes after the restart. It does not cover an abruptly terminated in-flight task, Linux process cleanup, containers, or the server deployment drill.
 
 ```bash
-EVALSCOPE_TEST_AIPERF="$AIPERF_VENV/bin/aiperf" "$FRAMEWORK_VENV/bin/python" -m pytest tests/service/test_aiperf_single_run.py::test_local_rollback_keeps_history_and_allows_explicit_native_run -q
+EVALSCOPE_TEST_AIPERF="$AIPERF_VENV/bin/aiperf" "$FRAMEWORK_VENV/bin/python" -m pytest tests/service/test_aiperf_service_restart.py -q
 ```

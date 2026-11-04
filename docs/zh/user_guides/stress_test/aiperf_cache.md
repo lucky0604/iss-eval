@@ -92,8 +92,8 @@ print(result.quality, result.quality_reasons)
 
 回滚时先停止活动 AIPerf 任务并等待清理确认，再从服务环境移除 `EVALSCOPE_AIPERF_EXECUTABLE` 并重启。已有报告与原始产物仍可读取，新任务可手动选择 EvalScope。迁移会保留旧版 v1 浏览器数据，但旧客户端读取的是 v1 快照，不会读取之后的 v2 编辑。
 
-以下本地回滚演练使用锁定版本的 AIPerf 虚拟环境和 loopback 模拟服务，检查新建未配置执行器的服务应用后已有 AIPerf 报告仍可读取、新 AIPerf 任务明确失败，以及手动选择的原生任务能够发送并完成请求。它不能替代服务器部署演练。
+以下本地重启演练使用锁定版本的 AIPerf 虚拟环境和 loopback 模拟服务：启动真实的 Flask 服务进程，停止该进程后，在相同输出根目录上启动第二个未配置 `EVALSCOPE_AIPERF_EXECUTABLE` 的进程。它检查归档运行仍可通过列表、详情、运行、请求、图表和 HTML 接口读取，内存中的活动任务登记为空，新 AIPerf 任务不会发压且明确返回 503，并且旧扁平原生 payload 在重启后仍能完成。它不覆盖运行中任务被强制中断、Linux 进程清理、容器或服务器部署演练。
 
 ```bash
-EVALSCOPE_TEST_AIPERF="$AIPERF_VENV/bin/aiperf" "$FRAMEWORK_VENV/bin/python" -m pytest tests/service/test_aiperf_single_run.py::test_local_rollback_keeps_history_and_allows_explicit_native_run -q
+EVALSCOPE_TEST_AIPERF="$AIPERF_VENV/bin/aiperf" "$FRAMEWORK_VENV/bin/python" -m pytest tests/service/test_aiperf_service_restart.py -q
 ```
