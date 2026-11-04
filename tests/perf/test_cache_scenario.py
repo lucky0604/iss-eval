@@ -143,7 +143,8 @@ def test_cancelled_profile_keeps_partial_records_readable(
 
     monkeypatch.setattr(module, '_run_verified', cancelled_run)
     with _server(tmp_path, 'success') as (url, _):
-        config = _config(url).model_copy(update={'telemetry': {'required': required}})
+        config = _config(url)
+        config = config.model_copy(update={'telemetry': config.telemetry.model_copy(update={'required': required})})
         config = AIPerfArguments.model_validate(config.model_dump())
         outcome = run_cache_scenario(config, _context(root), CacheScenarioArguments(
             target_ratio=0, namespace='run', tokenizer_id='fixture', template_id='fixture-template',
@@ -172,7 +173,8 @@ def test_required_missing_telemetry_is_not_completed(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(module, '_run_verified', completed_run)
     with _server(tmp_path, 'success') as (url, _):
-        config = _config(url).model_copy(update={'telemetry': {'required': True}})
+        config = _config(url)
+        config = config.model_copy(update={'telemetry': config.telemetry.model_copy(update={'required': True})})
         config = AIPerfArguments.model_validate(config.model_dump())
         outcome = run_cache_scenario(config, _context(root), CacheScenarioArguments(
             target_ratio=0, namespace='run', tokenizer_id='fixture', template_id='fixture-template',
