@@ -5,7 +5,15 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
-FRAMEWORK_BIN=${EVALSCOPE_FRAMEWORK_BIN:-"$REPO_ROOT/.venv/bin/evalscope"}
+if [ -n "${EVALSCOPE_FRAMEWORK_BIN:-}" ]; then
+    FRAMEWORK_BIN=$EVALSCOPE_FRAMEWORK_BIN
+elif [ -x "$REPO_ROOT/.venv/bin/evalscope" ]; then
+    FRAMEWORK_BIN="$REPO_ROOT/.venv/bin/evalscope"
+elif [ -x "$REPO_ROOT/venv/bin/evalscope" ]; then
+    FRAMEWORK_BIN="$REPO_ROOT/venv/bin/evalscope"
+else
+    FRAMEWORK_BIN="$REPO_ROOT/.venv/bin/evalscope"
+fi
 AIPERF_BIN=${EVALSCOPE_AIPERF_EXECUTABLE:-"$HOME/.venvs/aiperf/bin/aiperf"}
 OUTPUT_DIR=${EVALSCOPE_OUTPUT_DIR:-"$REPO_ROOT/outputs"}
 HOST=${EVALSCOPE_SERVICE_HOST:-127.0.0.1}
@@ -13,9 +21,9 @@ PORT=${EVALSCOPE_SERVICE_PORT:-9000}
 
 if [ ! -x "$FRAMEWORK_BIN" ]; then
     echo "error: EvalScope executable not found: $FRAMEWORK_BIN" >&2
-    echo "Create the framework environment first:" >&2
-    echo "  python3.12 -m venv .venv" >&2
-    echo "  .venv/bin/pip install -e '.[service]'" >&2
+    echo "Create the framework environment first, for example:" >&2
+    echo "  uv venv venv --python 3.12" >&2
+    echo "  uv pip install --python venv/bin/python -e '.[service]'" >&2
     exit 1
 fi
 
