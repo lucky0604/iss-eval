@@ -236,6 +236,8 @@ def test_normalized_prefix_collision_stops_before_any_requests(tmp_path: Path, m
     arguments.cache_experiment.prefix_pool_size = 3
     arguments.load.request_count = 3
     launched = []
+    warnings = []
+    monkeypatch.setattr(module.logger, 'warning', warnings.append)
     monkeypatch.setattr(module, 'probe_version', lambda *args: '0.13.0')
     monkeypatch.setattr(module, 'prime_prefixes', lambda *args, **kwargs: launched.append('primer'))
     monkeypatch.setattr(module, '_run_verified', lambda *args, **kwargs: launched.append('profiling'))
@@ -244,4 +246,6 @@ def test_normalized_prefix_collision_stops_before_any_requests(tmp_path: Path, m
     ), CollapsingTokenizer(), list(range(20)))
     assert outcome.status == 'error' and outcome.reason == 'invalid_prefix_workload'
     assert outcome.cleanup_confirmed and launched == []
-    assert json.loads((tmp_path / 'scenario.json').read_text())['status'] == 'error'
+    assert len(warnings) == 1 and 'tokenizer' in warnings[0]
+    state = json.loads((tmp_path / 'scenario.json').read_text())
+    assert state['status'] == 'error' and state['quality_reasons'] == ['invalid_prefix_workload']

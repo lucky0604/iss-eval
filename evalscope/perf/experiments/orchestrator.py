@@ -1,6 +1,7 @@
 """Serial execution of a reproducible prefix-cache experiment matrix."""
 
 import os
+import stat
 from pathlib import Path
 from typing import Literal, Optional, Sequence
 
@@ -104,6 +105,27 @@ def run_cache_experiment(
             row['status'] = outcome.status
             row['quality'] = outcome.quality
             row['scenario'] = f'runs/{item.subrun_id}/scenario.json'
+            if outcome.reason == 'invalid_prefix_workload':
+                try:
+                    descriptor = os.open(
+                        root / 'benchmark.log',
+                        os.O_CREAT
+                        | os.O_APPEND
+                        | os.O_WRONLY
+                        | getattr(os, 'O_NOFOLLOW', 0)
+                        | getattr(os, 'O_NONBLOCK', 0),
+                        0o600,
+                    )
+                    try:
+                        if stat.S_ISREG(os.fstat(descriptor).st_mode):
+                            os.write(
+                                descriptor,
+                                b'Prefix workload is invalid; check tokenizer, template, target ratios and prefix pool.\n',
+                            )
+                    finally:
+                        os.close(descriptor)
+                except OSError:
+                    pass
             if not outcome.cleanup_confirmed:
                 cleanup_confirmed = False
                 status = 'error'

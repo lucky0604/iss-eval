@@ -247,3 +247,44 @@ def test_real_matrix_cancellation_does_not_start_later_runs(
             scenario = json.loads((subrun / 'scenario.json').read_text())
             assert scenario['execution']['exit_reason'] == 'cancelled'
             assert scenario['execution']['cleanup_confirmed']
+
+
+def test_invalid_workload_reason_is_visible_in_task_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import evalscope.perf.experiments.orchestrator as module
+
+    calls = []
+
+    def scenario(*args, **kwargs) -> CacheScenarioOutcome:
+        calls.append(True)
+        return CacheScenarioOutcome(status='error', quality='invalid', reason='invalid_prefix_workload',
+                                    cleanup_confirmed=True)
+
+    monkeypatch.setattr(module, 'run_cache_scenario', scenario)
+    context = ExecutionContext(task_id='task', output_dir=str(tmp_path), runtime=ExternalRuntime(executable='/aiperf'))
+    outcome = run_cache_experiment(_config(), context, _Tokenizer(), list(range(200)), 'tokenizer', 'template')
+    assert outcome.status == 'error' and outcome.cleanup_confirmed and len(calls) == 1
+    assert 'Prefix workload is invalid' in (tmp_path / 'benchmark.log').read_text()
+    manifest = json.loads((tmp_path / 'experiment.json').read_text())
+    assert all(row['status'] == 'not_started' for row in manifest['subruns'][1:])
+
+
+@pytest.mark.parametrize('kind', ['symlink', 'fifo'])
+def test_invalid_workload_log_does_not_follow_redirects_or_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    import evalscope.perf.experiments.orchestrator as module
+
+    destination = tmp_path / 'untouched.txt'
+    destination.write_text('unchanged')
+    log_path = tmp_path / 'benchmark.log'
+    if kind == 'symlink':
+        log_path.symlink_to(destination)
+    else:
+        os.mkfifo(log_path)
+    monkeypatch.setattr(module, 'run_cache_scenario', lambda *args, **kwargs: CacheScenarioOutcome(
+        status='error', quality='invalid', reason='invalid_prefix_workload', cleanup_confirmed=True,
+    ))
+    context = ExecutionContext(task_id='task', output_dir=str(tmp_path), runtime=ExternalRuntime(executable='/aiperf'))
+    outcome = run_cache_experiment(_config(), context, _Tokenizer(), list(range(200)), 'tokenizer', 'template')
+    assert outcome.status == 'error' and outcome.cleanup_confirmed
+    assert destination.read_text() == 'unchanged'

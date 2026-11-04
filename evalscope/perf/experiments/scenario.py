@@ -31,6 +31,9 @@ from evalscope.perf.integrations.aiperf.single_run import (
 from evalscope.perf.results.aiperf_import import ImportCancelled, import_aiperf_run, observed_cache_usage
 from evalscope.perf.results.models import AIPerfImportArguments, CacheObservation, MetricTargetReference
 from evalscope.utils import BaseArgument
+from evalscope.utils.logger import get_logger
+
+logger = get_logger()
 
 
 class CacheScenarioArguments(BaseArgument):
@@ -170,7 +173,18 @@ def run_cache_scenario(
         try:
             workload = build_prefix_workload(plan, tokenizer, token_pool, cancellation)
         except ValueError:
-            state.update({'status': 'error', 'reason': 'invalid_prefix_workload'})
+            logger.warning(
+                'Prefix workload cannot be generated or validated; check the tokenizer, template, '
+                'target ratios and requested prefix pool.'
+            )
+            state.update(
+                {
+                    'status': 'error',
+                    'reason': 'invalid_prefix_workload',
+                    'quality': 'invalid',
+                    'quality_reasons': ['invalid_prefix_workload'],
+                }
+            )
             publish()
             return CacheScenarioOutcome(
                 status='error', quality='invalid', reason='invalid_prefix_workload', cleanup_confirmed=True
