@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react'
 import type { CacheNodeSeriesResponse, NodeMetricWindow } from '@/api/generated/contracts'
-import { getCacheNodeSeries } from '@/api/perf'
+import { getCacheNodeSeries, getPerfNodeSeries } from '@/api/perf'
 import { useLocale } from '@/contexts/LocaleContext'
 
-interface Props { taskId: string; subrunId: string; series: NodeMetricWindow; maxGap: number; start?: number; end?: number }
+export type NodeSeriesSource = { kind: 'experiment'; taskId: string; subrunId: string } | { kind: 'archive'; rootPath: string; path: string }
+interface Props { source: NodeSeriesSource; series: NodeMetricWindow; maxGap: number; start?: number; end?: number }
 const labelsKey = (labels: Record<string, string>) => JSON.stringify(Object.entries(labels).sort(([a], [b]) => a.localeCompare(b)))
 
-export default function NodeSeriesChart({ taskId, subrunId, series, maxGap, start, end }: Props) {
+export default function NodeSeriesChart({ source, series, maxGap, start, end }: Props) {
+  const taskId = source.kind === 'experiment' ? source.taskId : undefined
+  const subrunId = source.kind === 'experiment' ? source.subrunId : undefined
+  const rootPath = source.kind === 'archive' ? source.rootPath : undefined
+  const path = source.kind === 'archive' ? source.path : undefined
   const { locale } = useLocale()
   const zh = locale === 'zh'
   const [data, setData] = useState<CacheNodeSeriesResponse | null>(null)
@@ -15,10 +20,14 @@ export default function NodeSeriesChart({ taskId, subrunId, series, maxGap, star
   useEffect(() => {
     const controller = new AbortController()
     let active = true
-    getCacheNodeSeries(taskId, subrunId, { nodeId: series.node_id, metricName: series.metric.name, labels: Object.fromEntries(JSON.parse(selectedLabels) as [string, string][]), start, end, signal: controller.signal })
+    const filter = { nodeId: series.node_id, metricName: series.metric.name, labels: Object.fromEntries(JSON.parse(selectedLabels) as [string, string][]), start, end, signal: controller.signal }
+    const request = rootPath !== undefined && path !== undefined
+      ? getPerfNodeSeries(rootPath, path, filter)
+      : getCacheNodeSeries(taskId!, subrunId!, filter)
+    request
       .then((value) => { if (active) { setData(value); setFailed(false) } }).catch(() => { if (active) setFailed(true) })
     return () => { active = false; controller.abort() }
-  }, [taskId, subrunId, series.node_id, series.metric.name, selectedLabels, start, end])
+  }, [taskId, subrunId, rootPath, path, series.node_id, series.metric.name, selectedLabels, start, end])
   const samples = (data?.series.samples ?? []).filter((sample) => labelsKey(sample.labels) === selectedLabels &&
     typeof sample.observation.value === 'number' && Number.isFinite(sample.observation.value) &&
     (start == null || sample.timestamp_ns >= start) && (end == null || sample.timestamp_ns <= end))

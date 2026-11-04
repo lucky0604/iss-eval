@@ -69,13 +69,23 @@ export function getCacheRepetitions(taskId: string, subrunId: string, metric: st
   })
 }
 
-export function getCacheNodeSeries(taskId: string, subrunId: string, filter: {
+interface NodeSeriesFilter {
   nodeId: string; metricName: string; labels: Record<string, string>; start?: number | null; end?: number | null;
   maxPoints?: number; signal?: AbortSignal
-}): Promise<CacheNodeSeriesResponse> {
+}
+
+export function getCacheNodeSeries(taskId: string, subrunId: string, filter: NodeSeriesFilter): Promise<CacheNodeSeriesResponse> {
   return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/metrics/series`, {
     params: { node_id: filter.nodeId, metric_name: filter.metricName, labels: JSON.stringify(filter.labels),
       start_ns: filter.start ?? undefined, end_ns: filter.end ?? undefined, max_points: filter.maxPoints ?? 500 }, signal: filter.signal,
+  })
+}
+
+export function getPerfNodeSeries(rootPath: string, path: string, filter: NodeSeriesFilter): Promise<CacheNodeSeriesResponse> {
+  return apiValidated('/api/v1/perf/server-metrics', {
+    params: { root_path: rootPath, path, downsample: 'uniform_index', node_id: filter.nodeId,
+      metric_name: filter.metricName, labels: JSON.stringify(filter.labels), start_ns: filter.start ?? undefined,
+      end_ns: filter.end ?? undefined, max_points: filter.maxPoints ?? 500 }, signal: filter.signal,
   })
 }
 

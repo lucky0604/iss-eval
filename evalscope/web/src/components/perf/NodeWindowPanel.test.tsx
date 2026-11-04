@@ -1,11 +1,11 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LocaleProvider } from '@/contexts/LocaleContext'
-import { getCacheNodeSeries } from '@/api/perf'
+import { getCacheNodeSeries, getPerfNodeSeries } from '@/api/perf'
 import type { NodeMetricsAnalysis } from '@/api/generated/contracts'
 import NodeWindowPanel from './NodeWindowPanel'
 
-vi.mock('@/api/perf', () => ({ getCacheNodeSeries: vi.fn() }))
+vi.mock('@/api/perf', () => ({ getCacheNodeSeries: vi.fn(), getPerfNodeSeries: vi.fn() }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
 
 it('shows node-scoped cache and P/D statistics with coverage, gaps and unavailable values', async () => {
@@ -45,4 +45,17 @@ it('requests exact labels and window and identifies uniformly sampled raw points
   expect(getCacheNodeSeries).toHaveBeenCalledWith('task', 'run', expect.objectContaining({ labels: { model: 'm' }, start: 10, end: 80 }))
   expect(screen.getByText(/Uniform index selection of raw samples: 2 \/ 1200/)).toHaveTextContent('Peaks may be omitted')
   expect(screen.getByRole('img', { name: 'Node metric time series' }).querySelectorAll('polyline')).toHaveLength(0)
+})
+
+it('loads archive series by archive identity and preserves the table if samples are unavailable', async () => {
+  vi.mocked(getPerfNodeSeries).mockRejectedValue(new Error('unavailable'))
+  const analysis: NodeMetricsAnalysis = { availability: 'partial', max_gap_ns: 15, window_source: 'aiperf_phase',
+    window: { start_ns: 10, end_ns: 80 }, series: [{ node_id: 'p', role: 'prefill', engine: 'vllm', labels: { model: 'm' }, window_source: 'aiperf_phase',
+      metric: { engine: 'vllm', upstream_version: '0.10.2', name: 'vllm:num_requests_waiting', key: 'waiting_requests', kind: 'gauge', unit: 'requests', source_unit: 'requests', source_url: 'https://example.invalid' },
+      statistic: { availability: 'partial', value: 3, sample_count: 2 } }] }
+  await act(async () => { render(<LocaleProvider><NodeWindowPanel analysis={analysis} archive={{ rootPath: '/outputs', path: 'task/perf' }} /></LocaleProvider>) })
+  expect(getPerfNodeSeries).toHaveBeenCalledWith('/outputs', 'task/perf', expect.objectContaining({ nodeId: 'p', labels: { model: 'm' }, start: 10, end: 80 }))
+  expect(getCacheNodeSeries).not.toHaveBeenCalled()
+  expect(screen.getByText('3 requests')).toBeInTheDocument()
+  expect(screen.getByRole('status')).toHaveTextContent('Series unavailable')
 })

@@ -2,12 +2,13 @@ import { useState } from 'react'
 import type { NodeMetricsAnalysis } from '@/api/generated/contracts'
 import { useLocale } from '@/contexts/LocaleContext'
 import Button from '@/components/ui/Button'
-import NodeSeriesChart from './NodeSeriesChart'
+import NodeSeriesChart, { type NodeSeriesSource } from './NodeSeriesChart'
 
-interface Props { analysis?: NodeMetricsAnalysis | null; taskId: string; subrunId: string }
+type Props = { analysis?: NodeMetricsAnalysis | null } & ({ taskId: string; subrunId: string; archive?: never } | { archive: { rootPath: string; path: string }; taskId?: never; subrunId?: never })
 const display = (value: number | null | undefined) => value == null ? '—' : String(value)
 
-export default function NodeWindowPanel({ analysis, taskId, subrunId }: Props) {
+export default function NodeWindowPanel({ analysis, taskId, subrunId, archive }: Props) {
+  const source: NodeSeriesSource = archive ? { kind: 'archive', ...archive } : { kind: 'experiment', taskId: taskId!, subrunId: subrunId! }
   const { locale } = useLocale()
   const zh = locale === 'zh'
   const [selected, setSelected] = useState('')
@@ -57,7 +58,7 @@ export default function NodeWindowPanel({ analysis, taskId, subrunId }: Props) {
         <Button variant="outline" size="sm" disabled={(page + 1) * 50 >= rows.length} onClick={() => setPage(page + 1)}>{zh ? '下一页' : 'Next'}</Button></div>}
       {selectedGauge && <><label className="text-sm">{zh ? '时间序列' : 'Time series'} <select value={seriesIndex} onChange={(event) => setSeriesIndex(event.target.value)}>
         {gauges.map((row, index) => <option key={`${row.metric.name}-${JSON.stringify(row.labels)}`} value={index}>{row.metric.key} {JSON.stringify(row.labels)}</option>)}
-      </select></label><NodeSeriesChart key={`${node}-${seriesIndex}`} taskId={taskId} subrunId={subrunId} series={selectedGauge}
+      </select></label><NodeSeriesChart key={`${node}-${seriesIndex}`} source={source} series={selectedGauge}
         maxGap={analysis!.max_gap_ns} start={analysis?.window?.start_ns} end={analysis?.window?.end_ns} /></>}
       {allGauges.length > gauges.length && <p className="text-xs">{zh ? '时间序列选择器显示前 200 项；完整指标见分页表格。' : 'The chart selector shows the first 200 series; all metrics remain in the paged table.'}</p>}
     </>}

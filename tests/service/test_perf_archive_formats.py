@@ -71,6 +71,7 @@ def test_html_and_charts_are_safe_and_unsupported_metrics_remain_unavailable(arc
     params = {'root_path': str(root), 'path': 'task/perf'}
     report = client.get('/api/v1/perf/history/report', query_string=params)
     assert report.status_code == 200 and b'&lt;script&gt;model&lt;/script&gt;' in report.data
+    assert b'Node metrics unavailable.' in report.data
     assert b'<script>model</script>' not in report.data
     assert report.headers['Content-Security-Policy'] == "default-src 'none'"
     for chart in ('latency', 'ttft', 'rps', 'throughput', 'success', 'percentile_latency', 'req_latency', 'req_tokens'):
@@ -78,6 +79,39 @@ def test_html_and_charts_are_safe_and_unsupported_metrics_remain_unavailable(arc
         assert response.status_code == 200, chart
     assert client.get('/api/v1/perf/chart', query_string={**params, 'chart_type': 'tpot'}).status_code == 404
     assert client.get('/api/v1/perf/compare/chart', query_string={'root_path': str(root), 'paths': 'native;task/perf'}).status_code == 400
+
+
+def test_single_html_includes_escaped_node_windows_and_missing_values(archive) -> None:
+    from evalscope.perf.integrations.aiperf.metrics import MAPPINGS, NodeMetricsAnalysis, NodeMetricWindow
+    from evalscope.perf.results.telemetry import HistogramWindow, WindowStatistic
+
+    client, root, run = archive
+    metric = next(item for item in MAPPINGS if item.key == 'waiting_requests' and item.engine == 'vllm')
+    analysis = NodeMetricsAnalysis(
+        availability='partial', max_gap_ns=100, window_source='aiperf_phase',
+        series=[NodeMetricWindow(node_id='<node>', role='prefill', engine='vllm', labels={'model': '<script>'},
+                                 metric=metric, window_source='aiperf_phase',
+                                 statistic=WindowStatistic(availability='partial', value=2, sample_count=3,
+                                                           reason='scrape_gap')),
+                NodeMetricWindow(node_id='decode', role='decode', engine='sglang', labels={},
+                                 metric=next(item for item in MAPPINGS if item.key == 'kv_transfer_latency'
+                                             and item.kind == 'histogram'), window_source='aiperf_phase',
+                                 histogram=HistogramWindow(availability='missing', metric_key='kv_transfer_latency',
+                                                           unit='seconds', window_start_ns=10, window_end_ns=20,
+                                                           reason='window_not_bracketed'))],
+        cache_ratios=[{'node_id': '<node>', 'role': 'prefill', 'labels': {}, 'availability': 'available',
+                       'ratio': 0.8, 'hit_tokens': 8, 'lookup_tokens': 10}],
+    )
+    (run / 'node_analysis.json').write_text(analysis.model_dump_json())
+    report = client.get('/api/v1/perf/history/report', query_string={'root_path': str(root), 'path': 'task/perf'})
+    assert report.status_code == 200
+    assert b'&lt;node&gt;' in report.data and b'&lt;script&gt;' in report.data
+    assert b'<script>' not in report.data
+    assert b'vllm:num_requests_waiting' in report.data and b'0.8' in report.data
+    assert b'scrape_gap' in report.data and b'unavailable' in report.data
+    assert b'kv_transfer_latency' in report.data and b'window_not_bracketed' in report.data
+    assert b'not per-request P/D timings' in report.data
+    assert report.headers['Content-Security-Policy'] == "default-src 'none'"
 
 
 def test_archive_identity_symlink_and_running_delete_are_checked(archive, monkeypatch: pytest.MonkeyPatch) -> None:

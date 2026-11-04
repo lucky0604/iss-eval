@@ -1,6 +1,7 @@
 """Read-only adapter for the AIPerf single-run archive format."""
 
 import html
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -280,6 +281,62 @@ def query_requests(directory: str, run_name: str, status: Optional[str], page: i
     }
 
 
+def _node_analysis_html(analysis: Optional[NodeMetricsAnalysis]) -> str:
+    def cell(value: object) -> str:
+        return html.escape('unavailable' if value is None else str(value), quote=True)
+
+    if analysis is None:
+        return '<h2>P/D node metrics</h2><p>Node metrics unavailable.</p>'
+    window = analysis.window
+    details = (
+        '<h2>P/D node metrics</h2><p>Node windows include shared traffic; '
+        'they are not per-request P/D timings. Verify deployment version, labels and routing coverage.</p>'
+        f'<p>Availability: {cell(analysis.availability)}; window source: {cell(analysis.window_source)}; '
+        f'window: {cell(window.start_ns if window else None)}–{cell(window.end_ns if window else None)} ns; '
+        f'reason: {cell(analysis.reason)}</p>'
+        f'<p>Quality reasons: {cell(", ".join(analysis.quality_reasons) or None)}</p>'
+    )
+    ratios = ''.join(
+        f'<tr><td>{cell(row.node_id)}</td><td>{cell(row.role)}</td><td>{cell(json.dumps(row.labels, ensure_ascii=False))}</td>'
+        f'<td>{cell(row.ratio)}</td><td>{cell(row.hit_tokens)} / {cell(row.lookup_tokens)}</td>'
+        f'<td>{cell(row.availability)} / {cell(row.reason)}</td></tr>'
+        for row in analysis.cache_ratios
+    )
+    rows = []
+    for row in analysis.series:
+        stat, hist = row.statistic, row.histogram
+        if hist is not None:
+            value = f'{cell(hist.mean)} {cell(hist.unit)} (mean); P50 {cell(hist.p50)}, P95 {cell(hist.p95)}, P99 {cell(hist.p99)} (approximate)'
+            peak, count = 'unavailable', cell(hist.count)
+            status = f'{cell(hist.availability)} / {cell(hist.boundary)} / {cell(hist.reason)}'
+        else:
+            value = f'{cell(stat.value if stat else None)} {cell(row.metric.unit)}'
+            peak = cell(stat.sample_peak if stat else None)
+            count = f'{cell(stat.sample_count if stat else None)} / {cell(stat.coverage if stat else None)}'
+            status = f'{cell(stat.availability if stat else None)} / {cell(stat.boundary if stat else None)} / {cell(stat.reason if stat else row.reason)}'
+        rows.append(
+            f'<tr><td>{cell(row.node_id)} / {cell(row.role)}</td><td>{cell(row.metric.key)}<br>'
+            f'{cell(row.metric.name)} ({cell(row.engine)} {cell(row.metric.upstream_version)})</td>'
+            f'<td>{cell(json.dumps(row.labels, ensure_ascii=False))}</td><td>{value}</td>'
+            f'<td>{peak}</td><td>{count}</td><td>{status}</td></tr>'
+        )
+    scrapes = ''.join(
+        f'<tr><td>{cell(row.node_id)}</td><td>{cell(row.observed_successful_scrapes)}</td>'
+        f'<td>{cell(row.failed_scrapes)}</td></tr>'
+        for row in analysis.scrapes
+    )
+    return (
+        details + '<h3>vLLM node lookup-token hit ratio</h3><table><tr><th>Node</th><th>Role</th>'
+        '<th>Labels</th><th>Ratio</th><th>Hit / lookup tokens</th><th>Status / reason</th></tr>' + ratios + '</table>'
+        '<h3>Node window series</h3><table><tr><th>Node / role</th><th>Metric</th><th>Labels</th>'
+        '<th>Window value</th><th>Sample peak</th><th>Count / coverage</th><th>Status / boundary / reason</th></tr>'
+        + ''.join(rows)
+        + '</table><h3>Scrapes</h3><table><tr><th>Node</th><th>Successful</th><th>Failed</th></tr>'
+        + scrapes
+        + '</table>'
+    )
+
+
 def write_report(rel_path: str, directory: str) -> str:
     """Render a standalone escaped HTML summary from the same detail projection."""
     detail = build_detail(rel_path, directory)
@@ -299,7 +356,10 @@ def write_report(rel_path: str, directory: str) -> str:
         '<!DOCTYPE html>\n' + _MARKER + '\n<html lang="en"><head><meta charset="utf-8">'
         '<title>AIPerf report</title></head><body><h1>AIPerf report</h1>'
         '<p>Values come from the AIPerf client and server-reported usage; missing values are unavailable.</p>'
-        f'<table>{rows}</table><h2>Metrics</h2><table>{metrics}</table></body></html>'
+        f'<table>{rows}</table><h2>Metrics</h2><table>{metrics}</table>'
+        f'<p>Quality reasons: {escape(", ".join(detail["quality_reasons"]) or "unavailable")}</p>'
+        + _node_analysis_html(detail['node_analysis'])
+        + '</body></html>'
     )
     root = Path(directory).resolve(strict=True)
     report = root / 'aiperf_report.html'

@@ -25,3 +25,5 @@ For API use, send `POST /api/v1/perf/invoke` with an `EvalScope-Task-Id` header.
 ```
 
 A single run supports one concurrency or request-rate point. Set `api_key` for model-service authentication. P/D targets can use independent Prometheus headers and label filters; the Web form supports a bearer token per node. Custom inference headers are unsupported. A task is reported as stopped only after process-group cleanup is confirmed. Raw artifacts and normalized results are retained, and readable runs appear in the performance archive. See [prefix-cache experiments](aiperf_cache.md) for installation, metric semantics, retention and rollback.
+
+The single-run archive includes a **P/D node metrics** tab and a standalone HTML section with available node-window statistics, cache lookup ratios, provenance and missing-data reasons. Node windows include shared traffic and are not per-request stage timings. The Web chart reads bounded raw samples from the configured outputs root; when those samples are unavailable, the window table remains visible.

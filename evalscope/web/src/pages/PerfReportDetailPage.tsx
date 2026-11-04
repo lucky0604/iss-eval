@@ -14,6 +14,7 @@ import LabelledField from '@/components/ui/LabelledField'
 import ErrorAlert from '@/components/ui/ErrorAlert'
 import PerfChartGroup from '@/components/perf/PerfChartGroup'
 import PerfRunsTab from '@/components/perf/PerfRunsTab'
+import NodeWindowPanel from '@/components/perf/NodeWindowPanel'
 import { LATENCY_CHARTS, THROUGHPUT_CHARTS, perfRunMode } from '@/domain/perf/charts'
 import { formatTimestamp } from '@/utils/formatUtils'
 import { resolveProvider } from '@/domain/perf/providerResolution'
@@ -21,7 +22,7 @@ import { formatMetric } from '@/domain/metric'
 import { ExternalLink, Lightbulb } from 'lucide-react'
 import type { PerfDetailResponse } from '@/api/types'
 
-type TabKey = 'overview' | 'charts' | 'runs'
+type TabKey = 'overview' | 'charts' | 'runs' | 'nodes'
 
 /** Return a shallow copy of `info` with the given keys removed. */
 function omitKeys(info: Record<string, string>, keys: string[]): Record<string, string> {
@@ -179,6 +180,8 @@ export default function PerfReportDetailPage() {
         { key: 'runs', label: t('perf.archive.runsTab'), panelId: 'perf-runs-panel' },
       ]
 
+  if (data.engine === 'aiperf') tabs.push({ key: 'nodes', label: t('perf.archive.nodeMetrics'), panelId: 'perf-nodes-panel' })
+
   const overviewPanel = (
     <div className="flex flex-col gap-4">
       {singleRun && (
@@ -298,6 +301,10 @@ export default function PerfReportDetailPage() {
           'perf-overview-panel': overviewPanel,
           ...(!singleRun ? { 'perf-charts-panel': chartsPanel } : {}),
           'perf-runs-panel': <PerfRunsTab rootPath={rootPath} path={path} mode={runMode} />,
+          ...(data.engine === 'aiperf' ? { 'perf-nodes-panel': <div className="space-y-2">
+            {data.quality_reasons?.length ? <p>{data.quality_reasons.join(', ')}</p> : null}
+            <NodeWindowPanel key={`${rootPath}\0${path}`} analysis={data.node_analysis} archive={{ rootPath, path }} />
+          </div> } : {}),
         }}
       />
     </div>
