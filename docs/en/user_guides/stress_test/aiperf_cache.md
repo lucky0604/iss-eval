@@ -90,6 +90,10 @@ print(result.quality, result.quality_reasons)
 
 Node attribution needs the original node references; omitting them leaves node identity unavailable. This operation does not automatically replace a published scenario or recompute its node analysis. Rerunning a test creates a new task and is not a resume.
 
+### Runtime upgrade
+
+The service accepts only an executable whose `--version` reports 0.13.0. Replacing the binary with another version makes AIPerf unavailable and new AIPerf tasks return 503; there is no automatic fallback. Treat an upgrade as a code change: update the pinned version and its CLI/export adapters, add representative fixtures and tests, rerun the local checks, then repeat the server acceptance. Keep the previous virtual environment and archived raw artifacts so the old runtime can be restored without rewriting history.
+
 For rollback, stop active AIPerf tasks and wait for confirmed cleanup, then remove `EVALSCOPE_AIPERF_EXECUTABLE` from the service environment and restart it. Existing reports and raw artifacts remain readable; users can explicitly select EvalScope for new tests. Old v1 browser data is retained during migration, but old clients read their old v1 snapshot rather than subsequent v2 edits.
 
 The local restart drill below launches a real Flask service process with the pinned AIPerf virtual environment and a loopback mock server, stops that process, and starts a second process on the same output root without `EVALSCOPE_AIPERF_EXECUTABLE`. It checks that the archived run remains readable through the listing, detail, run, request, chart and HTML endpoints, that the in-memory active-task registry is empty, that a new AIPerf task returns 503 without sending traffic, and that a legacy flat native payload still completes after the restart. A second case kills the service process while a run is active and checks that request traffic stops, the interrupted task is reported as unknown rather than completed, and no run summary is fabricated. The drill does not cover Linux or container cgroup cleanup, a killed controller outside the service process tree, or the server deployment drill.
