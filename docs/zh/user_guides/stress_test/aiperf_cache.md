@@ -14,7 +14,41 @@ export EVALSCOPE_AIPERF_EXECUTABLE=/path/to/aiperf-venv/bin/aiperf
 evalscope service
 ```
 
-`requirements/aiperf-linux-x86_64-py312.lock` 是 Linux x86_64 glibc、Python 3.12 的二进制依赖锁候选，已跨平台解析，但尚未在 Linux 上安装和运行验收；使用前需在目标机器验证。执行器要求支持的 POSIX 进程组实现（Linux 或 macOS）以及 `/bin/ps`。请按请求预算规划进程容量、网络和输出磁盘；平台没有全局并发配额或自动保留策略。
+`requirements/aiperf-linux-x86_64-py312.lock` 是 Linux x86_64 glibc、Python 3.12 的二进制依赖锁候选，已跨平台解析，并在 Rosetta 模拟的 Linux x86_64 环境完成安装和依赖检查；原生 Linux 运行及部署验收仍需在目标机器完成。执行器要求支持的 POSIX 进程组实现（Linux 或 macOS）以及 `/bin/ps`。请按请求预算规划进程容量、网络和输出磁盘；平台没有全局并发配额或自动保留策略。
+
+### Linux 服务器准备与本地回归
+
+以下命令从项目根目录执行。使用两个不同的 Python 虚拟环境：框架环境安装服务依赖，AIPerf 环境只安装锁文件。先在目标服务器确认 `python3.12`、`/bin/ps`、网络及磁盘容量；下面的命令不需要 Docker。请根据部署位置修改虚拟环境路径。
+
+```bash
+FRAMEWORK_VENV="$HOME/.venvs/iss-eval-framework"
+AIPERF_VENV="$HOME/.venvs/iss-eval-aiperf"
+python3.12 -m venv "$FRAMEWORK_VENV"
+"$FRAMEWORK_VENV/bin/python" -m pip install -e '.[service]' pytest
+python3.12 -m venv "$AIPERF_VENV"
+"$AIPERF_VENV/bin/python" -m pip install --only-binary=:all: -r requirements/aiperf-linux-x86_64-py312.lock
+"$AIPERF_VENV/bin/python" -m pip check
+"$AIPERF_VENV/bin/aiperf" --version
+export EVALSCOPE_AIPERF_EXECUTABLE="$AIPERF_VENV/bin/aiperf"
+export EVALSCOPE_TEST_AIPERF="$EVALSCOPE_AIPERF_EXECUTABLE"
+"$FRAMEWORK_VENV/bin/python" -m pytest tests/perf/test_external_runner_lifecycle.py tests/perf/test_experiment_orchestration.py -q
+"$FRAMEWORK_VENV/bin/python" -m pytest tests/service/test_aiperf_single_run.py::test_real_single_run_emits_client_progress_log -q
+"$FRAMEWORK_VENV/bin/evalscope" service --host 127.0.0.1 --port 9000
+```
+
+这些自动化测试使用本机 mock 服务，不会验证真实 P/D 节点；五阶段停止测试可能耗时。若服务运行在容器内，须在实际部署环境另行验证 PID 1 回收、信号传递、文件权限、网络和持久化输出，不能把本机虚拟环境的结果当作容器验收。
+
+### 真实节点验收
+
+在受控测试窗口分别对 vLLM 和 SGLang 进行以下检查，先确定不影响共享服务的请求预算：
+
+1. 记录每个 P/D 节点的引擎版本、模型和 tokenizer/template、Connector、路由、缓存配置、时钟同步状态及 Prometheus 标签；分别验证推理认证和指标认证。不要将凭据写入验收记录或提交到 Git。
+2. 在 Web 分别配置 P、D 指标端点并执行只读探测；先用小流量试运行，确认每个节点的来源、标签和可用性。选定 `0, 80, 90`、两个负载点、三次重复后核对预检的 18 个子运行及请求预算，再发起实验。额外运行一组开放环负载。
+3. 保存任务 ID、计划哈希、各子运行的请求哈希、质量原因、时间窗口及 raw/normalized 产物。对照生成比例、服务端请求级缓存用量和节点查询命中率的分子、分母及覆盖率；它们是不同观测，不要求等于目标比例或单调变化。
+4. 将 P/D 排队、阶段和可用 KV 传输数据逐项对照对应节点的原始指标、单位、标签、样本数和窗口；记录共享流量与路由覆盖。指标缺失或语义无法确认时保留 unavailable/partial，不以客户端速率代替节点实测。
+5. 在安全的测试环境验证预热、发压和导入期间停止，确认不再发送请求、进程树已清理且 partial 报告可读；重启服务后确认历史可读但任务不会自动续跑。分别检查原生压测、能力评测和旧报告。
+
+记录通过、失败和未执行项以及部署版本。只有在实际节点、目标操作系统和部署方式完成检查后，才可将对应环境标为已验收。
 
 服务检测配置的可执行文件并要求版本为 0.13.0，不会在请求时安装依赖或静默切换执行器。部署时保留运行环境锁、Python 版本和原始产物；升级 AIPerf 前应重新验证命令行、产物 schema、时间边界和进程清理，不能只升级软件包。
 

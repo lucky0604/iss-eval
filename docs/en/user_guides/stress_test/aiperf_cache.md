@@ -14,7 +14,41 @@ export EVALSCOPE_AIPERF_EXECUTABLE=/path/to/aiperf-venv/bin/aiperf
 evalscope service
 ```
 
-The Linux x86_64 glibc/Python 3.12 binary lock at `requirements/aiperf-linux-x86_64-py312.lock` is cross-resolved but has not been installed or run on Linux. Validate it on the target host before use. The runner requires a supported POSIX process-group implementation (Linux or macOS) and `/bin/ps`. Size process capacity, network access and output storage for the selected request budget; the platform does not enforce a global concurrency quota or retention policy.
+The Linux x86_64 glibc/Python 3.12 binary lock at `requirements/aiperf-linux-x86_64-py312.lock` was cross-resolved and installed with a clean dependency check under Rosetta-emulated Linux x86_64. Native Linux execution and deployment acceptance remain to be verified on the target host. The runner requires a supported POSIX process-group implementation (Linux or macOS) and `/bin/ps`. Size process capacity, network access and output storage for the selected request budget; the platform does not enforce a global concurrency quota or retention policy.
+
+### Linux server preparation and local regression
+
+Run these commands from the project root. Use two separate Python virtual environments: install service dependencies in the framework environment and the locked runtime in the AIPerf environment. First verify `python3.12`, `/bin/ps`, network access and disk capacity on the target host. Adjust the environment paths for your deployment. Docker is not required for these checks.
+
+```bash
+FRAMEWORK_VENV="$HOME/.venvs/iss-eval-framework"
+AIPERF_VENV="$HOME/.venvs/iss-eval-aiperf"
+python3.12 -m venv "$FRAMEWORK_VENV"
+"$FRAMEWORK_VENV/bin/python" -m pip install -e '.[service]' pytest
+python3.12 -m venv "$AIPERF_VENV"
+"$AIPERF_VENV/bin/python" -m pip install --only-binary=:all: -r requirements/aiperf-linux-x86_64-py312.lock
+"$AIPERF_VENV/bin/python" -m pip check
+"$AIPERF_VENV/bin/aiperf" --version
+export EVALSCOPE_AIPERF_EXECUTABLE="$AIPERF_VENV/bin/aiperf"
+export EVALSCOPE_TEST_AIPERF="$EVALSCOPE_AIPERF_EXECUTABLE"
+"$FRAMEWORK_VENV/bin/python" -m pytest tests/perf/test_external_runner_lifecycle.py tests/perf/test_experiment_orchestration.py -q
+"$FRAMEWORK_VENV/bin/python" -m pytest tests/service/test_aiperf_single_run.py::test_real_single_run_emits_client_progress_log -q
+"$FRAMEWORK_VENV/bin/evalscope" service --host 127.0.0.1 --port 9000
+```
+
+These automated tests use local mock services and do not validate real P/D nodes; the five-phase cancellation tests can take time. If the service runs in a container, separately verify PID 1 reaping, signal delivery, file permissions, network access and persistent outputs in the actual deployment. A host virtual-environment result is not container acceptance.
+
+### Real-node acceptance
+
+For both vLLM and SGLang, work in a controlled test window and establish a request budget that will not disrupt shared services:
+
+1. Record each P/D node's engine version, model and tokenizer/template, connector, routing, cache configuration, clock synchronization and Prometheus labels. Verify inference and Metrics authentication separately. Keep credentials out of acceptance records and Git.
+2. Configure P and D Metrics endpoints in the Web form and run the read-only probe. Start with a small run and check each node's source, labels and availability. Select `0, 80, 90`, two load points and three repetitions, verify the preview's 18 subruns and request budget, then run the experiment. Run an additional open-loop load point.
+3. Retain the task ID, plan hash, per-run request hashes, quality reasons, windows and raw/normalized artifacts. Reconcile generated reuse, server-reported request cache usage and node lookup hits with their own numerators, denominators and coverage. These are different observations; they need not equal the target or improve monotonically.
+4. Check P/D queue, stage and available KV transfer values against the corresponding node's raw metric, unit, labels, count and window. Record shared traffic and routing coverage. Keep missing or unverified values unavailable/partial; do not substitute a client rate for a node observation.
+5. In a safe test environment, stop runs during priming, profiling and import. Confirm request traffic stops, the process tree is cleaned up and partial reports remain readable. Restart the service and confirm history remains readable without automatic resumption. Check native performance tests, capability evaluation and older reports separately.
+
+Record passed, failed and unrun checks with the deployment versions. Mark an environment accepted only after checking its actual nodes, operating system and deployment method.
 
 The service detects the configured executable and requires version 0.13.0. It does not install dependencies at request time or fall back to another executor. Keep the runtime lock, Python version and source artifacts with your deployment; when upgrading AIPerf, recheck its CLI, output schemas, time boundaries and process cleanup before changing the pinned version.
 
