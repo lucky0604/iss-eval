@@ -75,3 +75,31 @@ def test_histogram_reset_and_incompatible_buckets_are_not_fabricated() -> None:
     changed = HistogramSample(timestamp_ns=20, buckets={'1': 1, '3': 2, '+Inf': 3}, count=3, sum=4)
     result = histogram_window([_hist(10, 0, 0, 0, 0), changed], window, 10, 'seconds', 'prefill')
     assert result.availability == 'invalid' and result.count is None
+
+
+def test_gauge_mean_avoids_overflow_from_nanosecond_weighting() -> None:
+    window = MetricWindow(start_ns=0, end_ns=10)
+    large = gauge_window(_scalar([(0, 1e308)]), window, 10)
+    assert large.availability == 'available' and large.value == pytest.approx(1e308)
+    opposite = gauge_window(_scalar([(0, 1e308), (5, -1e308)]), window, 10)
+    assert opposite.availability == 'available' and opposite.value == 0
+
+
+def test_histogram_merge_rejects_non_finite_aggregate() -> None:
+    window = MetricWindow(start_ns=10, end_ns=20)
+    before = HistogramSample(timestamp_ns=10, buckets={'1e308': 0, '+Inf': 0}, count=0, sum=0)
+    after = HistogramSample(timestamp_ns=20, buckets={'1e308': 1, '+Inf': 1}, count=1, sum=1e308)
+    one = histogram_window([before, after], window, 10, 'seconds', 'queue')
+    assert one.availability == 'available' and one.sum == 1e308
+    merged = merge_histogram_windows([one, one])
+    assert merged.availability == 'invalid' and merged.reason == 'non_finite_histogram_sum'
+    assert merged.sum is None and merged.mean is None
+
+
+def test_histogram_quantile_avoids_intermediate_overflow() -> None:
+    before = HistogramSample(timestamp_ns=10, buckets={'1e308': 0, '+Inf': 0}, count=0, sum=0)
+    after = HistogramSample(timestamp_ns=20, buckets={'1e308': 10, '+Inf': 10}, count=10, sum=1e308)
+    result = histogram_window([before, after], MetricWindow(start_ns=10, end_ns=20), 10, 'seconds', 'queue')
+    assert result.availability == 'available'
+    assert result.p50 == pytest.approx(5e307) and result.p95 == pytest.approx(9.5e307)
+    assert result.p99 == pytest.approx(9.9e307)

@@ -133,7 +133,7 @@ def gauge_window(samples: Sequence[ScalarSample], window: MetricWindow, max_gap_
     _ordered(samples)
     duration = window.end_ns - window.start_ns
     covered = 0
-    integral = 0.0
+    mean = 0.0
     values = []
     for index, sample in enumerate(samples):
         next_time = samples[index + 1].timestamp_ns if index + 1 < len(samples) else window.end_ns
@@ -142,8 +142,18 @@ def gauge_window(samples: Sequence[ScalarSample], window: MetricWindow, max_gap_
         if right <= left:
             continue
         interval = right - left
-        covered += interval
-        integral += sample.value * interval
+        new_covered = covered + interval
+        try:
+            mean = math.fsum((mean * (covered / new_covered), sample.value * (interval / new_covered)))
+        except OverflowError:
+            return WindowStatistic(
+                availability='invalid', sample_count=len(values) + 1, reason='non_finite_gauge_mean', boundary='step'
+            )
+        if not math.isfinite(mean):
+            return WindowStatistic(
+                availability='invalid', sample_count=len(values) + 1, reason='non_finite_gauge_mean', boundary='step'
+            )
+        covered = new_covered
         values.append(sample.value)
     boundary_values = [sample.value for sample in samples if sample.timestamp_ns == window.end_ns]
     values.extend(boundary_values)
@@ -159,7 +169,7 @@ def gauge_window(samples: Sequence[ScalarSample], window: MetricWindow, max_gap_
     coverage = covered / duration
     return WindowStatistic(
         availability='available' if covered == duration else 'partial',
-        value=integral / covered,
+        value=mean,
         sample_peak=max(values),
         coverage=coverage,
         sample_count=len(values),
@@ -197,9 +207,9 @@ def _quantile(buckets: Dict[str, int], count: int, fraction: float) -> Optional[
                 return None
             if cumulative == previous_count:
                 return boundary
-            return previous_bound + (boundary - previous_bound) * (target - previous_count) / (
-                cumulative - previous_count
-            )
+            weight = (target - previous_count) / (cumulative - previous_count)
+            estimate = previous_bound + (boundary - previous_bound) * weight
+            return estimate if math.isfinite(estimate) else None
         previous_bound, previous_count = boundary, cumulative
     return None
 
@@ -288,7 +298,12 @@ def merge_histogram_windows(windows: Sequence[HistogramWindow]) -> HistogramWind
         return HistogramWindow(availability='invalid', reason='incompatible_histogram_series', **identity)
     buckets = {key: sum(item.buckets[key] for item in windows) for key in first.buckets}
     count = sum(item.count for item in windows if item.count is not None)
-    total = sum(item.sum for item in windows if item.sum is not None)
+    try:
+        total = math.fsum(item.sum for item in windows if item.sum is not None)
+    except OverflowError:
+        return HistogramWindow(availability='invalid', reason='non_finite_histogram_sum', **identity)
+    if not math.isfinite(total):
+        return HistogramWindow(availability='invalid', reason='non_finite_histogram_sum', **identity)
     return HistogramWindow(
         availability='partial' if any(item.availability == 'partial' for item in windows) else 'available',
         buckets=buckets,
