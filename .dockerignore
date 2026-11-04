@@ -1,0 +1,44 @@
+# Build context for docker/Dockerfile (repository root).
+# Keep the context small: the image only needs requirements/, the evalscope package
+# and the frontend sources that the Node stage compiles.
+
+# Version control and local tooling
+.git
+.gitignore
+.github
+.idea
+.vscode
+.claude
+.qoder
+.kiro
+agent_flow
+
+# Local build artifacts and data
+build
+dist
+outputs
+output
+data
+logs
+**/__pycache__
+**/*.py[cod]
+**/*.log
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+*.egg-info
+
+# Frontend dependencies and build output (rebuilt inside the image)
+evalscope/web/node_modules
+evalscope/web/dist
+evalscope/web/coverage
+evalscope/web/.vite
+
+# Not needed by the service image
+docs
+tests
+examples
+custom_eval
+skills
+scripts

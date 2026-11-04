@@ -181,6 +181,19 @@ pip install evalscope
 
 > For detailed installation instructions (source install, extra dependencies, etc.), please refer to the [📖 Installation Guide](https://evalscope.readthedocs.io/en/latest/get_started/installation.html).
 
+### Docker Deployment (Server)
+
+Build and start the Web Dashboard, the native evaluation engine and the isolated AIPerf 0.13.0 backend in one container:
+
+```bash
+cd docker
+cp .env.example .env            # port, timezone, package mirrors, data paths
+docker compose up -d --build
+sh verify.sh                    # health, versions and AIPerf availability
+```
+
+Open `http://<server>:9000/dashboard` after startup. Evaluation outputs and model/dataset caches persist in the `/data/outputs` and `/data/cache` volumes. The image targets an x86_64 Linux Docker host; see [docker/README.md](docker/README.md) for bind mounts, upgrades, offline image transfer and security notes.
+
 ### Method 1. Evaluate an Online Model API (Recommended for beginners, no GPU required)
 
 Supports any OpenAI API-compatible model service. Just set `$OPENAI_API_BASE_URL` and `$OPENAI_API_KEY` and you are ready to go:
