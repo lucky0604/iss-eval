@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useState, type ComponentProps } from 'react'
 import { MemoryRouter } from 'react-router-dom'
-import type { ActiveTaskInfo, EvalInvokeResponse } from '@/api/types'
+import type { ActiveTaskInfo, TaskSubmitResponse } from '@/api/types'
 import { LocaleProvider } from '@/contexts/LocaleContext'
 import { DomainError } from '@/api/errors'
 import TaskRunnerShell from './TaskRunnerShell'
@@ -145,10 +145,10 @@ async function click(name: string) { await act(async () => { fireEvent.click(scr
     expect(screen.queryByText('Old log')).not.toBeInTheDocument()
   })
   it('does not let a late invoke result replace the selected task', async () => {
-    let finish!: (value: EvalInvokeResponse) => void
+    let finish!: (value: TaskSubmitResponse) => void
     render(<Runner submitTask={vi.fn().mockImplementation(() => new Promise((resolve) => { finish = resolve }))} />)
     await click('Submit'); await click('View B')
-    await act(async () => { finish({ task_id: 'eval_1782864000000', status: 'completed' }) })
+    await act(async () => { finish({ task_id: 'eval_1782864000000', status: 'queued' }) })
     expect(screen.getByText('ID: eval_B')).toBeInTheDocument()
     expect(screen.getByText('Running 10%')).toBeInTheDocument()
   })

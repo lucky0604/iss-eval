@@ -2,7 +2,7 @@
   "$defs": {
     "ActiveTaskInfo": {
       "additionalProperties": false,
-      "description": "Display identity of a task whose subprocess is currently registered.",
+      "description": "Display identity of a task that is queued, running, or recently finished.",
       "properties": {
         "alias": {
           "anyOf": [
@@ -74,6 +74,39 @@
           ],
           "default": null
         },
+        "enqueued_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "html_report_url": {
           "anyOf": [
             {
@@ -130,6 +163,17 @@
           ],
           "default": null
         },
+        "queue_position": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "report_url": {
           "anyOf": [
             {
@@ -148,6 +192,7 @@
         "status": {
           "default": "running",
           "enum": [
+            "queued",
             "preparing",
             "running",
             "cancelling",
@@ -6283,6 +6328,46 @@
       ],
       "type": "object"
     },
+    "TaskSubmitResponse": {
+      "additionalProperties": false,
+      "description": "Acknowledgement that a task was accepted for background execution.",
+      "properties": {
+        "enqueued_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "queue_position": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "const": "queued",
+          "default": "queued",
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "type": "object"
+    },
     "ThroughputSummary": {
       "additionalProperties": false,
       "properties": {
@@ -6733,6 +6818,9 @@
     "task_status_response": {
       "$ref": "#/$defs/TaskStatusResponse"
     },
+    "task_submit_response": {
+      "$ref": "#/$defs/TaskSubmitResponse"
+    },
     "tool_call": {
       "$ref": "#/$defs/PredictionToolCall"
     },
@@ -6745,6 +6833,7 @@
     "data_frame_response",
     "log_response",
     "task_status_response",
+    "task_submit_response",
     "progress_response",
     "eval_invoke_response",
     "benchmark_entry",

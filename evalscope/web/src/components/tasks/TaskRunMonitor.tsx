@@ -122,6 +122,12 @@ export default function TaskRunMonitor({ taskId, result, stopTask, getLog, activ
           </div>
         )}
       </div>
+      {status === 'queued' && (
+        <p role="status">
+          {t('tasks.state.queued')}
+          {snapshot?.queue_position ? ` · ${t('tasks.queuePosition', { position: snapshot.queue_position })}` : ''}
+        </p>
+      )}
       {['unknown', 'finalizing'].includes(status) && (
         <p role="status">{t(`tasks.state.${status}`)}</p>
       )}

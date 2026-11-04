@@ -51,7 +51,7 @@ class TaskConfigSummary(ApiResponseModel):
 
 
 class ActiveTaskInfo(ApiResponseModel):
-    """Display identity of a task whose subprocess is currently registered."""
+    """Display identity of a task that is queued, running, or recently finished."""
 
     task_id: str
     kind: str  # 'eval' or 'perf'
@@ -60,10 +60,14 @@ class ActiveTaskInfo(ApiResponseModel):
     endpoint: Optional[str] = None  # sanitized host[:port]
     alias: Optional[str] = None
     started_at: str = ''
+    enqueued_at: Optional[str] = None
+    finished_at: Optional[str] = None
     percent: Optional[float] = None
-    status: Literal['preparing', 'running', 'cancelling', 'finalizing', 'completed', 'stopped', 'error', 'unknown'] = (
-        'running'
-    )
+    status: Literal[
+        'queued', 'preparing', 'running', 'cancelling', 'finalizing', 'completed', 'stopped', 'error', 'unknown'
+    ] = 'running'
+    queue_position: Optional[int] = None
+    error: Optional[str] = None
     phase: Optional[str] = None
     current_subrun: Optional[str] = None
     completed_subruns: Optional[int] = None
@@ -77,6 +81,15 @@ class ActiveTaskInfo(ApiResponseModel):
 class ListActiveTasksResponse(ApiResponseModel):
     tasks: List[ActiveTaskInfo]
     total: int
+
+
+class TaskSubmitResponse(ApiResponseModel):
+    """Acknowledgement that a task was accepted for background execution."""
+
+    status: Literal['queued'] = 'queued'
+    task_id: str
+    enqueued_at: Optional[str] = None
+    queue_position: Optional[int] = None
 
 
 class ProgressResponse(ApiResponseModel):

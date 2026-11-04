@@ -93,12 +93,13 @@ export interface WebApiContracts {
   report_metric: ReportMetric;
   report_summary: ReportSummary;
   task_status_response: TaskStatusResponse;
+  task_submit_response: TaskSubmitResponse;
   tool_call: PredictionToolCall;
   value_range: ValueRange;
   [k: string]: any;
 }
 /**
- * Display identity of a task whose subprocess is currently registered.
+ * Display identity of a task that is queued, running, or recently finished.
  */
 export interface ActiveTaskInfo {
   alias?: string | null;
@@ -107,15 +108,20 @@ export interface ActiveTaskInfo {
   current_subrun?: string | null;
   endpoint?: string | null;
   engine?: ("evalscope" | "aiperf") | null;
+  enqueued_at?: string | null;
+  error?: string | null;
+  finished_at?: string | null;
   html_report_url?: string | null;
   kind: string;
   model?: string;
   percent?: number | null;
   phase?: string | null;
   quality?: ("complete" | "partial" | "invalid") | null;
+  queue_position?: number | null;
   report_url?: string | null;
   started_at?: string;
-  status?: "preparing" | "running" | "cancelling" | "finalizing" | "completed" | "stopped" | "error" | "unknown";
+  status?:
+    "queued" | "preparing" | "running" | "cancelling" | "finalizing" | "completed" | "stopped" | "error" | "unknown";
   task_id: string;
   total_subruns?: number | null;
 }
@@ -1395,5 +1401,14 @@ export interface ProgressResponse {
 }
 export interface TaskStatusResponse {
   status: string;
+  task_id: string;
+}
+/**
+ * Acknowledgement that a task was accepted for background execution.
+ */
+export interface TaskSubmitResponse {
+  enqueued_at?: string | null;
+  queue_position?: number | null;
+  status?: "queued";
   task_id: string;
 }

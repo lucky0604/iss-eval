@@ -8,7 +8,7 @@ import tempfile
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from flask import Blueprint, current_app, jsonify, make_response, request, send_file, stream_template_string
 from pydantic import ValidationError
@@ -54,6 +54,7 @@ from evalscope.perf.sla.sla_run import SLAResult, format_sla_tables
 from evalscope.perf.utils.benchmark_util import Metrics
 from evalscope.perf.utils.rich_display import EmbeddingResultAnalyzer, LLMResultAnalyzer
 from evalscope.service.api_models import (
+    ActiveTaskInfo,
     CacheExperimentListResponse,
     CacheExperimentResponse,
     CacheNodeMetricsResponse,
@@ -76,6 +77,7 @@ from evalscope.service.api_models import (
     PerfSinglePlanResponse,
     ProgressResponse,
     TaskStatusResponse,
+    TaskSubmitResponse,
 )
 from evalscope.utils.logger import get_logger
 from evalscope.utils.uri_utils import sanitize_endpoint, validate_http_endpoint
@@ -85,12 +87,14 @@ from ..perf_archive import PerfArchiveError
 from ..responses import json_response
 from ..utils import (
     OUTPUT_DIR,
+    TaskRunner,
     TaskStoppedError,
     active_task_ids,
     build_task_info,
     create_log_file,
     finish_task,
     get_log_content,
+    get_task_queue,
     list_active_tasks,
     read_task_manifest,
     run_in_subprocess,
@@ -99,6 +103,7 @@ from ..utils import (
     stop_process,
     task_file_path,
     validate_task_id,
+    write_task_result,
 )
 from ..utils.process import run_cache_experiment_in_subprocess, run_single_aiperf_in_subprocess, task_is_cancelling
 
@@ -831,46 +836,115 @@ def _validate_performance_config(args: PerfArguments) -> None:
         raise ValueError('The random dataset requires tokenizer_path')
 
 
-def _invoke_aiperf(arguments: AIPerfArguments, task_id: str):
+def _async_requested() -> bool:
+    return request.args.get('async') in ('1', 'true', 'yes')
+
+
+def _submit_queued(task_id: str, task_meta: ActiveTaskInfo, runner: TaskRunner) -> Any:
+    """Accept a performance task for background execution."""
+    try:
+        info = get_task_queue().submit(task_id, 'perf', task_meta, runner)
+    except ValueError:
+        return jsonify({'error': 'Task is already queued or running'}), 409
+    return json_response(
+        TaskSubmitResponse,
+        {
+            'status': 'queued',
+            'task_id': task_id,
+            'enqueued_at': info.get('enqueued_at'),
+            'queue_position': info.get('queue_position'),
+        },
+        status=202,
+    )
+
+
+def _persist_perf_payload(task_id: str, payload: dict) -> dict:
+    try:
+        write_task_result(task_id, payload)
+    except (OSError, ValueError):
+        logger.exception(f'[{task_id}] Failed to persist performance result')
+    return payload
+
+
+def _perf_crash_payload(task_id: str, error: Exception) -> dict:
+    """Record an unexpected AIPerf failure and return its public payload."""
+    finish_task(task_id, 'error')
+    logger.error(f'[{task_id}] AIPerf task failed ({type(error).__name__})')
+    return _persist_perf_payload(
+        task_id, {'status': 'error', 'task_id': task_id, 'error': 'Task failed; check the task log'}
+    )
+
+
+def _run_perf_safely(task_id: str, runner: TaskRunner) -> dict:
+    """Run a queued AIPerf job, converting unexpected failures into a payload."""
+    try:
+        return runner()
+    except Exception as error:  # noqa: BLE001 - the worker must record a terminal result
+        return _perf_crash_payload(task_id, error)
+
+
+def _prepare_cache_experiment(
+    arguments: AIPerfArguments, task_id: str, plan_hash: Optional[str]
+) -> tuple[Optional[CacheSubrunPlan], Any]:
+    """Validate and materialize a cache experiment before it is enqueued."""
+    try:
+        tokenizer = HuggingFacePrefixTokenizer(arguments.tokenizer_path)
+        plan = plan_cache_experiment(arguments, task_id, tokenizer.tokenizer_hash, tokenizer.template_hash)
+        _validate_cache_geometry(arguments, tokenizer)
+        if plan_hash is not None and plan_hash != plan.plan_hash:
+            return None, (jsonify({'error': 'Experiment plan changed; validate again'}), 409)
+        rejection = _required_metrics_preflight(arguments)
+        if rejection is not None:
+            return None, rejection
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        os.mkdir(os.path.join(OUTPUT_DIR, task_id))
+    except FileExistsError:
+        return None, (jsonify({'error': 'Task ID already exists'}), 409)
+    except (ValueError, TypeError, OSError, ImportError, OverflowError):
+        return None, (jsonify({'error': 'Invalid cache experiment configuration or tokenizer'}), 400)
+    return plan, None
+
+
+def _run_cache_experiment(
+    arguments: AIPerfArguments,
+    task_id: str,
+    runtime: ExternalRuntime,
+    plan: CacheSubrunPlan,
+    task_meta: ActiveTaskInfo,
+) -> dict:
+    output_dir = task_file_path(task_id, 'perf')
+    create_log_file(task_id, os.path.join('perf', 'benchmark.log'))
+    context = ExecutionContext(
+        task_id=task_id, output_dir=output_dir, runtime=runtime, expected_plan_hash=plan.plan_hash
+    )
+    outcome = run_cache_experiment_in_subprocess(
+        context, arguments, task_meta=task_meta, finalize=lambda result: finish_task(task_id, result.status)
+    )
+    payload = {'status': outcome.status, 'task_id': task_id, 'result': outcome.model_dump(mode='json')}
+    return _persist_perf_payload(task_id, payload)
+
+
+def _invoke_aiperf(arguments: AIPerfArguments, task_id: str, plan_hash: Optional[str] = None):
     runtime = _aiperf_runtime()
     if runtime is None:
         return jsonify({'error': 'AIPerf 0.13.0 runtime is unavailable'}), 503
     if arguments.cache_experiment is None:
         return _invoke_single_aiperf(arguments, task_id, runtime)
+    plan, error_response = _prepare_cache_experiment(arguments, task_id, plan_hash)
+    if error_response is not None:
+        return error_response
+    meta = build_task_info(task_id, 'perf', arguments, arguments.alias, engine='aiperf')
+    if _async_requested():
+        return _submit_queued(
+            task_id,
+            meta,
+            lambda: _run_perf_safely(task_id, lambda: _run_cache_experiment(arguments, task_id, runtime, plan, meta)),
+        )
     try:
-        tokenizer = HuggingFacePrefixTokenizer(arguments.tokenizer_path)
-        plan = plan_cache_experiment(arguments, task_id, tokenizer.tokenizer_hash, tokenizer.template_hash)
-        _validate_cache_geometry(arguments, tokenizer)
-        expected = request.headers.get('EvalScope-Plan-Hash')
-        if expected is not None and expected != plan.plan_hash:
-            return jsonify({'error': 'Experiment plan changed; validate again'}), 409
-        rejection = _required_metrics_preflight(arguments)
-        if rejection is not None:
-            return rejection
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        os.mkdir(os.path.join(OUTPUT_DIR, task_id))
-    except FileExistsError:
-        return jsonify({'error': 'Task ID already exists'}), 409
-    except (ValueError, TypeError, OSError, ImportError, OverflowError):
-        return jsonify({'error': 'Invalid cache experiment configuration or tokenizer'}), 400
-    try:
-        output_dir = task_file_path(task_id, 'perf')
-        create_log_file(task_id, os.path.join('perf', 'benchmark.log'))
-        meta = build_task_info(task_id, 'perf', arguments, arguments.alias, engine='aiperf')
-        context = ExecutionContext(
-            task_id=task_id, output_dir=output_dir, runtime=runtime, expected_plan_hash=plan.plan_hash
-        )
-        outcome = run_cache_experiment_in_subprocess(
-            context, arguments, task_meta=meta, finalize=lambda result: finish_task(task_id, result.status)
-        )
-        return json_response(
-            PerfInvokeResponse,
-            {'status': outcome.status, 'task_id': task_id, 'result': outcome.model_dump(mode='json')},
-        )
+        payload = _run_cache_experiment(arguments, task_id, runtime, plan, meta)
     except Exception as error:
-        finish_task(task_id, 'error')
-        logger.error(f'[{task_id}] AIPerf task failed ({type(error).__name__})')
-        return jsonify({'status': 'error', 'task_id': task_id, 'error': 'Task failed; check the task log'}), 500
+        return jsonify(_perf_crash_payload(task_id, error)), 500
+    return json_response(PerfInvokeResponse, payload)
 
 
 def _required_metrics_preflight(arguments: AIPerfArguments):
@@ -892,20 +966,23 @@ def _required_metrics_preflight(arguments: AIPerfArguments):
     return None
 
 
-def _invoke_single_aiperf(arguments: AIPerfArguments, task_id: str, runtime: ExternalRuntime):
+def _prepare_single_aiperf(
+    arguments: AIPerfArguments, task_id: str, runtime: ExternalRuntime
+) -> tuple[Optional[dict], Any]:
+    """Validate and materialize one inline-prompt run before it is enqueued."""
     try:
         validate_single_run_configuration(arguments)
         if arguments.input_prompts is None:
             raise ValueError('Single-run inputs are required')
         rejection = _required_metrics_preflight(arguments)
         if rejection is not None:
-            return rejection
+            return None, rejection
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         os.mkdir(os.path.join(OUTPUT_DIR, task_id))
     except FileExistsError:
-        return jsonify({'error': 'Task ID already exists'}), 409
+        return None, (jsonify({'error': 'Task ID already exists'}), 409)
     except (ValueError, OSError):
-        return jsonify({'error': 'Invalid single-run configuration or inputs'}), 400
+        return None, (jsonify({'error': 'Invalid single-run configuration or inputs'}), 400)
     try:
         output_dir = task_file_path(task_id, 'perf')
         create_log_file(task_id, os.path.join('perf', 'benchmark.log'))
@@ -940,102 +1017,116 @@ def _invoke_single_aiperf(arguments: AIPerfArguments, task_id: str, runtime: Ext
             else None,
         )
         write_single_manifest(output_dir, manifest)
-        context = ExecutionContext(task_id=task_id, output_dir=output_dir, runtime=runtime)
-        final_status: list[str] = []
+    except (ValueError, OSError):
+        return None, (jsonify({'error': 'Invalid single-run configuration or inputs'}), 400)
+    return {'output_dir': output_dir, 'input_file': input_file, 'meta': meta, 'manifest': manifest}, None
 
-        def finalize(outcome: ExecutionOutcome) -> None:
-            status = {'completed': 'completed', 'cancelled': 'stopped', 'error': 'error'}[outcome.exit_reason]
-            if not outcome.cleanup_confirmed:
-                status = 'error'
-            normalized = None
-            quality = None
-            quality_reasons = []
-            raw_dir = os.path.realpath(os.path.join(output_dir, 'raw', 'aiperf'))
-            valid_raw = (
-                outcome.raw_artifact_dir is not None
-                and os.path.realpath(outcome.raw_artifact_dir) == raw_dir
-                and os.path.commonpath([os.path.realpath(output_dir), raw_dir]) == os.path.realpath(output_dir)
-            )
-            if (
-                outcome.cleanup_confirmed
-                and valid_raw
-                and os.path.isfile(os.path.join(raw_dir, 'profile_export.jsonl'))
-            ):
-                try:
-                    result = import_aiperf_run(
-                        AIPerfImportArguments(
-                            raw_dir=raw_dir,
-                            normalized_dir=os.path.join(output_dir, 'normalized'),
-                            allow_partial_tail=outcome.exit_reason != 'completed',
-                            metrics_required=arguments.telemetry.required,
-                            targets=[
-                                MetricTargetReference(
-                                    node_id=target.node_id,
-                                    role=target.role,
-                                    engine=target.engine,
-                                    url=target.url,
-                                    labels=target.labels,
-                                )
-                                for target in arguments.telemetry.targets
-                            ],
-                        )
+
+def _run_single_aiperf(prepared: dict, arguments: AIPerfArguments, task_id: str, runtime: ExternalRuntime) -> dict:
+    output_dir = prepared['output_dir']
+    input_file = prepared['input_file']
+    meta = prepared['meta']
+    manifest = prepared['manifest']
+    context = ExecutionContext(task_id=task_id, output_dir=output_dir, runtime=runtime)
+    final_status: list[str] = []
+
+    def finalize(outcome: ExecutionOutcome) -> None:
+        status = {'completed': 'completed', 'cancelled': 'stopped', 'error': 'error'}[outcome.exit_reason]
+        if not outcome.cleanup_confirmed:
+            status = 'error'
+        normalized = None
+        quality = None
+        quality_reasons = []
+        raw_dir = os.path.realpath(os.path.join(output_dir, 'raw', 'aiperf'))
+        valid_raw = (
+            outcome.raw_artifact_dir is not None
+            and os.path.realpath(outcome.raw_artifact_dir) == raw_dir
+            and os.path.commonpath([os.path.realpath(output_dir), raw_dir]) == os.path.realpath(output_dir)
+        )
+        if outcome.cleanup_confirmed and valid_raw and os.path.isfile(os.path.join(raw_dir, 'profile_export.jsonl')):
+            try:
+                result = import_aiperf_run(
+                    AIPerfImportArguments(
+                        raw_dir=raw_dir,
+                        normalized_dir=os.path.join(output_dir, 'normalized'),
+                        allow_partial_tail=outcome.exit_reason != 'completed',
+                        metrics_required=arguments.telemetry.required,
+                        targets=[
+                            MetricTargetReference(
+                                node_id=target.node_id,
+                                role=target.role,
+                                engine=target.engine,
+                                url=target.url,
+                                labels=target.labels,
+                            )
+                            for target in arguments.telemetry.targets
+                        ],
                     )
-                    normalized, quality, quality_reasons = 'normalized', result.quality, result.quality_reasons
-                    if arguments.telemetry.targets:
-                        gap = (
-                            arguments.telemetry.max_scrape_gap_seconds
-                            or 2 * arguments.telemetry.sample_interval_seconds
-                        )
-                        analysis = analyze_node_metrics(os.path.join(output_dir, 'normalized'), max(1, int(gap * 1e9)))
-                        write_experiment_json(Path(output_dir) / 'node_analysis.json', analysis.model_dump(mode='json'))
-                        if quality == 'complete':
-                            quality = 'partial'
-                        quality_reasons = [*quality_reasons, *analysis.quality_reasons]
-                        if arguments.telemetry.required and not covers_node_ids(
-                            analysis, [target.node_id for target in arguments.telemetry.targets]
-                        ):
-                            quality = 'invalid'
-                            quality_reasons.append('required_telemetry_missing')
-                except (OSError, ValueError):
-                    if normalized is None:
-                        quality_reasons = ['result_import_failed']
-                    else:
-                        quality_reasons = [*quality_reasons, 'node_analysis_failed']
-                        quality = 'invalid' if arguments.telemetry.required else 'partial'
-            if status == 'completed' and (normalized is None or quality == 'invalid'):
-                status = 'error'
-            final_manifest = manifest.model_copy(
-                update={
-                    'status': status,
-                    'artifact_status': outcome.artifact_status,
-                    'normalized': normalized,
-                    'quality': quality,
-                    'quality_reasons': quality_reasons,
-                }
-            )
-            write_single_manifest(output_dir, final_manifest)
-            finish_task(task_id, status)
-            final_status.append(status)
-
-        outcome = run_single_aiperf_in_subprocess(
-            context,
-            AIPerfSingleRunRequest(arguments=arguments, input_file=input_file),
-            task_meta=meta,
-            finalize=finalize,
-        )
-        status = final_status[0]
-        return json_response(
-            PerfInvokeResponse,
-            {
+                )
+                normalized, quality, quality_reasons = 'normalized', result.quality, result.quality_reasons
+                if arguments.telemetry.targets:
+                    gap = arguments.telemetry.max_scrape_gap_seconds or 2 * arguments.telemetry.sample_interval_seconds
+                    analysis = analyze_node_metrics(os.path.join(output_dir, 'normalized'), max(1, int(gap * 1e9)))
+                    write_experiment_json(Path(output_dir) / 'node_analysis.json', analysis.model_dump(mode='json'))
+                    if quality == 'complete':
+                        quality = 'partial'
+                    quality_reasons = [*quality_reasons, *analysis.quality_reasons]
+                    if arguments.telemetry.required and not covers_node_ids(
+                        analysis, [target.node_id for target in arguments.telemetry.targets]
+                    ):
+                        quality = 'invalid'
+                        quality_reasons.append('required_telemetry_missing')
+            except (OSError, ValueError):
+                if normalized is None:
+                    quality_reasons = ['result_import_failed']
+                else:
+                    quality_reasons = [*quality_reasons, 'node_analysis_failed']
+                    quality = 'invalid' if arguments.telemetry.required else 'partial'
+        if status == 'completed' and (normalized is None or quality == 'invalid'):
+            status = 'error'
+        final_manifest = manifest.model_copy(
+            update={
                 'status': status,
-                'task_id': task_id,
-                'result': outcome.model_dump(mode='json', exclude={'raw_artifact_dir'}),
-            },
+                'artifact_status': outcome.artifact_status,
+                'normalized': normalized,
+                'quality': quality,
+                'quality_reasons': quality_reasons,
+            }
         )
+        write_single_manifest(output_dir, final_manifest)
+        finish_task(task_id, status)
+        final_status.append(status)
+
+    outcome = run_single_aiperf_in_subprocess(
+        context,
+        AIPerfSingleRunRequest(arguments=arguments, input_file=input_file),
+        task_meta=meta,
+        finalize=finalize,
+    )
+    status = final_status[0] if final_status else ('stopped' if outcome.exit_reason == 'cancelled' else 'error')
+    payload = {
+        'status': status,
+        'task_id': task_id,
+        'result': outcome.model_dump(mode='json', exclude={'raw_artifact_dir'}),
+    }
+    return _persist_perf_payload(task_id, payload)
+
+
+def _invoke_single_aiperf(arguments: AIPerfArguments, task_id: str, runtime: ExternalRuntime):
+    prepared, error_response = _prepare_single_aiperf(arguments, task_id, runtime)
+    if error_response is not None:
+        return error_response
+    if _async_requested():
+        return _submit_queued(
+            task_id,
+            prepared['meta'],
+            lambda: _run_perf_safely(task_id, lambda: _run_single_aiperf(prepared, arguments, task_id, runtime)),
+        )
+    try:
+        payload = _run_single_aiperf(prepared, arguments, task_id, runtime)
     except Exception as error:
-        finish_task(task_id, 'error')
-        logger.error(f'[{task_id}] AIPerf task failed ({type(error).__name__})')
-        return jsonify({'status': 'error', 'task_id': task_id, 'error': 'Task failed; check the task log'}), 500
+        return jsonify(_perf_crash_payload(task_id, error)), 500
+    return json_response(PerfInvokeResponse, payload)
 
 
 @bp_perf.route('/invoke', methods=['POST'])
@@ -1062,7 +1153,7 @@ def run_performance_test():
         except (ValueError, TypeError):
             return jsonify({'error': 'Invalid performance configuration'}), 400
         if task_args.engine == 'aiperf':
-            return _invoke_aiperf(task_args.aiperf, task_id)
+            return _invoke_aiperf(task_args.aiperf, task_id, plan_hash=request.headers.get('EvalScope-Plan-Hash'))
         data = dict(data['native'])
 
     required_fields = ['model']
@@ -1111,23 +1202,34 @@ def run_performance_test():
     create_log_file(task_id, os.path.join('perf', 'benchmark.log'))
 
     task_meta = build_task_info(task_id, 'perf', perf_args, perf_args.alias)
+
+    def runner() -> dict:
+        return _run_native_perf(task_id, perf_args, task_meta)
+
+    if _async_requested():
+        return _submit_queued(task_id, task_meta, runner)
+    payload = runner()
+    if payload['status'] == 'error':
+        return jsonify(payload), 500
+    return json_response(EvalInvokeResponse, payload)
+
+
+def _run_native_perf(task_id: str, perf_args: PerfArguments, task_meta: ActiveTaskInfo) -> dict:
     try:
         result = run_in_subprocess(run_perf_wrapper, perf_args, task_id=task_id, task_meta=task_meta)
         table_str = _build_perf_table(result, api_type=perf_args.api)
         finish_task(task_id, 'completed')
         logger.info(f'[{task_id}] Task completed successfully')
-        return json_response(
-            EvalInvokeResponse,
-            {'status': 'completed', 'task_id': task_id, 'result': serialize_result(result), 'table': table_str},
-        )
+        payload = {'status': 'completed', 'task_id': task_id, 'result': serialize_result(result), 'table': table_str}
     except TaskStoppedError:
         finish_task(task_id, 'stopped')
         logger.info(f'[{task_id}] Task stopped by user.')
-        return json_response(EvalInvokeResponse, {'status': 'stopped', 'task_id': task_id})
+        payload = {'status': 'stopped', 'task_id': task_id}
     except Exception as e:
         finish_task(task_id, 'error')
         logger.error(f'[{task_id}] Task failed: {e}')
-        return jsonify({'status': 'error', 'task_id': task_id, 'error': 'Task failed; check the task log'}), 500
+        payload = {'status': 'error', 'task_id': task_id, 'error': 'Task failed; check the task log'}
+    return _persist_perf_payload(task_id, payload)
 
 
 @bp_perf.route('/stop', methods=['POST'])
@@ -1143,6 +1245,9 @@ def stop_performance_test():
 
     try:
         validate_task_id(task_id)
+        state = get_task_queue().cancel(task_id)
+        if state == 'stopped':
+            return json_response(TaskStatusResponse, {'status': 'stopped', 'task_id': task_id})
         stopped = stop_process(task_id)
     except ValueError:
         return jsonify({'error': 'Invalid task_id'}), 400

@@ -1,11 +1,12 @@
 import { apiDeleteValidated, apiPostValidated, apiValidated } from './client'
-import type { PerfEnginesResponse, PerfInvokeResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, CacheExperimentResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse, CacheRepetitionsResponse, CacheNodeSeriesResponse } from './generated/contracts'
+import type { PerfEnginesResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, CacheExperimentResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse, CacheRepetitionsResponse, CacheNodeSeriesResponse } from './generated/contracts'
 import type {
   DeletePerfRunResponse,
   ListPerfRunsResponse,
   PerfDetailResponse,
   PerfRequestsResponse,
   PerfRunsListResponse,
+  TaskSubmitResponse,
 } from './types'
 import { createTaskApi } from './task'
 
@@ -32,9 +33,10 @@ export function validatePerfExperiment(payload: Record<string, unknown>, taskId:
   })
 }
 
-export function submitPerfExperiment(payload: Record<string, unknown>, taskId: string): Promise<PerfInvokeResponse> {
+export function submitPerfExperiment(payload: Record<string, unknown>, taskId: string): Promise<TaskSubmitResponse> {
   return validatePerfExperiment(payload, taskId).then((preview) => apiPostValidated('/api/v1/perf/invoke', payload, {
     headers: { 'EvalScope-Task-Id': taskId, 'EvalScope-Plan-Hash': preview.plan.plan_hash },
+    params: { async: 1 },
   }))
 }
 
@@ -45,9 +47,12 @@ export function validatePerfSingle(payload: Record<string, unknown>, taskId: str
   })
 }
 
-export async function submitPerfSingle(payload: Record<string, unknown>, taskId: string): Promise<PerfInvokeResponse> {
+export async function submitPerfSingle(payload: Record<string, unknown>, taskId: string): Promise<TaskSubmitResponse> {
   await validatePerfSingle(payload, taskId)
-  return apiPostValidated('/api/v1/perf/invoke', payload, { headers: { 'EvalScope-Task-Id': taskId } })
+  return apiPostValidated('/api/v1/perf/invoke', payload, {
+    headers: { 'EvalScope-Task-Id': taskId },
+    params: { async: 1 },
+  })
 }
 
 export function getCacheExperiment(taskId: string, signal?: AbortSignal): Promise<CacheExperimentResponse> {

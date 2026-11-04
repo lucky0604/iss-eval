@@ -8,13 +8,26 @@ from flask.typing import ResponseReturnValue
 from pydantic import ValidationError
 
 from evalscope.report.data_frames import scan_report_refs
-from evalscope.service.api_models import ActiveTaskInfo, ListActiveTasksResponse
+from evalscope.service.api_models import (
+    ActiveTaskInfo,
+    EvalInvokeResponse,
+    ListActiveTasksResponse,
+    TaskStatusResponse,
+)
 from evalscope.service.api_models.common import TaskConfigSummary
 from evalscope.utils.logger import get_logger
 from evalscope.utils.uri_utils import sanitize_endpoint
 
 from ..responses import json_response
-from ..utils import OUTPUT_DIR, list_active_tasks, read_task_manifest, task_file_path, validate_task_id
+from ..utils import (
+    OUTPUT_DIR,
+    get_task_queue,
+    list_active_tasks,
+    read_task_manifest,
+    read_task_result,
+    task_file_path,
+    validate_task_id,
+)
 
 logger = get_logger()
 
@@ -95,6 +108,9 @@ def _aiperf_progress(task_id: str) -> dict:
 
 
 def _with_progress(record: dict) -> dict:
+    if record.get('status') == 'queued':
+        record['percent'] = 0.0
+        return record
     if record.get('engine') == 'aiperf':
         record.update(_aiperf_progress(record['task_id']))
         if record.get('status') != 'cancelling':
@@ -203,6 +219,9 @@ def get_task(task_id: str) -> ResponseReturnValue:
     active = next((item for item in list_active_tasks() if item['task_id'] == task_id), None)
     if active:
         return json_response(ActiveTaskInfo, _with_progress(active))
+    queued = get_task_queue().get(task_id)
+    if queued is not None:
+        return json_response(ActiveTaskInfo, _with_progress(queued))
     run_dir = os.path.join(OUTPUT_DIR, task_id)
     manifest = read_task_manifest(run_dir)
     if manifest is None:
@@ -224,18 +243,45 @@ def get_task(task_id: str) -> ResponseReturnValue:
 
 @bp_tasks.route('/active', methods=['GET'])
 def list_active() -> ResponseReturnValue:
-    """List tasks whose subprocess is currently registered on this service.
+    """List tasks that are queued or whose subprocess is registered on this service.
 
-    The registry is in-memory: tasks vanish from this list when they finish or
-    when the service restarts. This registry does not recover or supervise
-    child processes left behind by an abrupt service shutdown.
+    Queued tasks live only in the in-process queue; started tasks live in the
+    subprocess registry. Both are in-memory, so the list is empty after a
+    service restart and child processes left behind by an abrupt shutdown are
+    not recovered or supervised.
     """
     try:
-        tasks = []
+        records = {task['task_id']: task for task in get_task_queue().list()}
         for record in list_active_tasks():
-            tasks.append(_with_progress(record))
-        tasks.sort(key=lambda t: t.get('started_at', ''), reverse=True)
+            records[record['task_id']] = record
+        tasks = [_with_progress(record) for record in records.values()]
+        tasks.sort(key=lambda t: t.get('started_at') or t.get('enqueued_at') or '', reverse=True)
         return json_response(ListActiveTasksResponse, {'tasks': tasks, 'total': len(tasks)})
     except Exception as e:
         logger.error(f'Failed to list active tasks: {e}')
         return jsonify({'error': str(e)}), 500
+
+
+@bp_tasks.route('/<task_id>/result', methods=['GET'])
+def get_task_result(task_id: str) -> ResponseReturnValue:
+    """Return the persisted invoke payload of a finished task.
+
+    Clients use this after a reload to recover the result of a task that
+    completed while the page was closed. Responds 202 while the task is still
+    queued or running and 404 when no result was persisted.
+    """
+    try:
+        validate_task_id(task_id)
+    except ValueError:
+        return jsonify({'error': 'Invalid task_id'}), 400
+    payload = read_task_result(task_id)
+    if payload is not None:
+        return json_response(EvalInvokeResponse, payload)
+    active = get_task_queue().get(task_id) or next(
+        (item for item in list_active_tasks() if item['task_id'] == task_id), None
+    )
+    if active is not None:
+        return json_response(
+            TaskStatusResponse, {'status': active.get('status', 'running'), 'task_id': task_id}, status=202
+        )
+    return jsonify({'error': f'Result not found for task_id: {task_id}'}), 404

@@ -14,6 +14,7 @@ from .common import (
     ProgressResponse,
     TaskConfigSummary,
     TaskStatusResponse,
+    TaskSubmitResponse,
 )
 from .eval import BenchmarkEntry, BenchmarksResponse, EvalInvokeResponse
 from .perf import (
@@ -70,6 +71,7 @@ class WebApiContracts(BaseModel):
     data_frame_response: DataFrameResponse
     log_response: LogResponse
     task_status_response: TaskStatusResponse
+    task_submit_response: TaskSubmitResponse
     progress_response: ProgressResponse
     eval_invoke_response: EvalInvokeResponse
     benchmark_entry: BenchmarkEntry
@@ -158,6 +160,7 @@ __all__ = [
     'PredictionsResponse',
     'ProgressResponse',
     'TaskStatusResponse',
+    'TaskSubmitResponse',
     'TaskConfigSummary',
     'WebApiContracts',
 ]
