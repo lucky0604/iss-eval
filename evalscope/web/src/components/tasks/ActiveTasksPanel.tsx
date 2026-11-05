@@ -26,7 +26,10 @@ function ActiveTaskRow({ task, onAdopt, selected }: ActiveTaskRowProps) {
   if (typeof task.percent === 'number' && Number.isFinite(task.percent)) {
     percent = Math.max(0, Math.min(100, task.percent))
   }
-  const progressLabel = percent === null ? t(`tasks.state.${task.status}`) : `${Math.round(percent)}%`
+  const queued = task.status === 'queued'
+  const progressLabel = queued
+    ? (task.queue_position ? `#${task.queue_position}` : t('tasks.state.queued'))
+    : percent === null ? t(`tasks.state.${task.status}`) : `${Math.round(percent)}%`
 
   return (
     <div className={`flex flex-wrap items-center gap-3 px-5 py-3 ${selected ? 'bg-[var(--accent-dim)]' : ''}`}>
@@ -49,8 +52,8 @@ function ActiveTaskRow({ task, onAdopt, selected }: ActiveTaskRowProps) {
             aria-valuenow={percent ?? undefined}
             aria-valuemin={0}
             aria-valuemax={100}
-            className={`h-full rounded-full bg-[var(--accent)] transition-all ${percent === null ? 'animate-pulse' : ''}`}
-            style={{ width: percent === null ? '30%' : `${percent}%` }}
+            className={`h-full rounded-full bg-[var(--accent)] transition-all ${queued || percent === null ? 'animate-pulse' : ''}`}
+            style={{ width: queued || percent === null ? '30%' : `${percent}%` }}
           />
         </div>
         <span className="type-caption-mono w-10 text-right text-[var(--text-muted)]">{progressLabel}</span>

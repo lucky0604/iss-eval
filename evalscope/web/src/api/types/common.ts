@@ -10,4 +10,5 @@ export type {
   ListActiveTasksResponse,
   LogResponse,
   TaskStatusResponse,
+  TaskSubmitResponse,
 } from '@/api/generated/contracts'

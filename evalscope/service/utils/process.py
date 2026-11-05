@@ -5,13 +5,18 @@ import sys
 import tempfile
 import threading
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from multiprocessing.connection import wait
-from typing import Iterator, List, Optional, TextIO
+from typing import Any, Callable, Iterator, List, Optional, TextIO, Type
 
 from evalscope.config import TaskConfig
 from evalscope.perf.arguments import Arguments as PerfArguments
+from evalscope.perf.executors.arguments import AIPerfArguments
+from evalscope.perf.executors.external import run_external
+from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, ExternalInvocation
+from evalscope.perf.experiments.orchestrator import CacheExperimentOutcome
+from evalscope.perf.integrations.aiperf.single_run import AIPerfSingleRunRequest, run_single
 from evalscope.perf.main import run_perf_benchmark
 from evalscope.run import run_task
 from evalscope.service.api_models.common import ActiveTaskInfo
@@ -26,6 +31,10 @@ class ActiveTask:
 
     proc: multiprocessing.Process
     info: ActiveTaskInfo
+    cancel_event: Any = None
+    cleanup_event: threading.Event = field(default_factory=threading.Event)
+    external_outcome: Optional[ExecutionOutcome | CacheExperimentOutcome] = None
+    stop_timeout: float = 0
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +86,13 @@ def active_task_ids() -> set[str]:
         return set(_active_processes.keys())
 
 
+def task_is_cancelling(task_id: str) -> bool:
+    """Return whether an active external task is awaiting cleanup."""
+    with _active_lock:
+        record = _active_processes.get(task_id)
+        return bool(record and record.info.status == 'cancelling')
+
+
 def list_active_tasks() -> List[dict]:
     """Return display metadata for every registered task (without process handles)."""
     with _active_lock:
@@ -90,10 +106,25 @@ def stop_process(task_id: str) -> bool:
     Returns True if a process was found and terminated, False otherwise.
     """
     with _active_lock:
-        record = _active_processes.pop(task_id, None)
+        record = _active_processes.get(task_id)
+        if record is not None and record.cancel_event is None:
+            _active_processes.pop(task_id, None)
     if record is None:
         return False
     proc = record.proc
+    if record.cancel_event is not None:
+        if wait([proc.sentinel], timeout=0):
+            return False
+        with _active_lock:
+            if _active_processes.get(task_id) is record:
+                record.info = record.info.model_copy(update={'status': 'cancelling'})
+        record.cancel_event.set()
+        if not record.cleanup_event.wait(timeout=record.stop_timeout):
+            return False
+        outcome = record.external_outcome
+        if isinstance(outcome, ExecutionOutcome):
+            return outcome.exit_reason == 'cancelled' and outcome.cleanup_confirmed
+        return bool(outcome and outcome.status == 'stopped' and outcome.cleanup_confirmed)
     if wait([proc.sentinel], timeout=0):
         # Process already exited on its own; do NOT mark as user-stopped, or a
         # pending success result would be masked as TaskStoppedError. Treat the
@@ -264,6 +295,167 @@ def run_eval_wrapper(task_config: TaskConfig):
 def run_perf_wrapper(perf_args: PerfArguments):
     """Run a performance benchmark and return the result."""
     return run_perf_benchmark(perf_args)
+
+
+def _external_worker(
+    context: ExecutionContext, invocation: ExternalInvocation, cancel_event: Any, start_event: Any
+) -> ExecutionOutcome:
+    while not start_event.wait(timeout=0.1):
+        parent = multiprocessing.parent_process()
+        if parent is not None and not parent.is_alive():
+            return ExecutionOutcome(exit_reason='error', artifact_status='missing', cleanup_confirmed=True)
+    return run_external(context, invocation, cancel_event=cancel_event)
+
+
+def run_external_in_subprocess(
+    context: ExecutionContext, invocation: ExternalInvocation, task_meta: Optional[ActiveTaskInfo] = None
+) -> ExecutionOutcome:
+    """Run an external task with registered cancellation and confirmed cleanup."""
+    result = _run_controlled_subprocess(context, _external_worker, invocation, ExecutionOutcome, task_meta)
+    assert isinstance(result, ExecutionOutcome)
+    return result
+
+
+def _single_aiperf_worker(
+    context: ExecutionContext, request: AIPerfSingleRunRequest, cancel_event: Any, start_event: Any
+) -> ExecutionOutcome:
+    while not start_event.wait(timeout=0.1):
+        parent = multiprocessing.parent_process()
+        if parent is not None and not parent.is_alive():
+            return ExecutionOutcome(exit_reason='error', artifact_status='missing', cleanup_confirmed=True)
+    return run_single(request.arguments, context, request.input_file, cancel_event)
+
+
+def run_single_aiperf_in_subprocess(
+    context: ExecutionContext,
+    request: AIPerfSingleRunRequest,
+    task_meta: Optional[ActiveTaskInfo] = None,
+    finalize: Optional[Callable[[ExecutionOutcome], None]] = None,
+) -> ExecutionOutcome:
+    """Run one validated AIPerf task under the same cancellation supervisor."""
+    result = _run_controlled_subprocess(context, _single_aiperf_worker, request, ExecutionOutcome, task_meta, finalize)
+    assert isinstance(result, ExecutionOutcome)
+    return result
+
+
+def _experiment_worker(
+    context: ExecutionContext, arguments: AIPerfArguments, cancel_event: Any, start_event: Any
+) -> CacheExperimentOutcome:
+    from evalscope.perf.experiments.orchestrator import run_cache_experiment
+    from evalscope.perf.experiments.prefix_workload import WorkloadCancelled
+    from evalscope.perf.experiments.tokenizer import HuggingFacePrefixTokenizer
+
+    while not start_event.wait(timeout=0.1):
+        parent = multiprocessing.parent_process()
+        if parent is not None and not parent.is_alive():
+            return CacheExperimentOutcome(
+                status='error',
+                quality='invalid',
+                plan_hash='',
+                completed_subruns=0,
+                total_subruns=0,
+                cleanup_confirmed=True,
+            )
+    try:
+        if cancel_event.is_set():
+            raise WorkloadCancelled()
+        tokenizer = HuggingFacePrefixTokenizer(arguments.tokenizer_path)
+        pool = tokenizer.candidate_ids(max(16384, arguments.load.request_count), cancel_event)
+        return run_cache_experiment(
+            arguments, context, tokenizer, pool, tokenizer.tokenizer_hash, tokenizer.template_hash, cancel_event
+        )
+    except WorkloadCancelled:
+        return CacheExperimentOutcome(
+            status='stopped',
+            quality='partial',
+            plan_hash='',
+            completed_subruns=0,
+            total_subruns=0,
+            cleanup_confirmed=True,
+        )
+
+
+def run_cache_experiment_in_subprocess(
+    context: ExecutionContext,
+    arguments: AIPerfArguments,
+    task_meta: Optional[ActiveTaskInfo] = None,
+    finalize: Optional[Callable[[CacheExperimentOutcome], None]] = None,
+) -> CacheExperimentOutcome:
+    """Run a cache experiment with service-owned cancellation and cleanup."""
+    result = _run_controlled_subprocess(
+        context, _experiment_worker, arguments, CacheExperimentOutcome, task_meta, finalize
+    )
+    assert isinstance(result, CacheExperimentOutcome)
+    return result
+
+
+def _run_controlled_subprocess(
+    context: ExecutionContext,
+    worker: Callable[..., Any],
+    payload: ExternalInvocation | AIPerfArguments | AIPerfSingleRunRequest,
+    result_type: Type[ExecutionOutcome] | Type[CacheExperimentOutcome],
+    task_meta: Optional[ActiveTaskInfo],
+    finalize: Optional[Callable[[Any], None]] = None,
+) -> ExecutionOutcome | CacheExperimentOutcome:
+    if context.runtime is None:
+        raise ValueError('External runtime is required')
+    ctx = multiprocessing.get_context('spawn')
+    result_queue = ctx.Queue()
+    cancel_event = ctx.Event()
+    start_event = ctx.Event()
+    proc = ctx.Process(target=_process_worker, args=(worker, result_queue, context, payload, cancel_event, start_event))
+    info = task_meta or ActiveTaskInfo(task_id=context.task_id, kind='perf', started_at=datetime.now().isoformat())
+    runtime = context.runtime
+    record = ActiveTask(
+        proc=proc,
+        info=info.model_copy(update={'status': 'running'}),
+        cancel_event=cancel_event,
+        stop_timeout=runtime.graceful_timeout + runtime.terminate_timeout + runtime.kill_timeout + 8,
+    )
+    try:
+        with _active_lock:
+            if context.task_id in _active_processes:
+                raise ValueError('Task is already running')
+            proc.start()
+            _active_processes[context.task_id] = record
+    except BaseException:
+        result_queue.close()
+        raise
+    result = None
+    try:
+        start_event.set()
+        while proc.is_alive():
+            try:
+                result = result_queue.get(timeout=0.1)
+                break
+            except queue.Empty:
+                continue
+        proc.join()
+        if result is None:
+            try:
+                result = result_queue.get_nowait()
+            except queue.Empty:
+                pass
+        if result is None or result.get('status') != 'success' or not isinstance(result.get('result'), result_type):
+            raise RuntimeError('External task ended without a confirmed outcome')
+        record.external_outcome = result['result']
+        if finalize is not None:
+            finalize(record.external_outcome)
+        return record.external_outcome
+    except BaseException:
+        cancel_event.set()
+        if not wait([proc.sentinel], timeout=record.stop_timeout):
+            proc.terminate()
+            if not wait([proc.sentinel], timeout=2):
+                proc.kill()
+        proc.join()
+        raise
+    finally:
+        with _active_lock:
+            if _active_processes.get(context.task_id) is record:
+                _active_processes.pop(context.task_id, None)
+        record.cleanup_event.set()
+        result_queue.close()
 
 
 def serialize_result(result):

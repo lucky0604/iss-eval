@@ -1,10 +1,12 @@
-import { apiDeleteValidated, apiValidated } from './client'
+import { apiDeleteValidated, apiPostValidated, apiValidated } from './client'
+import type { PerfEnginesResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, CacheExperimentResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse, CacheRepetitionsResponse, CacheNodeSeriesResponse } from './generated/contracts'
 import type {
   DeletePerfRunResponse,
   ListPerfRunsResponse,
   PerfDetailResponse,
   PerfRequestsResponse,
   PerfRunsListResponse,
+  TaskSubmitResponse,
 } from './types'
 import { createTaskApi } from './task'
 
@@ -15,6 +17,99 @@ export const getPerfProgress = perfTaskApi.progress
 export const getPerfLog = perfTaskApi.log
 export const getPerfReportUrl = perfTaskApi.reportUrl
 export const stopPerfTask = perfTaskApi.stop
+
+export function getPerfEngines(signal?: AbortSignal): Promise<PerfEnginesResponse> {
+  return apiValidated('/api/v1/perf/engines', { signal })
+}
+
+export function getLivePerfMetrics(taskId: string, signal?: AbortSignal): Promise<PerfLiveResponse> {
+  return apiValidated(`/api/v1/perf/live/${encodeURIComponent(taskId)}`, { signal })
+}
+
+export function validatePerfExperiment(payload: Record<string, unknown>, taskId: string, signal?: AbortSignal,
+                                       probeMetrics = false): Promise<PerfPlanResponse> {
+  return apiPostValidated('/api/v1/perf/validate', payload, {
+    headers: { 'EvalScope-Task-Id': taskId }, signal, params: { probe_metrics: probeMetrics ? 1 : 0 },
+  })
+}
+
+export function submitPerfExperiment(payload: Record<string, unknown>, taskId: string): Promise<TaskSubmitResponse> {
+  return validatePerfExperiment(payload, taskId).then((preview) => apiPostValidated('/api/v1/perf/invoke', payload, {
+    headers: { 'EvalScope-Task-Id': taskId, 'EvalScope-Plan-Hash': preview.plan.plan_hash },
+    params: { async: 1 },
+  }))
+}
+
+export function validatePerfSingle(payload: Record<string, unknown>, taskId: string, signal?: AbortSignal,
+                                   probeMetrics = false): Promise<PerfSinglePlanResponse> {
+  return apiPostValidated('/api/v1/perf/validate-single', payload, {
+    headers: { 'EvalScope-Task-Id': taskId }, signal, params: { probe_metrics: probeMetrics ? 1 : 0 },
+  })
+}
+
+export async function submitPerfSingle(payload: Record<string, unknown>, taskId: string): Promise<TaskSubmitResponse> {
+  await validatePerfSingle(payload, taskId)
+  return apiPostValidated('/api/v1/perf/invoke', payload, {
+    headers: { 'EvalScope-Task-Id': taskId },
+    params: { async: 1 },
+  })
+}
+
+export function getCacheExperiment(taskId: string, signal?: AbortSignal): Promise<CacheExperimentResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}`, { signal })
+}
+
+export function listCacheExperiments(offset = 0): Promise<CacheExperimentListResponse> {
+  return apiValidated('/api/v1/perf/experiments', { params: { offset, limit: 50 } })
+}
+
+export function getCacheScenario(taskId: string, subrunId: string, signal?: AbortSignal): Promise<CacheScenarioResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}`, { signal })
+}
+
+export function getCacheRepetitions(taskId: string, subrunId: string, metric: string, offset: number,
+                                    signal?: AbortSignal): Promise<CacheRepetitionsResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/repetitions`, {
+    params: { metric, offset, limit: 100 }, signal,
+  })
+}
+
+interface NodeSeriesFilter {
+  nodeId: string; metricName: string; labels: Record<string, string>; start?: number | null; end?: number | null;
+  maxPoints?: number; signal?: AbortSignal
+}
+
+export function getCacheNodeSeries(taskId: string, subrunId: string, filter: NodeSeriesFilter): Promise<CacheNodeSeriesResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/metrics/series`, {
+    params: { node_id: filter.nodeId, metric_name: filter.metricName, labels: JSON.stringify(filter.labels),
+      start_ns: filter.start ?? undefined, end_ns: filter.end ?? undefined, max_points: filter.maxPoints ?? 500 }, signal: filter.signal,
+  })
+}
+
+export function getPerfNodeSeries(rootPath: string, path: string, filter: NodeSeriesFilter): Promise<CacheNodeSeriesResponse> {
+  return apiValidated('/api/v1/perf/server-metrics', {
+    params: { root_path: rootPath, path, downsample: 'uniform_index', node_id: filter.nodeId,
+      metric_name: filter.metricName, labels: JSON.stringify(filter.labels), start_ns: filter.start ?? undefined,
+      end_ns: filter.end ?? undefined, max_points: filter.maxPoints ?? 500 }, signal: filter.signal,
+  })
+}
+
+export function getCacheNodeMetrics(taskId: string, subrunId: string, offset = 0,
+  filter?: { nodeId: string; metricName: string; signal?: AbortSignal }): Promise<CacheNodeMetricsResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/metrics`, {
+    params: { offset, limit: filter ? 500 : 100, node_id: filter?.nodeId, metric_name: filter?.metricName }, signal: filter?.signal,
+  })
+}
+
+export function getCacheRequests(taskId: string, subrunId: string, offset = 0): Promise<CacheRequestsResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/requests`, {
+    params: { offset, limit: 50 },
+  })
+}
+
+export function getCacheRequestGroups(taskId: string, subrunId: string, signal?: AbortSignal): Promise<CacheRequestGroupsResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/request-cache-groups`, { signal })
+}
 
 // ------------------------------------------------------------------ //
 // Historical perf-run archive                                         //

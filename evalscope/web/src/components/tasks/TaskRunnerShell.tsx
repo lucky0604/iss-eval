@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import type { EvalInvokeResponse, LogResponse } from '@/api/types'
+import type { EvalInvokeResponse, LogResponse, TaskSubmitResponse } from '@/api/types'
 import { isDomainError } from '@/api/errors'
 import { useLocale } from '@/contexts/LocaleContext'
 import Card from '@/components/ui/Card'
@@ -23,7 +23,7 @@ interface TaskRunnerShellProps extends TaskSelectionProps {
   statusTitle: string
   readyLabel: string
   renderForm: (props: FormRenderProps) => ReactNode
-  submitTask: (config: Record<string, unknown>, taskId: string) => Promise<EvalInvokeResponse>
+  submitTask: (config: Record<string, unknown>, taskId: string) => Promise<TaskSubmitResponse>
   stopTask: (taskId: string) => Promise<unknown>
   getLog: (taskId: string, tailLine: number) => Promise<LogResponse>
 }
@@ -70,7 +70,10 @@ export default function TaskRunnerShell({
     setSubmitting(true)
     onSelect(id)
     try {
-      setResult(await submitTask(config, id))
+      await submitTask(config, id)
+      // The service accepted the task; the monitor now follows it through
+      // /api/v1/tasks, so no invoke payload is kept here.
+      setResult((previous) => (previous && previous.task_id !== id ? previous : null))
     } catch (error) {
       const rejected = isDomainError(error) && (error.status === 400 || error.status === 422)
       setRejectedTaskId(rejected ? id : null)

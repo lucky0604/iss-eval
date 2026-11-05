@@ -1,5 +1,5 @@
 import { apiPostValidated, apiValidated } from './client'
-import type { EvalInvokeResponse, LogResponse, ProgressResponse, TaskStatusResponse } from './types'
+import type { LogResponse, ProgressResponse, TaskStatusResponse, TaskSubmitResponse } from './types'
 
 type TaskScope = 'eval' | 'perf'
 
@@ -7,13 +7,21 @@ export function createTaskApi(scope: TaskScope) {
   const basePath = `/api/v1/${scope}`
 
   return {
+    /**
+     * Queue a task and return as soon as it is accepted.
+     *
+     * `async=1` keeps the request short: the service returns 202 with the
+     * queue position and the browser is free to close or reload while the task
+     * runs. Progress and the final result are read back from `/api/v1/tasks`.
+     */
     submit(
       payload: Record<string, unknown>,
       taskId: string,
       signal?: AbortSignal,
-    ): Promise<EvalInvokeResponse> {
-      return apiPostValidated<EvalInvokeResponse>(`${basePath}/invoke`, payload, {
+    ): Promise<TaskSubmitResponse> {
+      return apiPostValidated<TaskSubmitResponse>(`${basePath}/invoke`, payload, {
         headers: { 'EvalScope-Task-Id': taskId },
+        params: { async: 1 },
         signal,
       })
     },

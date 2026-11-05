@@ -45,6 +45,7 @@ vi.mock('@/api/perf', () => ({
   listPerfRunDetails: vi.fn(),
   getPerfRequests: vi.fn(),
   listPerfRuns: vi.fn(),
+  listCacheExperiments: vi.fn().mockResolvedValue({ experiments: [], total: 0, offset: 0, limit: 50 }),
   getPerfChartUrl: vi.fn(() => '/api/v1/perf/chart'),
   getPerfHistoryReportUrl: vi.fn(() => '/api/v1/perf/history/report'),
 }))
@@ -139,6 +140,20 @@ async function renderDetail(detail: PerfDetailResponse = detailFixture) {
 }
 
 describe('PerfReportDetailPage', () => {
+  it('exposes node windows for AIPerf and keeps missing metrics explicit', async () => {
+    await renderDetail({ ...detailFixture, num_runs: 1, engine: 'aiperf', quality_reasons: ['telemetry_missing'],
+      node_analysis: { availability: 'missing', reason: 'no_samples', max_gap_ns: 1 } })
+    fireEvent.click(screen.getByRole('tab', { name: 'P/D node metrics' }))
+    expect(screen.getByText('telemetry_missing')).toBeInTheDocument()
+    expect(screen.getByText('no_samples')).toBeInTheDocument()
+    expect(screen.getByText('No node windows available.')).toBeInTheDocument()
+  })
+
+  it('keeps native reports free of the AIPerf node tab', async () => {
+    await renderDetail({ ...detailFixture, num_runs: 1 })
+    expect(screen.queryByRole('tab', { name: 'P/D node metrics' })).not.toBeInTheDocument()
+  })
+
   it('does not describe an embedding run as a decision service', async () => {
     await renderDetail({ ...detailFixture, is_embedding: true, api_type: 'openai_embedding' })
     expect(screen.queryByText(/Input-only decisions:/)).not.toBeInTheDocument()

@@ -15,9 +15,12 @@ from .log import (
     finish_task,
     get_log_content,
     read_task_manifest,
+    read_task_result,
     task_file_path,
+    update_task_manifest,
     validate_task_id,
     write_task_manifest,
+    write_task_result,
 )
 from .process import (
     ActiveTask,
@@ -30,6 +33,10 @@ from .process import (
     serialize_result,
     stop_process,
 )
+from .queue_config import QueueFullError, QueueUnavailableError
+from .redis_queue import RedisTaskQueue
+from .task_jobs import TaskJob
+from .task_queue import TaskQueue, TaskRunner, get_task_queue, queue_health, reset_task_queue
 
 __all__ = [
     'OUTPUT_DIR',
@@ -39,11 +46,23 @@ __all__ = [
     'get_log_content',
     'validate_task_id',
     'read_task_manifest',
+    'read_task_result',
     'task_file_path',
+    'update_task_manifest',
     'write_task_manifest',
+    'write_task_result',
     'active_task_ids',
     'list_active_tasks',
     'ActiveTask',
+    'TaskQueue',
+    'TaskRunner',
+    'TaskJob',
+    'QueueFullError',
+    'QueueUnavailableError',
+    'RedisTaskQueue',
+    'get_task_queue',
+    'queue_health',
+    'reset_task_queue',
     'run_eval_wrapper',
     'run_perf_wrapper',
     'serialize_result',

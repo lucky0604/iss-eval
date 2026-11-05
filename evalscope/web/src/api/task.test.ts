@@ -28,7 +28,7 @@ describe.each(['eval', 'perf'] as const)('createTaskApi(%s)', (scope) => {
       1,
       `/api/v1/${scope}/invoke`,
       { model: 'qwen-plus' },
-      expect.objectContaining({ headers: { 'EvalScope-Task-Id': 'task-1' } }),
+      expect.objectContaining({ headers: { 'EvalScope-Task-Id': 'task-1' }, params: { async: 1 } }),
     )
     expect(get).toHaveBeenNthCalledWith(
       1,

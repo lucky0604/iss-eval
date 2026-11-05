@@ -17,6 +17,7 @@ from evalscope.service.api_models import (
     LogResponse,
     ProgressResponse,
     TaskStatusResponse,
+    TaskSubmitResponse,
 )
 from evalscope.utils.logger import get_logger
 from evalscope.utils.uri_utils import validate_http_endpoint
@@ -26,6 +27,10 @@ from ..utils import (
     DEFAULT_MULTIMODAL_BENCHMARKS,
     DEFAULT_TEXT_BENCHMARKS,
     OUTPUT_DIR,
+    QueueFullError,
+    QueueUnavailableError,
+    TaskJob,
+    TaskRunner,
     TaskStoppedError,
     build_benchmark_entry,
     build_task_info,
@@ -33,6 +38,7 @@ from ..utils import (
     discover_all_benchmarks,
     finish_task,
     get_log_content,
+    get_task_queue,
     read_task_manifest,
     run_eval_wrapper,
     run_in_subprocess,
@@ -40,7 +46,9 @@ from ..utils import (
     stop_process,
     task_file_path,
     validate_task_id,
+    write_task_result,
 )
+from ..utils.process import task_is_cancelling
 
 logger = get_logger()
 
@@ -211,8 +219,19 @@ def _extract_alias(data: dict) -> Any:
     return None
 
 
-def _execute_task(task_id: str, task_config: TaskConfig, label: str = 'Task', task_meta: ActiveTaskInfo | None = None):
-    """Run the evaluation subprocess and return a Flask response."""
+def _finish_payload(task_id: str, payload: dict) -> dict:
+    """Persist an invoke payload so later polling can recover the final result."""
+    try:
+        write_task_result(task_id, payload)
+    except (OSError, ValueError):
+        logger.exception(f'[{task_id}] Failed to persist evaluation result')
+    return payload
+
+
+def _run_eval_task(
+    task_id: str, task_config: TaskConfig, label: str = 'Task', task_meta: ActiveTaskInfo | None = None
+) -> dict:
+    """Run the evaluation subprocess and return its public invoke payload."""
     create_log_file(task_id, os.path.join('logs', 'eval_log.log'))
     try:
         result = run_in_subprocess(run_eval_wrapper, task_config, task_id=task_id, task_meta=task_meta)
@@ -225,21 +244,59 @@ def _execute_task(task_id: str, task_config: TaskConfig, label: str = 'Task', ta
             )
             finish_task(task_id, 'error')
             logger.error(f'[{task_id}] {label} produced empty results: {error_msg}')
-            return jsonify({'status': 'error', 'task_id': task_id, 'error': error_msg}), 500
+            return _finish_payload(task_id, {'status': 'error', 'task_id': task_id, 'error': error_msg})
         finish_task(task_id, 'completed')
         logger.info(f'[{task_id}] {label} completed successfully')
-        return json_response(
-            EvalInvokeResponse,
+        return _finish_payload(
+            task_id,
             {'status': 'completed', 'task_id': task_id, 'result': serialize_result(result), 'table': table_str},
         )
     except TaskStoppedError:
         finish_task(task_id, 'stopped')
         logger.info(f'[{task_id}] {label} stopped by user.')
-        return json_response(EvalInvokeResponse, {'status': 'stopped', 'task_id': task_id})
+        return _finish_payload(task_id, {'status': 'stopped', 'task_id': task_id})
     except Exception as e:
         finish_task(task_id, 'error')
         logger.error(f'[{task_id}] {label} failed: {e}')
-        return jsonify({'status': 'error', 'task_id': task_id, 'error': 'Task failed; check the task log'}), 500
+        return _finish_payload(
+            task_id,
+            {'status': 'error', 'task_id': task_id, 'error': 'Task failed; check the task log'},
+        )
+
+
+def _execute_task(task_id: str, task_config: TaskConfig, label: str = 'Task', task_meta: ActiveTaskInfo | None = None):
+    """Run an evaluation task inline and map its payload onto the HTTP contract."""
+    payload = _run_eval_task(task_id, task_config, label=label, task_meta=task_meta)
+    if payload['status'] == 'error':
+        return jsonify(payload), 500
+    return json_response(EvalInvokeResponse, payload)
+
+
+def _async_requested() -> bool:
+    return request.args.get('async') in ('1', 'true', 'yes')
+
+
+def _submit_queued(task_id: str, kind: str, task_meta: ActiveTaskInfo, runner: TaskRunner) -> Any:
+    """Accept a task for background execution and return its queue acknowledgement."""
+    try:
+        info = get_task_queue().submit(task_id, kind, task_meta, runner)
+    except ValueError:
+        return jsonify({'error': 'Task is already queued or running'}), 409
+    except QueueFullError:
+        return jsonify({'error': 'Task queue is full; retry later'}), 429
+    except QueueUnavailableError as error:
+        logger.error(f'[{task_id}] Task queue unavailable: {error}')
+        return jsonify({'error': 'Task queue is unavailable'}), 503
+    return json_response(
+        TaskSubmitResponse,
+        {
+            'status': 'queued',
+            'task_id': task_id,
+            'enqueued_at': info.get('enqueued_at'),
+            'queue_position': info.get('queue_position'),
+        },
+        status=202,
+    )
 
 
 @bp_eval.route('/invoke', methods=['POST'])
@@ -259,6 +316,8 @@ def run_evaluation():
     logger.info(f'[{task_id}] Running evaluation task for model: {task_config.model}')
     logger.info(f'[{task_id}] Datasets: {task_config.datasets}')
 
+    if _async_requested():
+        return _submit_queued(task_id, 'eval', task_meta, TaskJob('eval', (task_id, task_config, 'Task', task_meta)))
     return _execute_task(task_id, task_config, label='Task', task_meta=task_meta)
 
 
@@ -275,11 +334,18 @@ def stop_evaluation():
 
     try:
         validate_task_id(task_id)
+        state = get_task_queue().cancel(task_id)
+        if state == 'stopped':
+            return json_response(TaskStatusResponse, {'status': 'stopped', 'task_id': task_id})
+        if state == 'cancelling':
+            return json_response(TaskStatusResponse, {'status': 'cancelling', 'task_id': task_id}, status=202)
         stopped = stop_process(task_id)
     except ValueError:
         return jsonify({'error': 'Invalid task_id'}), 400
     if stopped:
         return json_response(TaskStatusResponse, {'status': 'stopped', 'task_id': task_id})
+    elif task_is_cancelling(task_id):
+        return json_response(TaskStatusResponse, {'status': 'cancelling', 'task_id': task_id}, status=202)
     else:
         return jsonify({'error': f'No running task found for task_id: {task_id}'}), 404
 
@@ -310,6 +376,10 @@ def resume_evaluation():
     logger.info(f'[{task_id}] Running resume task, work_dir: {work_dir}')
     logger.info(f'[{task_id}] Model: {task_config.model}, Datasets: {task_config.datasets}')
 
+    if _async_requested():
+        return _submit_queued(
+            task_id, 'eval', task_meta, TaskJob('eval', (task_id, task_config, 'Resume task', task_meta))
+        )
     return _execute_task(task_id, task_config, label='Resume task', task_meta=task_meta)
 
 

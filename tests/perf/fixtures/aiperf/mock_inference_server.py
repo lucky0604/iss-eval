@@ -1,0 +1,180 @@
+"""Loopback-only OpenAI streaming and Prometheus fixture for AIPerf integration tests."""
+
+import argparse
+import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Optional
+
+
+class MockServer(ThreadingHTTPServer):
+    """A small local server that records every inference request."""
+
+    def __init__(self, capture: Path, mode: str = 'success', metrics_mode: str = 'normal',
+                 metrics_capture: Optional[Path] = None, metrics_key: Optional[str] = None) -> None:
+        super().__init__(('127.0.0.1', 0), MockHandler)
+        self.capture = capture
+        self.mode = mode
+        self.metrics_mode = metrics_mode
+        self.metrics_capture = metrics_capture
+        self.metrics_key = metrics_key
+        self.lock = threading.Lock()
+        self.requests_seen = 0
+        self.scrapes_seen = 0
+
+
+class MockHandler(BaseHTTPRequestHandler):
+    """Respond to chat completions and expose deterministic test metrics."""
+
+    server: MockServer
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+    def do_GET(self) -> None:
+        if self.path != '/metrics':
+            self.send_error(404)
+            return
+        with self.server.lock:
+            self.server.scrapes_seen += 1
+            scrapes_seen = self.server.scrapes_seen
+            count = self.server.requests_seen
+            if self.server.metrics_capture is not None:
+                with self.server.metrics_capture.open('a', encoding='utf-8') as capture:
+                    capture.write(json.dumps({'authorization_present': bool(self.headers.get('Authorization')),
+                                              'authorization_matches': self.headers.get('Authorization') == f'Bearer {self.server.metrics_key}'}) + '\n')
+        if self.server.metrics_key is not None and self.headers.get('Authorization') != f'Bearer {self.server.metrics_key}':
+            self.send_error(401)
+            return
+        if self.server.metrics_mode == 'unavailable':
+            self.send_error(503)
+            return
+        if self.server.metrics_mode == 'reset':
+            count = 100 if scrapes_seen == 1 else 1
+        if self.server.metrics_mode == 'missing' or (self.server.metrics_mode == 'delayed' and scrapes_seen == 1):
+            self.send_response(200)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if self.server.metrics_mode == 'pd_vllm':
+            body = (
+                '# TYPE vllm:num_requests_waiting gauge\n'
+                'vllm:num_requests_waiting{model="fixture"} 2\n'
+                '# TYPE vllm:prefix_cache_queries_total counter\n'
+                f'vllm:prefix_cache_queries_total{{model="fixture"}} {scrapes_seen * 10}\n'
+                '# TYPE vllm:prefix_cache_hits_total counter\n'
+                f'vllm:prefix_cache_hits_total{{model="fixture"}} {scrapes_seen * 8}\n'
+                '# TYPE vllm:request_prefill_time_seconds histogram\n'
+                f'vllm:request_prefill_time_seconds_bucket{{model="fixture",le="1"}} {scrapes_seen}\n'
+                f'vllm:request_prefill_time_seconds_bucket{{model="fixture",le="+Inf"}} {scrapes_seen}\n'
+                f'vllm:request_prefill_time_seconds_sum{{model="fixture"}} {scrapes_seen * 0.1}\n'
+                f'vllm:request_prefill_time_seconds_count{{model="fixture"}} {scrapes_seen}\n'
+            ).encode()
+        elif self.server.metrics_mode == 'malformed':
+            body = b'# TYPE vllm:num_requests_waiting gauge\nvllm:num_requests_waiting{broken="} 1\n'
+        elif self.server.metrics_mode == 'pd_sglang':
+            body = (
+                '# TYPE sglang:num_decode_transfer_queue_reqs gauge\n'
+                'sglang:num_decode_transfer_queue_reqs{model="fixture"} 3\n'
+                '# TYPE sglang:kv_transfer_latency_ms gauge\n'
+                'sglang:kv_transfer_latency_ms{model="fixture"} 20\n'
+                '# TYPE sglang:queue_time_s histogram\n'
+                f'sglang:queue_time_s_bucket{{model="fixture",le="1"}} {scrapes_seen}\n'
+                f'sglang:queue_time_s_bucket{{model="fixture",le="+Inf"}} {scrapes_seen}\n'
+                f'sglang:queue_time_s_sum{{model="fixture"}} {scrapes_seen * 0.1}\n'
+                f'sglang:queue_time_s_count{{model="fixture"}} {scrapes_seen}\n'
+            ).encode()
+        else:
+            body = (
+            '# TYPE mock_requests_total counter\n'
+            f'mock_requests_total{{role="prefill"}} {count}\n'
+            '# TYPE mock_queue gauge\n'
+            'mock_queue{role="prefill"} 0\n'
+            '# TYPE mock_latency_seconds histogram\n'
+            f'mock_latency_seconds_bucket{{role="prefill",le="1"}} {count}\n'
+            f'mock_latency_seconds_bucket{{role="prefill",le="+Inf"}} {count}\n'
+            f'mock_latency_seconds_sum{{role="prefill"}} 0\n'
+            f'mock_latency_seconds_count{{role="prefill"}} {count}\n'
+            ).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain; version=0.0.4')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:
+        if self.path.split('?', 1)[0] != '/v1/chat/completions':
+            self.send_error(404)
+            return
+        payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        with self.server.lock:
+            self.server.requests_seen += 1
+            request_number = self.server.requests_seen
+            with self.server.capture.open('a', encoding='utf-8') as capture:
+                capture.write(json.dumps({
+                    'path': self.path,
+                    'body': payload,
+                    'fixture_authorization_matches': self.headers.get('Authorization') == 'Bearer fixture-key',
+                    'fixture_header_matches': self.headers.get('X-Fixture') == 'through',
+                }) + '\n')
+        if self.server.mode == 'http_error' or (self.server.mode == 'alternating_error' and request_number % 2 == 0):
+            self.send_error(503)
+            return
+        if self.server.mode == 'timeout':
+            time.sleep(30)
+            return
+        if self.server.mode == 'slow_success':
+            time.sleep(0.12)
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.end_headers()
+        if self.server.mode == 'stream_error':
+            self.wfile.write(b'data: {"error":{"message":"fixture error"}}\n\n')
+            self.wfile.flush()
+            return
+        base = {'id': 'fixture', 'object': 'chat.completion.chunk', 'model': payload.get('model', 'mock')}
+        chunks = [
+            {**base, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': 'hello'}, 'finish_reason': None}]},
+            {**base, 'choices': [{'index': 0, 'delta': {'content': ' world'}, 'finish_reason': None}]},
+            {**base, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]},
+        ]
+        if self.server.mode == 'single_token':
+            del chunks[1]
+        if self.server.mode == 'unfinished':
+            del chunks[2]
+        if self.server.mode != 'missing_usage':
+            output_tokens = 1 if self.server.mode == 'single_token' else 2
+            usage = {'prompt_tokens': 8, 'completion_tokens': output_tokens, 'total_tokens': 8 + output_tokens}
+            if self.server.mode == 'cache_usage':
+                usage['prompt_tokens_details'] = {'cached_tokens': 6}
+            chunks.append({**base, 'choices': [], 'usage': usage})
+        for chunk in chunks:
+            self.wfile.write(f'data: {json.dumps(chunk)}\n\n'.encode())
+            self.wfile.flush()
+        self.wfile.write(b'data: [DONE]\n\n')
+        self.wfile.flush()
+
+
+def main() -> None:
+    """Run the fixture until interrupted, printing its dynamically assigned port."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--capture', type=Path, required=True)
+    parser.add_argument('--mode', choices=['success', 'cache_usage', 'missing_usage', 'http_error', 'alternating_error', 'stream_error',
+                                           'single_token', 'unfinished', 'slow_success', 'timeout'], default='success')
+    parser.add_argument('--metrics-mode', choices=['normal', 'missing', 'unavailable', 'reset', 'delayed', 'pd_vllm', 'pd_sglang', 'malformed'],
+                        default='normal')
+    parser.add_argument('--metrics-capture', type=Path)
+    parser.add_argument('--metrics-key')
+    args = parser.parse_args()
+    server = MockServer(args.capture, args.mode, args.metrics_mode, args.metrics_capture, args.metrics_key)
+    print(server.server_port, flush=True)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+
+
+if __name__ == '__main__':
+    main()

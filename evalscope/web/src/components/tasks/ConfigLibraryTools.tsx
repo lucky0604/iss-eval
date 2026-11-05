@@ -48,6 +48,7 @@ export default function ConfigLibraryTools({ library, onImport, onClear }: Props
         t('tasks.library.importConnections', { count: incoming.connections.length }),
         t('tasks.library.importEval', { count: incoming.evalTemplates.length }),
         t('tasks.library.importPerf', { count: incoming.perfTemplates.length }),
+        t('tasks.library.importAIPerf', { count: incoming.aiperfTemplates.length }),
       ]
     : []
   const hasKeys = incoming?.connections.some((entry) => Boolean(entry.value.apiKey))

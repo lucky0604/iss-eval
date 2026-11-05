@@ -14,16 +14,30 @@ from .common import (
     ProgressResponse,
     TaskConfigSummary,
     TaskStatusResponse,
+    TaskSubmitResponse,
 )
 from .eval import BenchmarkEntry, BenchmarksResponse, EvalInvokeResponse
 from .perf import (
+    CacheExperimentListResponse,
+    CacheExperimentResponse,
+    CacheNodeMetricsResponse,
+    CacheNodeSeriesResponse,
+    CacheRepetitionsResponse,
+    CacheRequestGroupsResponse,
+    CacheRequestsResponse,
+    CacheScenarioResponse,
     DeletePerfRunResponse,
     ListPerfRunsResponse,
     PerfDetailResponse,
+    PerfEnginesResponse,
+    PerfInvokeResponse,
+    PerfLiveResponse,
+    PerfPlanResponse,
     PerfRequestsResponse,
     PerfRunItem,
     PerfRunsListResponse,
     PerfRunSummary,
+    PerfSinglePlanResponse,
 )
 from .reports import (
     AnalysisResponse,
@@ -57,6 +71,7 @@ class WebApiContracts(BaseModel):
     data_frame_response: DataFrameResponse
     log_response: LogResponse
     task_status_response: TaskStatusResponse
+    task_submit_response: TaskSubmitResponse
     progress_response: ProgressResponse
     eval_invoke_response: EvalInvokeResponse
     benchmark_entry: BenchmarkEntry
@@ -82,6 +97,19 @@ class WebApiContracts(BaseModel):
     perf_run_summary: PerfRunSummary
     list_perf_runs_response: ListPerfRunsResponse
     perf_detail_response: PerfDetailResponse
+    perf_engines_response: PerfEnginesResponse
+    perf_invoke_response: PerfInvokeResponse
+    perf_live_response: PerfLiveResponse
+    perf_plan_response: PerfPlanResponse
+    perf_single_plan_response: PerfSinglePlanResponse
+    cache_experiment_response: CacheExperimentResponse
+    cache_experiment_list_response: CacheExperimentListResponse
+    cache_scenario_response: CacheScenarioResponse
+    cache_requests_response: CacheRequestsResponse
+    cache_request_groups_response: CacheRequestGroupsResponse
+    cache_repetitions_response: CacheRepetitionsResponse
+    cache_node_metrics_response: CacheNodeMetricsResponse
+    cache_node_series_response: CacheNodeSeriesResponse
     perf_run_item: PerfRunItem
     perf_runs_list_response: PerfRunsListResponse
     perf_requests_response: PerfRequestsResponse
@@ -101,6 +129,14 @@ __all__ = [
     'AnalysisResponse',
     'ApiResponseModel',
     'BenchmarkEntry',
+    'CacheExperimentResponse',
+    'CacheExperimentListResponse',
+    'CacheNodeMetricsResponse',
+    'CacheNodeSeriesResponse',
+    'CacheRequestsResponse',
+    'CacheRequestGroupsResponse',
+    'CacheRepetitionsResponse',
+    'CacheScenarioResponse',
     'BenchmarksResponse',
     'ConfigResponse',
     'DataFrameResponse',
@@ -114,11 +150,17 @@ __all__ = [
     'LoadReportResponse',
     'LogResponse',
     'PerfDetailResponse',
+    'PerfEnginesResponse',
+    'PerfInvokeResponse',
+    'PerfLiveResponse',
+    'PerfPlanResponse',
+    'PerfSinglePlanResponse',
     'PerfRequestsResponse',
     'PerfRunsListResponse',
     'PredictionsResponse',
     'ProgressResponse',
     'TaskStatusResponse',
+    'TaskSubmitResponse',
     'TaskConfigSummary',
     'WebApiContracts',
 ]

@@ -1,0 +1,277 @@
+{
+  "schema_version": "1.1",
+  "aiperf_version": "0.13.0",
+  "benchmark_id": "3622fae10c77",
+  "summary": {
+    "endpoints_configured": [
+      "http://127.0.0.1:18080/metrics"
+    ],
+    "endpoints_successful": [
+      "http://127.0.0.1:18080/metrics"
+    ],
+    "start_time": "2026-11-02T17:52:53.340081",
+    "end_time": "2026-11-02T17:52:53.343018",
+    "endpoint_info": {
+      "http://127.0.0.1:18080/metrics": {
+        "total_fetches": 14,
+        "first_fetch_ns": 1793613172203428875,
+        "last_fetch_ns": 1793613175345640209,
+        "avg_fetch_latency_ms": 1.055741,
+        "unique_updates": 3,
+        "first_update_ns": 1793613172203428875,
+        "last_update_ns": 1793613173366528333,
+        "duration_seconds": 1.163099458,
+        "avg_update_interval_ms": 581.5497290000001,
+        "median_update_interval_ms": 581.549729
+      }
+    },
+    "phase_time_ranges": {
+      "profiling": {
+        "start_ns": 1793613173340081000,
+        "end_ns": 1793613173343018000
+      },
+      "warmup": {
+        "start_ns": 1793613173334589000,
+        "end_ns": 1793613173341327833
+      }
+    }
+  },
+  "metrics_phase": "profiling",
+  "metrics": {
+    "mock_latency_seconds": {
+      "type": "histogram",
+      "description": "",
+      "unit": "seconds",
+      "series": [
+        {
+          "endpoint_url": "http://127.0.0.1:18080/metrics",
+          "labels": {
+            "role": "prefill"
+          },
+          "stats": {
+            "count": 2,
+            "sum": 0.0,
+            "avg": 0.0,
+            "count_rate": 0.997848451143825,
+            "sum_rate": 0.0,
+            "p1_estimate": 0.0,
+            "p5_estimate": 0.0,
+            "p10_estimate": 0.0,
+            "p25_estimate": 0.0,
+            "p50_estimate": 0.0,
+            "p75_estimate": 0.0,
+            "p90_estimate": 0.0,
+            "p95_estimate": 0.0,
+            "p99_estimate": 0.0
+          },
+          "buckets": {
+            "1": 2,
+            "+Inf": 2
+          }
+        }
+      ]
+    },
+    "mock_queue": {
+      "type": "gauge",
+      "description": "",
+      "series": [
+        {
+          "endpoint_url": "http://127.0.0.1:18080/metrics",
+          "labels": {
+            "role": "prefill"
+          },
+          "stats": {
+            "avg": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "std": 0.0,
+            "p1": 0.0,
+            "p5": 0.0,
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0,
+            "p99": 0.0
+          }
+        }
+      ]
+    },
+    "mock_requests": {
+      "type": "counter",
+      "description": "",
+      "unit": "requests",
+      "series": [
+        {
+          "endpoint_url": "http://127.0.0.1:18080/metrics",
+          "labels": {
+            "role": "prefill"
+          },
+          "stats": {
+            "total": 2.0,
+            "rate": 0.997848451143825
+          }
+        }
+      ]
+    }
+  },
+  "warmup_metrics": {
+    "mock_latency_seconds": {
+      "type": "histogram",
+      "description": "",
+      "unit": "seconds",
+      "series": [
+        {
+          "endpoint_url": "http://127.0.0.1:18080/metrics",
+          "labels": {
+            "role": "prefill"
+          },
+          "stats": {
+            "count": 1,
+            "sum": 0.0,
+            "avg": 0.0,
+            "count_rate": 107.21657619731968,
+            "sum_rate": 0.0,
+            "p1_estimate": 0.0,
+            "p5_estimate": 0.0,
+            "p10_estimate": 0.0,
+            "p25_estimate": 0.0,
+            "p50_estimate": 0.0,
+            "p75_estimate": 0.0,
+            "p90_estimate": 0.0,
+            "p95_estimate": 0.0,
+            "p99_estimate": 0.0
+          },
+          "buckets": {
+            "1": 1,
+            "+Inf": 1
+          }
+        }
+      ]
+    },
+    "mock_queue": {
+      "type": "gauge",
+      "description": "",
+      "series": [
+        {
+          "endpoint_url": "http://127.0.0.1:18080/metrics",
+          "labels": {
+            "role": "prefill"
+          },
+          "stats": {
+            "avg": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "std": 0.0,
+            "p1": 0.0,
+            "p5": 0.0,
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0,
+            "p99": 0.0
+          }
+        }
+      ]
+    },
+    "mock_requests": {
+      "type": "counter",
+      "description": "",
+      "unit": "requests",
+      "series": [
+        {
+          "endpoint_url": "http://127.0.0.1:18080/metrics",
+          "labels": {
+            "role": "prefill"
+          },
+          "stats": {
+            "total": 1.0,
+            "rate": 107.21657619731968
+          }
+        }
+      ]
+    }
+  },
+  "input_config": {
+    "models": {
+      "items": [
+        {
+          "name": "mock-model"
+        }
+      ]
+    },
+    "endpoint": {
+      "urls": [
+        "http://127.0.0.1:18080"
+      ],
+      "type": "chat",
+      "streaming": true
+    },
+    "datasets": [
+      {
+        "name": "main",
+        "type": "synthetic",
+        "entries": 2,
+        "prompts": {
+          "isl": {
+            "mean": 8.0
+          },
+          "osl": {
+            "mean": 2.0
+          }
+        }
+      }
+    ],
+    "phases": [
+      {
+        "name": "warmup",
+        "kind": "warmup",
+        "type": "concurrency",
+        "exclude_from_results": true,
+        "requests": 1,
+        "concurrency": 1
+      },
+      {
+        "name": "profiling",
+        "kind": "profiling",
+        "type": "concurrency",
+        "requests": 2,
+        "concurrency": 1
+      }
+    ],
+    "artifacts": {
+      "dir": "<artifact-dir>",
+      "records": [
+        "jsonl"
+      ],
+      "raw": true,
+      "auto_plot": false,
+      "plot_required": false
+    },
+    "tokenizer": {
+      "name": "<tokenizer>"
+    },
+    "gpu_telemetry": {
+      "enabled": true
+    },
+    "server_metrics": {
+      "enabled": true,
+      "urls": [],
+      "formats": [
+        "json"
+      ]
+    },
+    "network_latency": {
+      "enabled": false
+    },
+    "otel": {},
+    "mlflow": {},
+    "wandb": {},
+    "runtime": {
+      "ui": "none"
+    }
+  }
+}

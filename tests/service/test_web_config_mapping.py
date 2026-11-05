@@ -80,6 +80,43 @@ def test_all_perf_fields_survive_actual_config_parsing(client, monkeypatch: pyte
     assert body['max_tokens'] == 32 and body['min_tokens'] == 0
 
 
+def test_native_executor_envelope_reaches_native_wrapper(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = {}
+
+    def execute(func: object, config: Arguments, **kwargs: object) -> dict:
+        captured['config'] = config
+        return {}
+
+    monkeypatch.setattr('evalscope.service.blueprints.perf.run_in_subprocess', execute)
+    native = {'model': 'model', 'url': 'http://localhost/v1', 'dataset': 'openqa', 'number': 2}
+    response = client.post('/api/v1/perf/invoke', json={'engine': 'evalscope', 'native': native},
+                           headers={'EvalScope-Task-Id': 'perf_envelope'})
+    assert response.status_code == 200
+    assert captured['config'].model == 'model'
+    assert captured['config'].url == 'http://localhost/v1/chat/completions'
+
+
+def test_aiperf_executor_is_explicitly_disabled_before_native_validation(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    execute = Mock()
+    monkeypatch.setattr('evalscope.service.blueprints.perf.run_in_subprocess', execute)
+    payload = {
+        'engine': 'aiperf',
+        'aiperf': {
+            'model': 'model', 'url': 'http://localhost/v1', 'tokenizer_path': '/tokenizer',
+            'load': {'points': [{'concurrency': 1}], 'request_count': 2, 'output_token_limit': 8},
+        },
+    }
+    response = client.post('/api/v1/perf/invoke', json=payload, headers={'EvalScope-Task-Id': 'perf_external'})
+    assert response.status_code == 503
+    assert response.get_json()['error'] == 'AIPerf 0.13.0 runtime is unavailable'
+    execute.assert_not_called()
+    response = client.post('/api/v1/perf/invoke', json=payload)
+    assert response.status_code == 400
+    response = client.post('/api/v1/perf/invoke', json=payload, headers={'EvalScope-Task-Id': '../invalid'})
+    assert response.status_code == 400
+    execute.assert_not_called()
+
+
 @pytest.mark.parametrize('api', ['openai', 'local'])
 def test_every_perf_ui_option_has_http_and_request_implementation(api: str) -> None:
     args = Arguments(model='same-model', api=api, number=1)

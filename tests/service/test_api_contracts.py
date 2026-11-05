@@ -36,6 +36,7 @@ from evalscope.service.api_models import (
     PredictionsResponse,
     ProgressResponse,
     TaskStatusResponse,
+    TaskSubmitResponse,
     WebApiContracts,
 )
 from evalscope.service.api_models.reports import ReportSubset
@@ -49,14 +50,14 @@ ROOT = Path(__file__).parents[2]
 CONTRACT_REGISTRY = (
     ('ConfigResponse', 'evalscope/web/src/contexts/ReportsContext.tsx', 'evalscope/service/app.py'),
     ('BenchmarksResponse', 'evalscope/web/src/api/eval.ts', 'evalscope/service/blueprints/eval.py'),
-    ('EvalInvokeResponse', 'evalscope/web/src/api/task.ts', 'evalscope/service/blueprints/eval.py'),
     ('ProgressResponse', 'evalscope/web/src/api/task.ts', 'evalscope/service/blueprints/eval.py'),
     ('LogResponse', 'evalscope/web/src/api/task.ts', 'evalscope/service/blueprints/eval.py'),
     ('TaskStatusResponse', 'evalscope/web/src/api/task.ts', 'evalscope/service/blueprints/eval.py'),
-    ('EvalInvokeResponse', 'evalscope/web/src/api/task.ts', 'evalscope/service/blueprints/perf.py'),
+    ('TaskSubmitResponse', 'evalscope/web/src/api/task.ts', 'evalscope/service/blueprints/eval.py'),
     ('ProgressResponse', 'evalscope/web/src/api/task.ts', 'evalscope/service/blueprints/perf.py'),
     ('LogResponse', 'evalscope/web/src/api/task.ts', 'evalscope/service/blueprints/perf.py'),
     ('TaskStatusResponse', 'evalscope/web/src/api/task.ts', 'evalscope/service/blueprints/perf.py'),
+    ('TaskSubmitResponse', 'evalscope/web/src/api/task.ts', 'evalscope/service/blueprints/perf.py'),
     ('ListReportsResponse', 'evalscope/web/src/api/reports.ts', 'evalscope/service/blueprints/reports.py'),
     ('ListReportsGroupedResponse', 'evalscope/web/src/api/reports.ts', 'evalscope/service/blueprints/reports.py'),
     ('DeleteReportResponse', 'evalscope/web/src/api/reports.ts', 'evalscope/service/blueprints/reports.py'),
@@ -96,6 +97,7 @@ RESPONSE_MODELS = (
     ProgressResponse,
     LogResponse,
     TaskStatusResponse,
+    TaskSubmitResponse,
     ListReportsResponse,
     ListReportsGroupedResponse,
     DeleteReportResponse,

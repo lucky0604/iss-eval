@@ -182,6 +182,19 @@ pip install evalscope
 
 > 详细安装说明（源码安装、额外依赖等）请参考 [📖 安装指南](https://evalscope.readthedocs.io/zh-cn/latest/get_started/installation.html)。
 
+### Docker 部署（服务器）
+
+一个容器内即可启动 Web Dashboard、原生评测引擎与隔离的 AIPerf 0.13.0 后端：
+
+```bash
+cd docker
+cp .env.example .env            # 端口、时区、镜像源、数据目录
+docker compose up -d --build
+sh verify.sh                    # 健康检查、版本与 AIPerf 可用性
+```
+
+启动后访问 `http://<服务器>:9000/dashboard`。评测产物与模型/数据集缓存分别持久化在 `/data/outputs`、`/data/cache` 卷中。镜像面向 x86_64 Linux Docker 主机；绑定目录、升级、离线镜像转运与安全建议见 [docker/README.md](docker/README.md)。
+
 ### 方式1. 评测在线模型 API（推荐入门方式，无需 GPU）
 
 支持任意 OpenAI API 兼容的模型服务，只需配置 `$OPENAI_API_BASE_URL` 与 `$OPENAI_API_KEY` 即可开始评测：

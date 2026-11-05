@@ -170,6 +170,9 @@ examples/api_test/
 .pr-review/
 .scratch_wl/
 
+# Local agent reviews, designs and implementation plans
+/agent_flow/
+
 # Local math migration evidence (datasets, replays, logs and reports)
 /validation/math_verify/
 

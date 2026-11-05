@@ -10,6 +10,7 @@ import PresetToolbar from '@/components/tasks/PresetToolbar'
 import ConfigLibraryTools from '@/components/tasks/ConfigLibraryTools'
 import { useTaskWorkspace } from '@/components/tasks/useTaskWorkspace'
 import { createPresetId, mergeLibrary, readWorkspace, savePreset } from '@/components/tasks/configStorage'
+import { DEFAULT_AIPERF, sanitizedAIPerfDraft, validateAIPerfDraft } from '@/components/tasks/aiperfDraft'
 import {
   DEFAULT_CONNECTION,
   DEFAULT_EVAL,
@@ -52,6 +53,13 @@ export default function TasksPage() {
 
   function checkConnection() {
     const errors = validateConnection(workspace.connection)
+    setConnectionErrors(errors)
+    return Object.fromEntries(Object.entries(errors).map(([field, error]) => [`connection-${field}`, error]))
+  }
+
+  function checkAIPerfConnection() {
+    const errors = validateConnection(workspace.connection)
+    if (workspace.connection.api !== 'openai') errors.api = 'tasks.aiperf.openaiRequired'
     setConnectionErrors(errors)
     return Object.fromEntries(Object.entries(errors).map(([field, error]) => [`connection-${field}`, error]))
   }
@@ -118,6 +126,27 @@ export default function TasksPage() {
     return commit({ ...workspace, perfTemplates: saved.entries, selectedPerf: saved.selectedId })
   }
 
+  function saveAIPerf(name: string, asNew: boolean): boolean {
+    if (Object.keys(validateAIPerfDraft(workspace.aiperf)).length) {
+      setMessage('invalidTemplate')
+      return false
+    }
+    const saved = savePreset(workspace.aiperfTemplates, workspace.selectedAIPerf, name,
+                             sanitizedAIPerfDraft(workspace.aiperf), asNew)
+    return commit({ ...workspace, aiperfTemplates: saved.entries, selectedAIPerf: saved.selectedId })
+  }
+
+  function loadAIPerf(id: string) {
+    const fresh = readWorkspace()
+    if (!fresh.ok) {
+      setMessage(fresh.error)
+      return
+    }
+    const entry = fresh.value.aiperfTemplates.find((item) => item.id === id)
+    setWorkspace({ ...workspace, aiperfTemplates: fresh.value.aiperfTemplates, selectedAIPerf: id,
+                   aiperf: structuredClone(entry?.value ?? DEFAULT_AIPERF) })
+  }
+
   function loadTemplate(kind: 'eval' | 'perf', id: string) {
     const fresh = readWorkspace()
     if (!fresh.ok) {
@@ -145,6 +174,7 @@ export default function TasksPage() {
 
   const selectedEval = workspace.evalTemplates.find((entry) => entry.id === workspace.selectedEval)
   const selectedPerf = workspace.perfTemplates.find((entry) => entry.id === workspace.selectedPerf)
+  const selectedAIPerf = workspace.aiperfTemplates.find((entry) => entry.id === workspace.selectedAIPerf)
   const evalToolbar = (
     <PresetToolbar
       label={t('tasks.library.evalTemplate')}
@@ -179,6 +209,19 @@ export default function TasksPage() {
           perfTemplates: workspace.perfTemplates.filter((entry) => entry.id !== workspace.selectedPerf),
         })
       }
+    />
+  )
+  const aiperfToolbar = (
+    <PresetToolbar
+      label={t('tasks.aiperf.template')}
+      entries={workspace.aiperfTemplates}
+      selectedId={workspace.selectedAIPerf}
+      dirty={JSON.stringify(sanitizedAIPerfDraft(workspace.aiperf)) !== JSON.stringify(selectedAIPerf?.value ?? DEFAULT_AIPERF)}
+      onLoad={loadAIPerf}
+      onSave={saveAIPerf}
+      onReset={() => setWorkspace({ ...workspace, selectedAIPerf: '', aiperf: structuredClone(DEFAULT_AIPERF) })}
+      onDelete={() => commit({ ...workspace, selectedAIPerf: '',
+                               aiperfTemplates: workspace.aiperfTemplates.filter((entry) => entry.id !== workspace.selectedAIPerf) })}
     />
   )
 
@@ -283,7 +326,13 @@ export default function TasksPage() {
               connection={workspace.connection}
               draft={workspace.perf}
               toolbar={perfToolbar}
+              aiperfToolbar={aiperfToolbar}
+              engine={workspace.engine}
+              aiperfDraft={workspace.aiperf}
+              onEngineChange={(engine) => setWorkspace({ ...workspace, engine })}
+              onAIPerfChange={(aiperf) => setWorkspace({ ...workspace, aiperf })}
               onValidateConnection={checkConnection}
+              onValidateAIPerfConnection={checkAIPerfConnection}
               onChange={(perfDraft) => setWorkspace({ ...workspace, perf: perfDraft })}
               active={tab === 'perf'}
               selectedTaskId={selected.perf}

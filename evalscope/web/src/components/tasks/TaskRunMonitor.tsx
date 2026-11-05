@@ -8,6 +8,7 @@ import { useCopy } from '@/hooks/useCopy'
 import { useLocale } from '@/contexts/LocaleContext'
 import { formatTimestamp } from '@/utils/formatUtils'
 import TaskMonitor from '@/components/eval/TaskMonitor'
+import PerfLiveMetricsPanel from '@/components/perf/PerfLiveMetricsPanel'
 
 interface Props {
   taskId: string
@@ -18,7 +19,7 @@ interface Props {
   getLog: (taskId: string, tailLine: number) => Promise<LogResponse>
 }
 
-type StopRequestState = 'idle' | 'pending' | 'confirmed' | 'failed'
+type StopRequestState = 'idle' | 'pending' | 'cancelling' | 'confirmed' | 'failed'
 
 export default function TaskRunMonitor({ taskId, result, stopTask, getLog, active = true, submissionRejected = false }: Props) {
   const { t } = useLocale()
@@ -41,7 +42,9 @@ export default function TaskRunMonitor({ taskId, result, stopTask, getLog, activ
     if (active) title.current?.focus()
   }, [active])
 
-  const status = stopRequest === 'confirmed' ? 'stopped' : snapshot?.status ?? (submissionRejected ? 'error' : 'preparing')
+  const snapshotTerminal = snapshot?.status && ['completed', 'stopped', 'error'].includes(snapshot.status)
+  const status = snapshotTerminal ? (snapshot?.status ?? 'unknown') : snapshot?.status === 'unknown' ? 'unknown' :
+    stopRequest === 'cancelling' || stopRequest === 'confirmed' ? 'cancelling' : snapshot?.status ?? (submissionRejected ? 'error' : 'preparing')
   const terminal = ['completed', 'stopped', 'error'].includes(status)
   const task = usePolling({
     fn: () => getTask(taskId),
@@ -61,8 +64,9 @@ export default function TaskRunMonitor({ taskId, result, stopTask, getLog, activ
   const handleStop = async () => {
     setStopRequest('pending')
     try {
-      await stopTask(taskId)
-      if (live.current) setStopRequest('confirmed')
+      const response = await stopTask(taskId)
+      const confirmed = typeof response === 'object' && response !== null && 'status' in response && response.status === 'stopped'
+      if (live.current) setStopRequest(confirmed ? 'confirmed' : 'cancelling')
     } catch {
       if (live.current) setStopRequest('failed')
     }
@@ -108,7 +112,22 @@ export default function TaskRunMonitor({ taskId, result, stopTask, getLog, activ
         {snapshot?.started_at && (
           <p>{t('tasks.startedAt')}: <time dateTime={snapshot.started_at}>{formatTimestamp(snapshot.started_at, 'seconds')}</time></p>
         )}
+        {snapshot?.engine === 'aiperf' && (
+          <div aria-live="polite">
+            <p>{t('tasks.phaseLabel')}: {snapshot.phase ? t(`tasks.phases.${snapshot.phase}`) : '—'}</p>
+            {snapshot.total_subruns != null && (
+              <p>{t('tasks.subruns')}: {snapshot.completed_subruns ?? '—'} / {snapshot.total_subruns}</p>
+            )}
+            {snapshot.quality && <p>{t('tasks.resultQuality')}: {t(`tasks.quality.${snapshot.quality}`)}</p>}
+          </div>
+        )}
       </div>
+      {status === 'queued' && (
+        <p role="status">
+          {t('tasks.state.queued')}
+          {snapshot?.queue_position ? ` · ${t('tasks.queuePosition', { position: snapshot.queue_position })}` : ''}
+        </p>
+      )}
       {['unknown', 'finalizing'].includes(status) && (
         <p role="status">{t(`tasks.state.${status}`)}</p>
       )}
@@ -155,6 +174,9 @@ export default function TaskRunMonitor({ taskId, result, stopTask, getLog, activ
           {t('tasks.htmlReport')}
         </a>
       )}
+      {snapshot?.engine === 'aiperf' && !terminal && (
+        <PerfLiveMetricsPanel key={`${taskId}:${snapshot.current_subrun ?? ''}`} taskId={taskId} active={active} />
+      )}
       <TaskMonitor
         running={!terminal && status !== 'unknown'}
         progress={progress}
@@ -164,7 +186,7 @@ export default function TaskRunMonitor({ taskId, result, stopTask, getLog, activ
         readyLabel=""
         statusLabel={t(`tasks.state.${status}`)}
         onStop={handleStop}
-        stopping={stopRequest === 'pending'}
+        stopping={stopRequest === 'pending' || stopRequest === 'cancelling' || stopRequest === 'confirmed' || status === 'cancelling'}
       />
     </div>
   )

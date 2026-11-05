@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { emptyWorkspace, readWorkspace, writeWorkspace, type Workspace } from './configStorage'
+import { clearWorkspaceStorage, emptyWorkspace, readWorkspace, writeWorkspace, type Workspace } from './configStorage'
 
 /** Owns browser persistence, not form validation or execution state. */
 export function useTaskWorkspace(initialModel?: string, initialDataset?: string) {
@@ -65,7 +65,7 @@ export function useTaskWorkspace(initialModel?: string, initialDataset?: string)
 
   function clear(): boolean {
     const next = emptyWorkspace()
-    const result = writeWorkspace(next)
+    const result = clearWorkspaceStorage()
     if (!result.ok) {
       setMessage(result.error)
       return false

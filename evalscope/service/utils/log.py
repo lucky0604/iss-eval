@@ -14,10 +14,12 @@ from evalscope.utils.uri_utils import sanitize_endpoint
 if TYPE_CHECKING:
     from evalscope.config import TaskConfig
     from evalscope.perf.arguments import Arguments as PerfArguments
+    from evalscope.perf.executors.arguments import AIPerfArguments
 
 OUTPUT_DIR = os.path.abspath(os.getenv('EVALSCOPE_OUTPUT_DIR', DEFAULT_WORK_DIR))
 
 TASK_INFO_FILENAME = 'task_info.json'
+RESULT_FILENAME = 'result.json'
 
 
 def validate_task_id(task_id: str) -> None:
@@ -136,7 +138,12 @@ def write_task_manifest(task_id: str, manifest: dict) -> str:
 
 
 def build_task_info(
-    task_id: str, kind: Literal['eval', 'perf'], config: TaskConfig | PerfArguments, alias: Optional[str]
+    task_id: str,
+    kind: Literal['eval', 'perf'],
+    config: TaskConfig | PerfArguments | AIPerfArguments,
+    alias: Optional[str],
+    *,
+    engine: Optional[Literal['evalscope', 'aiperf']] = None,
 ) -> ActiveTaskInfo:
     if kind == 'eval':
         fields = ('datasets', 'limit', 'eval_batch_size', 'repeats')
@@ -173,10 +180,12 @@ def build_task_info(
     info = ActiveTaskInfo(
         task_id=task_id,
         kind=kind,
+        engine=engine,
         model=str(getattr(config, 'model', '') or ''),
         alias=alias,
         endpoint=sanitize_endpoint(endpoint_url),
         started_at=datetime.now().isoformat(),
+        enqueued_at=datetime.now().isoformat(),
         status='preparing',
         config=TaskConfigSummary(**summary),
     )
@@ -184,11 +193,42 @@ def build_task_info(
     return info
 
 
-def finish_task(task_id: str, status: Literal['completed', 'stopped', 'error']) -> None:
-    manifest = read_task_manifest(os.path.join(OUTPUT_DIR, task_id))
-    if manifest:
-        manifest['status'] = status
-        write_task_manifest(task_id, manifest)
+def update_task_manifest(task_id: str, **updates) -> None:
+    """Merge display/state fields into a task manifest, creating it when absent."""
+    manifest = read_task_manifest(os.path.join(OUTPUT_DIR, task_id)) or {'task_id': task_id}
+    manifest.update(updates)
+    write_task_manifest(task_id, manifest)
+
+
+def finish_task(task_id: str, status: Literal['completed', 'stopped', 'error'], **extra) -> None:
+    """Mark a task manifest terminal and record its finish time."""
+    update_task_manifest(task_id, status=status, finished_at=datetime.now().isoformat(), **extra)
+
+
+def write_task_result(task_id: str, payload: dict) -> str:
+    """Persist the public invoke payload so a client can reconnect after the task ends."""
+    validate_task_id(task_id)
+    result_file = task_file_path(task_id, RESULT_FILENAME)
+    os.makedirs(os.path.dirname(result_file), exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=os.path.dirname(result_file), delete=False) as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+        temporary_path = f.name
+    os.replace(temporary_path, result_file)
+    return result_file
+
+
+def read_task_result(task_id: str) -> Optional[dict]:
+    """Read a persisted invoke payload; ``None`` when absent or unreadable."""
+    try:
+        result_file = task_file_path(task_id, RESULT_FILENAME)
+    except ValueError:
+        return None
+    try:
+        with open(result_file, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def read_task_manifest(run_dir: str) -> Optional[dict]:

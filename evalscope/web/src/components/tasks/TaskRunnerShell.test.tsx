@@ -2,18 +2,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useState, type ComponentProps } from 'react'
 import { MemoryRouter } from 'react-router-dom'
-import type { ActiveTaskInfo, EvalInvokeResponse } from '@/api/types'
+import type { ActiveTaskInfo, TaskSubmitResponse } from '@/api/types'
 import { LocaleProvider } from '@/contexts/LocaleContext'
 import { DomainError } from '@/api/errors'
 import TaskRunnerShell from './TaskRunnerShell'
 
 vi.mock('@/api/tasks', () => ({ getTask: vi.fn() }))
+vi.mock('@/api/perf', () => ({ getLivePerfMetrics: vi.fn().mockResolvedValue({ task_id: 'perf_A', nodes: [] }) }))
 import { getTask } from '@/api/tasks'
+import { getLivePerfMetrics } from '@/api/perf'
 
 const LOG = { text: '', head_line: 0, tail_line: 0, total_lines: 0 }
 const TASK: ActiveTaskInfo = { task_id: 'eval_A', kind: 'eval', alias: 'server-A', model: 'same-model', endpoint: 'host:8000', started_at: '', percent: 10, status: 'running', config: { eval_batch_size: 1 } }
 
-beforeEach(() => { vi.mocked(getTask).mockImplementation(async (id) => ({ ...TASK, task_id: id })) })
+beforeEach(() => {
+  vi.mocked(getTask).mockImplementation(async (id) => ({ ...TASK, task_id: id }))
+  vi.mocked(getLivePerfMetrics).mockResolvedValue({ task_id: 'perf_A', nodes: [] })
+})
 afterEach(() => { cleanup(); vi.resetAllMocks(); sessionStorage.clear(); localStorage.clear() })
 
 function Form({ onSubmit, disabled }: { onSubmit: (config: Record<string, unknown>) => Promise<void>; disabled: boolean }) {
@@ -68,6 +73,8 @@ async function click(name: string) { await act(async () => { fireEvent.click(scr
       await click('View A')
       expect(screen.getByText('Running 10%')).toBeInTheDocument()
       await click('Stop')
+      vi.mocked(getTask).mockResolvedValue({ ...TASK, status: 'stopped' })
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
       expect(screen.getByText('Stopped')).toBeInTheDocument()
     } finally { storage.mockRestore() }
   })
@@ -87,7 +94,41 @@ async function click(name: string) { await act(async () => { fireEvent.click(scr
     await click('View A'); await click('Stop')
     expect(screen.getByRole('button', { name: 'Stopping…' })).toBeDisabled()
     await act(async () => { finish() })
+    expect(screen.queryByText('Stopped')).not.toBeInTheDocument()
+    vi.mocked(getTask).mockResolvedValue({ ...TASK, status: 'stopped' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     expect(screen.getByText('Stopped')).toBeInTheDocument()
+  })
+  it('continues polling after a cancelling acknowledgement until cleanup is confirmed', async () => {
+    const stopTask = vi.fn().mockResolvedValue({ status: 'cancelling' })
+    render(<Runner stopTask={stopTask} />)
+    await click('View A'); await click('Stop')
+    expect(screen.queryByText('Stopped')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Stopping…' })).toBeDisabled()
+    vi.mocked(getTask).mockResolvedValue({ ...TASK, status: 'stopped' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(screen.getByText('Stopped')).toBeInTheDocument()
+  })
+  it('shows the authoritative phase during a blocking submission and opens a stopped partial report', async () => {
+    const running = { ...TASK, kind: 'perf', engine: 'aiperf' as const, phase: 'profiling',
+      completed_subruns: 1, total_subruns: 3, quality: 'partial' as const }
+    vi.mocked(getTask).mockResolvedValue(running)
+    render(<Runner />)
+    await click('Submit')
+    expect(screen.getByText('Phase: Profiling')).toBeInTheDocument()
+    expect(screen.getByText('Completed subruns: 1 / 3')).toBeInTheDocument()
+    vi.mocked(getTask).mockResolvedValue({ ...running, status: 'stopped', report_url: '/perf-experiment/run' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(screen.getByRole('link', { name: 'View report' })).toHaveAttribute('href', '/perf-experiment/run')
+    expect(screen.getByText('Result quality: Partial')).toBeInTheDocument()
+  })
+  it('shows unknown when the service loses task state during cancellation', async () => {
+    render(<Runner stopTask={vi.fn().mockResolvedValue({ status: 'cancelling' })} />)
+    await click('View A'); await click('Stop')
+    vi.mocked(getTask).mockResolvedValue({ ...TASK, status: 'unknown' })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(screen.getByText('Running state unknown')).toBeInTheDocument()
+    expect(screen.queryByText('Stopped')).not.toBeInTheDocument()
   })
   it('discards late status, logs and stop responses after selecting B', async () => {
     let status!: (value: ActiveTaskInfo) => void
@@ -104,10 +145,10 @@ async function click(name: string) { await act(async () => { fireEvent.click(scr
     expect(screen.queryByText('Old log')).not.toBeInTheDocument()
   })
   it('does not let a late invoke result replace the selected task', async () => {
-    let finish!: (value: EvalInvokeResponse) => void
+    let finish!: (value: TaskSubmitResponse) => void
     render(<Runner submitTask={vi.fn().mockImplementation(() => new Promise((resolve) => { finish = resolve }))} />)
     await click('Submit'); await click('View B')
-    await act(async () => { finish({ task_id: 'eval_1782864000000', status: 'completed' }) })
+    await act(async () => { finish({ task_id: 'eval_1782864000000', status: 'queued' }) })
     expect(screen.getByText('ID: eval_B')).toBeInTheDocument()
     expect(screen.getByText('Running 10%')).toBeInTheDocument()
   })

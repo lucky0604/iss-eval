@@ -45,6 +45,14 @@ export interface WebApiContracts {
   analysis_response: AnalysisResponse;
   benchmark_entry: BenchmarkEntry;
   benchmarks_response: BenchmarksResponse;
+  cache_experiment_list_response: CacheExperimentListResponse;
+  cache_experiment_response: CacheExperimentResponse;
+  cache_node_metrics_response: CacheNodeMetricsResponse;
+  cache_node_series_response: CacheNodeSeriesResponse;
+  cache_repetitions_response: CacheRepetitionsResponse;
+  cache_request_groups_response: CacheRequestGroupsResponse;
+  cache_requests_response: CacheRequestsResponse;
+  cache_scenario_response: CacheScenarioResponse;
   chat_message: ChatMessage;
   config_response: ConfigResponse;
   content_block: ContentBlock;
@@ -66,11 +74,16 @@ export interface WebApiContracts {
   metric_semantics: MetricSemantics;
   percentile_stats: PercentileStats;
   perf_detail_response: PerfDetailResponse;
+  perf_engines_response: PerfEnginesResponse;
+  perf_invoke_response: PerfInvokeResponse;
+  perf_live_response: PerfLiveResponse;
   perf_metrics: PerfMetrics;
+  perf_plan_response: PerfPlanResponse;
   perf_requests_response: PerfRequestsResponse;
   perf_run_item: PerfRunItem;
   perf_run_summary: PerfRunSummary;
   perf_runs_list_response: PerfRunsListResponse;
+  perf_single_plan_response: PerfSinglePlanResponse;
   prediction_row: PredictionRow;
   prediction_score: PredictionScore;
   predictions_response: PredictionsResponse;
@@ -80,25 +93,37 @@ export interface WebApiContracts {
   report_metric: ReportMetric;
   report_summary: ReportSummary;
   task_status_response: TaskStatusResponse;
+  task_submit_response: TaskSubmitResponse;
   tool_call: PredictionToolCall;
   value_range: ValueRange;
   [k: string]: any;
 }
 /**
- * Display identity of a task whose subprocess is currently registered.
+ * Display identity of a task that is queued, running, or recently finished.
  */
 export interface ActiveTaskInfo {
   alias?: string | null;
+  completed_subruns?: number | null;
   config?: TaskConfigSummary | null;
+  current_subrun?: string | null;
   endpoint?: string | null;
+  engine?: ("evalscope" | "aiperf") | null;
+  enqueued_at?: string | null;
+  error?: string | null;
+  finished_at?: string | null;
   html_report_url?: string | null;
   kind: string;
   model?: string;
   percent?: number | null;
+  phase?: string | null;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  queue_position?: number | null;
   report_url?: string | null;
   started_at?: string;
-  status?: "preparing" | "running" | "finalizing" | "completed" | "stopped" | "error" | "unknown";
+  status?:
+    "queued" | "preparing" | "running" | "cancelling" | "finalizing" | "completed" | "stopped" | "error" | "unknown";
   task_id: string;
+  total_subruns?: number | null;
 }
 export interface TaskConfigSummary {
   api?: string | null;
@@ -152,6 +177,476 @@ export interface BenchmarksResponse {
   aigc?: BenchmarkEntry[] | null;
   multimodal?: BenchmarkEntry[] | null;
   text?: BenchmarkEntry[] | null;
+}
+export interface CacheExperimentListResponse {
+  experiments: CacheExperimentListItem[];
+  limit: number;
+  offset: number;
+  total: number;
+}
+export interface CacheExperimentListItem {
+  completed_subruns: number;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  status: "running" | "completed" | "stopped" | "error" | "unknown";
+  task_id: string;
+  total_subruns: number;
+}
+export interface CacheExperimentResponse {
+  plan: CacheExperimentPlan;
+  state: CacheExperimentState;
+  task_id: string;
+}
+/**
+ * A reproducible plan and its request budget.
+ */
+export interface CacheExperimentPlan {
+  configuration?: CachePlanConfiguration | null;
+  configuration_hash: string;
+  max_primer_output_tokens?: number | null;
+  max_profiling_output_tokens?: number | null;
+  max_warmup_output_tokens?: number | null;
+  plan_hash: string;
+  primer_requests: number;
+  profiling_requests: number;
+  schema_version?: "1.0";
+  subruns: CacheSubrunPlan[];
+  template_id: string;
+  tokenizer_id: string;
+  warmup_requests?: number;
+}
+/**
+ * Reproducible configuration without inference or telemetry credentials.
+ */
+export interface CachePlanConfiguration {
+  cache: CacheExperiment;
+  deployment_mode: "single" | "pd";
+  load: LoadConfiguration;
+  model: string;
+  stream: boolean;
+  task_id: string;
+  telemetry: PlannedTelemetry;
+  template_id: string;
+  tokenizer_id: string;
+  tokenizer_path: string;
+  url: string;
+}
+/**
+ * Target prefix reuse, independent of generated reuse or observed cache hits.
+ */
+export interface CacheExperiment {
+  cache_state_policy?: "fresh_namespace";
+  input_token_values?: number[] | null;
+  mode?: "token_prefix_ratio" | "synthetic_isl";
+  prefix_pool_size?: number;
+  routing_coverage?: "observed";
+  routing_policy?: "router_native";
+  seed?: number;
+  /**
+   * @minItems 1
+   */
+  target_ratios: [number, ...number[]];
+  total_input_tokens: number;
+  warmup?: WarmupConfiguration | null;
+  warmup_policy?: "prime_all_prefixes";
+}
+/**
+ * Synthetic pre-run traffic sent once before a cache experiment matrix.
+ */
+export interface WarmupConfiguration {
+  concurrency: number;
+  output_token_limit: number;
+  request_count: number;
+  total_input_tokens: number;
+}
+/**
+ * Load points and budgets shared by all experiment scenarios.
+ */
+export interface LoadConfiguration {
+  mode?: "closed_loop" | "open_loop";
+  output_token_limit: number;
+  /**
+   * @minItems 1
+   */
+  points: [LoadPoint, ...LoadPoint[]];
+  repetitions?: number;
+  request_count: number;
+}
+/**
+ * One closed-loop concurrency or open-loop request rate.
+ */
+export interface LoadPoint {
+  concurrency?: number | null;
+  rate?: number | null;
+}
+export interface PlannedTelemetry {
+  max_scrape_gap_seconds: number | null;
+  required: boolean;
+  sample_interval_seconds: number;
+  targets: PlannedMetricNode[];
+}
+/**
+ * Credential-free identity of a configured telemetry node.
+ */
+export interface PlannedMetricNode {
+  engine: "vllm" | "sglang";
+  labels: {
+    [k: string]: string;
+  };
+  node_id: string;
+  role: "prefill" | "decode";
+  url: string;
+}
+/**
+ * One uniquely named, independently seeded matrix member.
+ */
+export interface CacheSubrunPlan {
+  input_tokens?: number | null;
+  load_mode: "closed_loop" | "open_loop";
+  load_point: LoadPoint;
+  namespace: string;
+  order: number;
+  output_token_limit?: number | null;
+  primer_requests: number;
+  repetition: number;
+  request_count: number;
+  seed: number;
+  subrun_id: string;
+  target_ratio: number;
+}
+export interface CacheExperimentState {
+  completed_subruns: number;
+  current_subrun?: string | null;
+  last_phase?: string | null;
+  phase?: string | null;
+  plan_hash: string;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  schema_version: "1.0";
+  status: "running" | "completed" | "stopped" | "error" | "unknown";
+  subruns: CacheSubrunState[];
+  total_subruns: number;
+  warmup?: CacheWarmupState | null;
+}
+export interface CacheSubrunState {
+  input_tokens?: number | null;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  scenario?: string | null;
+  status: "not_started" | "running" | "completed" | "cancelled" | "error";
+  subrun_id: string;
+}
+export interface CacheWarmupState {
+  completed_requests?: number | null;
+  concurrency?: number | null;
+  failed_requests?: number | null;
+  output_token_limit?: number | null;
+  reason?: string | null;
+  request_count?: number | null;
+  status: "completed" | "failed" | "cancelled";
+  total_input_tokens?: number | null;
+}
+export interface CacheNodeMetricsResponse {
+  aggregation?: "raw";
+  downsample?: "none";
+  limit: number;
+  offset: number;
+  samples: NodeMetricSample[];
+  total: number;
+}
+/**
+ * One source-attributed raw sample; no request-level PD inference is made.
+ */
+export interface NodeMetricSample {
+  endpoint: string;
+  engine?: ("vllm" | "sglang") | null;
+  labels: {
+    [k: string]: string;
+  };
+  metric_name: string;
+  metric_type: "counter" | "gauge" | "histogram" | "unknown";
+  node_id?: string | null;
+  observation: {
+    [k: string]: any;
+  };
+  phase_kind?: ("warmup" | "profiling") | null;
+  request_sent_ns?: number | null;
+  role?: ("prefill" | "decode") | null;
+  scope?: "node_window";
+  scrape_latency_ns?: number | null;
+  semantics?: "unverified";
+  timestamp_ns: number;
+}
+/**
+ * Bounded raw node points and their full matching sample count.
+ */
+export interface CacheNodeSeriesResponse {
+  series: NodeMetricSeries;
+}
+/**
+ * Selected raw points, reporting the full matching population and sampling method.
+ */
+export interface NodeMetricSeries {
+  aggregation?: "raw";
+  downsample: "none" | "uniform_index";
+  max_points: number;
+  samples: NodeMetricSample[];
+  total: number;
+}
+export interface CacheRepetitionsResponse {
+  limit: number;
+  offset: number;
+  plan_hash: string;
+  repetitions: CacheRepetitionItem[];
+  total: number;
+}
+/**
+ * One planned repetition with its independently observed metric.
+ */
+export interface CacheRepetitionItem {
+  engine?: "aiperf" | null;
+  executor_version?: string | null;
+  metric?: MetricStatistics | null;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  repetition: number;
+  status: string;
+  subrun_id: string;
+  unavailable_reason?: string | null;
+}
+/**
+ * A metric with explicit unit, scope, source, and observation count.
+ */
+export interface MetricStatistics {
+  availability?: "available" | "unavailable";
+  count?: number | null;
+  key: string;
+  reason?: string | null;
+  scope: "request" | "run" | "node_window";
+  source: string;
+  statistics?: {
+    [k: string]: number;
+  };
+  unit: string;
+  value?: number | null;
+}
+export interface CacheRequestGroupsResponse {
+  availability: "available" | "unavailable";
+  groups?: CacheRequestGroup[];
+  observed_requests: number;
+  reason?: string | null;
+  successful_requests?: number | null;
+}
+/**
+ * A group defined only by the server's request-level cached token count.
+ */
+export interface CacheRequestGroup {
+  count: number;
+  group: "no_cached_tokens" | "some_cached_tokens";
+  latency: RequestLatencyDistribution;
+  ttft: RequestLatencyDistribution;
+}
+/**
+ * Exact nearest-rank percentiles for observed request latencies.
+ */
+export interface RequestLatencyDistribution {
+  count: number;
+  mean?: number | null;
+  p50?: number | null;
+  p95?: number | null;
+  p99?: number | null;
+  unit?: "seconds";
+}
+export interface CacheRequestsResponse {
+  limit: number;
+  offset: number;
+  requests: PerfRequestRecord[];
+  total: number;
+}
+/**
+ * A request record without inferred server cache data.
+ */
+export interface PerfRequestRecord {
+  cached_tokens?: number | null;
+  cached_tokens_source?: "server_usage" | null;
+  end_ns?: number | null;
+  error_code?: number | null;
+  index: number;
+  latency_seconds?: number | null;
+  output_tokens?: number | null;
+  output_tokens_source?: ("server_usage" | "aiperf_estimate") | null;
+  phase: string;
+  prompt_tokens?: number | null;
+  prompt_tokens_source?: ("server_usage" | "aiperf_estimate") | null;
+  request_id?: string | null;
+  session_id?: string | null;
+  start_ns?: number | null;
+  status: "success" | "error" | "cancelled" | "incomplete";
+  status_reason?: string | null;
+  ttft_seconds?: number | null;
+  turn_index?: number | null;
+}
+export interface CacheScenarioResponse {
+  cache?: CacheObservation | null;
+  generated_count: number;
+  generated_ratio?: number | null;
+  input_tokens_per_request?: number | null;
+  node_analysis?: NodeMetricsAnalysis | null;
+  quality_reasons?: string[];
+  request_hashes_sha256?: string | null;
+  result?: PerfRunResult | null;
+  status: string;
+  subrun_id: string;
+  target_ratio: number;
+  workload_mode?: ("token_prefix_ratio" | "synthetic_isl") | null;
+}
+/**
+ * Server-reported cache-read token totals and their actual coverage.
+ */
+export interface CacheObservation {
+  availability: "available" | "unavailable";
+  cached_tokens?: number | null;
+  observed_requests: number;
+  prompt_tokens?: number | null;
+  ratio?: number | null;
+  reason?: string | null;
+  source?: "server_usage" | null;
+  successful_requests?: number | null;
+}
+/**
+ * Bounded node analysis and the provenance of its profiling interval.
+ */
+export interface NodeMetricsAnalysis {
+  availability: "available" | "partial" | "missing" | "invalid";
+  cache_ratios?: NodeCacheRatio[];
+  max_gap_ns: number;
+  quality_reasons?: string[];
+  reason?: string | null;
+  scrapes?: NodeScrapeSummary[];
+  series?: NodeMetricWindow[];
+  timed_requests?: number;
+  total_requests?: number;
+  window?: MetricWindow | null;
+  window_source?: ("aiperf_phase" | "observed_request_bounds") | null;
+}
+/**
+ * vLLM lookup-token ratio; never confused with response cache usage.
+ */
+export interface NodeCacheRatio {
+  availability: "available" | "partial" | "missing" | "invalid";
+  hit_tokens?: number | null;
+  labels: {
+    [k: string]: string;
+  };
+  lookup_tokens?: number | null;
+  node_id: string;
+  ratio?: number | null;
+  reason?: string | null;
+  role: "prefill" | "decode";
+  semantics?: "vllm_prefix_lookup_tokens";
+}
+/**
+ * Observed successful scrapes; failures are unknown when not exported.
+ */
+export interface NodeScrapeSummary {
+  failed_scrapes?: number | null;
+  mean_interval_seconds?: number | null;
+  mean_latency_seconds?: number | null;
+  node_id: string;
+  observed_successful_scrapes: number;
+}
+/**
+ * A single node/label series with upstream definition and measured window.
+ */
+export interface NodeMetricWindow {
+  attribution?: "node_window_shared_traffic";
+  engine: "vllm" | "sglang";
+  histogram?: HistogramWindow | null;
+  labels: {
+    [k: string]: string;
+  };
+  metric: MetricMapping;
+  node_id: string;
+  reason?: string | null;
+  role: "prefill" | "decode";
+  statistic?: WindowStatistic | null;
+  verification?: "deployment_unverified";
+  window_source: "aiperf_phase" | "observed_request_bounds";
+}
+/**
+ * Window bucket deltas and approximate quantiles, never averaged percentiles.
+ */
+export interface HistogramWindow {
+  availability: "available" | "partial" | "missing" | "invalid";
+  boundary?: "exact" | "bracketed" | "unknown";
+  buckets?: {
+    [k: string]: number;
+  };
+  count?: number | null;
+  mean?: number | null;
+  metric_key: string;
+  p50?: number | null;
+  p95?: number | null;
+  p99?: number | null;
+  reason?: string | null;
+  source_end_ns?: number | null;
+  source_start_ns?: number | null;
+  sum?: number | null;
+  unit: string;
+  window_end_ns: number;
+  window_start_ns: number;
+}
+/**
+ * One exact upstream metric family and its non-aggregated semantics.
+ */
+export interface MetricMapping {
+  engine: "vllm" | "sglang";
+  key: string;
+  kind: "gauge" | "counter" | "histogram";
+  name: string;
+  scale?: number;
+  source_unit: string;
+  source_url: string;
+  unit: string;
+  upstream_version: string;
+}
+/**
+ * A window value with coverage and explicit boundary semantics.
+ */
+export interface WindowStatistic {
+  availability: "available" | "partial" | "missing" | "invalid";
+  boundary?: "exact" | "bracketed" | "step" | "unknown";
+  coverage?: number | null;
+  reason?: string | null;
+  sample_count: number;
+  sample_peak?: number | null;
+  source_end_ns?: number | null;
+  source_start_ns?: number | null;
+  value?: number | null;
+}
+/**
+ * An explicit profiling window in the collector's nanosecond clock.
+ */
+export interface MetricWindow {
+  end_ns: number;
+  start_ns: number;
+}
+/**
+ * A normalized run; raw files remain the source of truth.
+ */
+export interface PerfRunResult {
+  engine?: "aiperf";
+  executor_version: string;
+  metrics?: MetricStatistics[];
+  profiling_cancelled?: number | null;
+  profiling_end_ns?: number | null;
+  profiling_errors: number;
+  profiling_incomplete?: number | null;
+  profiling_requests: number;
+  profiling_start_ns?: number | null;
+  profiling_successes: number;
+  quality: "complete" | "partial" | "invalid";
+  quality_reasons?: string[];
+  records_schema?: "unversioned";
+  schema_version?: "1.0";
+  server_metrics_schema?: string | null;
+  summary_schema?: string | null;
 }
 export interface ChatMessage {
   content: string | ContentBlock[];
@@ -329,10 +824,12 @@ export interface PerfRunSummary {
   api_type: string;
   avg_input_tokens?: number | null;
   avg_output_tokens?: number | null;
-  best_latency: number;
-  best_rps: number;
+  best_latency: number | null;
+  best_rps: number | null;
   concurrency?: number[] | null;
   dataset: string;
+  engine?: ("evalscope" | "aiperf") | null;
+  executor_version?: string | null;
   has_html: boolean;
   is_embedding: boolean;
   model: string;
@@ -340,7 +837,8 @@ export interface PerfRunSummary {
   path: string;
   protocol?: string | null;
   provider?: string | null;
-  success_rate: number;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  success_rate: number | null;
   timestamp: string;
   total_requests: number;
 }
@@ -516,12 +1014,17 @@ export interface PerfDetailResponse {
     [k: string]: string;
   } | null;
   dataset: string;
+  engine?: ("evalscope" | "aiperf") | null;
+  executor_version?: string | null;
   generated_at: string;
   has_html: boolean;
   is_embedding: boolean;
   model: string;
+  node_analysis?: NodeMetricsAnalysis | null;
   num_runs: number;
   path: string;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  quality_reasons?: string[];
   recommendations: string[];
   summary_columns: PerfSummaryColumn[];
   summary_rows: PerfSummaryRow[];
@@ -540,6 +1043,233 @@ export interface PerfSummaryRow {
     [k: string]: number | null;
   };
 }
+/**
+ * Available and unavailable execution engines.
+ */
+export interface PerfEnginesResponse {
+  engines: PerfEngineCapability[];
+}
+/**
+ * Public availability of a performance execution engine.
+ */
+export interface PerfEngineCapability {
+  available: boolean;
+  engine: "evalscope" | "aiperf";
+  protocols?: string[];
+  reason?: string | null;
+  version?: string | null;
+}
+/**
+ * Typed AIPerf task result, compatible with the shared task monitor.
+ */
+export interface PerfInvokeResponse {
+  result: CacheExperimentOutcome | PublicAIPerfOutcome;
+  status: "completed" | "error" | "stopped";
+  task_id: string;
+}
+/**
+ * Small task result; the experiment manifest contains subrun details.
+ */
+export interface CacheExperimentOutcome {
+  cleanup_confirmed: boolean;
+  completed_subruns: number;
+  manifest?: string;
+  plan_hash: string;
+  quality: "partial" | "invalid";
+  status: "completed" | "stopped" | "error";
+  total_subruns: number;
+}
+/**
+ * Single-run outcome without local paths or credentials.
+ */
+export interface PublicAIPerfOutcome {
+  artifact_status: "available" | "partial" | "missing";
+  cleanup_confirmed: boolean;
+  engine: "aiperf";
+  executor_version?: string | null;
+  exit_code?: number | null;
+  exit_reason: "completed" | "error" | "cancelled";
+}
+/**
+ * Bounded last node scrapes and the current planned scenario, when available.
+ */
+export interface PerfLiveResponse {
+  client?: ClientProgress | null;
+  concurrency?: number | null;
+  current_subrun?: string | null;
+  expected_interval_seconds?: number | null;
+  load_mode?: ("closed_loop" | "open_loop") | null;
+  nodes?: LiveNode[];
+  rate?: number | null;
+  repetition?: number | null;
+  target_ratio?: number | null;
+  task_id: string;
+}
+/**
+ * AIPerf client counters, distinct from all server node metrics.
+ */
+export interface ClientProgress {
+  completed_records: number;
+  error_records: number;
+  rounded_requests_per_second?: number | null;
+  sampled_at_ns: number;
+  sent_at_ns?: number | null;
+  sent_requests?: number | null;
+  source?: "aiperf_0.13.0_realtime_log";
+  successful_records: number;
+}
+export interface LiveNode {
+  attempted_at_ns?: number | null;
+  engine: "vllm" | "sglang";
+  /**
+   * @maxItems 16
+   */
+  gauges?:
+    | []
+    | [LiveGauge]
+    | [LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge, LiveGauge]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ]
+    | [
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge,
+        LiveGauge
+      ];
+  node_id: string;
+  role: "prefill" | "decode";
+  sampled_at_ns?: number | null;
+  status?: "waiting" | "available" | "unavailable";
+  truncated?: boolean;
+}
+/**
+ * A single unaggregated gauge series from one actual node scrape.
+ */
+export interface LiveGauge {
+  key: string;
+  labels: {
+    [k: string]: string;
+  };
+  name: string;
+  unit: string;
+  value: number;
+}
+/**
+ * A side-effect-free cache experiment plan and its limitations.
+ */
+export interface PerfPlanResponse {
+  engine_available: boolean;
+  metrics_probe?: "not_requested" | "completed";
+  nodes?: NodePreflight[];
+  plan: CacheExperimentPlan;
+  warnings?: string[];
+}
+/**
+ * A single endpoint's reachability and documented matching families.
+ */
+export interface NodePreflight {
+  elapsed_ms: number;
+  engine: "vllm" | "sglang";
+  metric_names?: string[];
+  node_id: string;
+  reason?: string | null;
+  role: "prefill" | "decode";
+  status: "available" | "missing" | "unreachable" | "invalid";
+  verification?: "deployment_unverified";
+}
 export interface PerfRequestsResponse {
   columns: string[];
   has_db: boolean;
@@ -556,17 +1286,27 @@ export interface PerfRunItem {
   name: string;
   num_requests: number;
   number: number;
-  parallel: number;
+  parallel: number | null;
   percentile_columns: string[];
   percentile_rows: (string | number | null)[][];
   rate: number | null;
   succeed_requests: number;
-  success_rate: number;
+  success_rate: number | null;
   total_requests: number;
 }
 export interface PerfRunsListResponse {
   runs: PerfRunItem[];
   total: number;
+}
+/**
+ * Preflight for one inline-prompt AIPerf run.
+ */
+export interface PerfSinglePlanResponse {
+  engine_available: boolean;
+  metrics_probe?: "not_requested" | "completed";
+  nodes?: NodePreflight[];
+  profiling_requests: number;
+  warnings?: string[];
 }
 export interface PredictionRow {
   AgentTrace?: AgentTrace | null;
@@ -649,12 +1389,26 @@ export interface PredictionsResponse {
  * Progress tracker payload with stable fields and tracker-specific metadata.
  */
 export interface ProgressResponse {
+  completed_subruns?: number | null;
   current_step?: string | null;
-  percent: number;
+  current_subrun?: string | null;
+  percent: number | null;
+  phase?: string | null;
+  quality?: ("complete" | "partial" | "invalid") | null;
   status?: string | null;
+  total_subruns?: number | null;
   [k: string]: any;
 }
 export interface TaskStatusResponse {
   status: string;
+  task_id: string;
+}
+/**
+ * Acknowledgement that a task was accepted for background execution.
+ */
+export interface TaskSubmitResponse {
+  enqueued_at?: string | null;
+  queue_position?: number | null;
+  status?: "queued";
   task_id: string;
 }
