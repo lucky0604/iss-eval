@@ -14,6 +14,8 @@ from .api_models import ConfigResponse
 from .blueprints import bp_eval, bp_perf, bp_reports, bp_tasks
 from .responses import json_response
 from .utils import OUTPUT_DIR as _DEFAULT_ROOT
+from .utils import queue_health
+from .utils.queue_config import queue_backend
 
 logger = get_logger()
 
@@ -58,8 +60,36 @@ def create_app(outputs: str = None):
 
     @app.route('/health', methods=['GET'])
     def health_check():
-        """Health check endpoint."""
+        """Liveness check: the web process is running."""
         return jsonify({'status': 'ok', 'service': 'evalscope', 'timestamp': datetime.now().isoformat()})
+
+    @app.route('/ready', methods=['GET'])
+    def readiness_check():
+        """Readiness check: queued work can actually be accepted and executed."""
+        try:
+            info = queue_health()
+        except Exception as error:  # noqa: BLE001 - an unreachable backend is the point of this check
+            logger.warning(f'Readiness check failed ({type(error).__name__})')
+            return jsonify(
+                {
+                    'status': 'unavailable',
+                    'service': 'evalscope',
+                    'queue': {
+                        'backend': queue_backend(),
+                        'reachable': False,
+                        'error': type(error).__name__,
+                    },
+                    'timestamp': datetime.now().isoformat(),
+                }
+            ), 503
+        return jsonify(
+            {
+                'status': 'ready',
+                'service': 'evalscope',
+                'queue': {'backend': info['backend'], 'reachable': True},
+                'timestamp': datetime.now().isoformat(),
+            }
+        )
 
     @app.route('/api/v1/config', methods=['GET'])
     def get_config():
@@ -92,6 +122,7 @@ def create_app(outputs: str = None):
                 'error': 'Endpoint not found',
                 'available_endpoints': {
                     'GET  /health': 'Health check',
+                    'GET  /ready': 'Readiness check (including the queue backend)',
                     'GET  /api/v1/config': 'Get runtime configuration',
                     'GET  /api/v1/reports/media/file': 'Serve a local media file (image/audio/video) by path',
                     'POST /api/v1/eval/invoke': 'Run model evaluation task (blocking)',
@@ -151,6 +182,7 @@ def run_service(host: str = '0.0.0.0', port: int = 9000, debug: bool = False, ou
     logger.info(f'Starting EvalScope service on {host}:{port}')
     logger.info('Available endpoints:')
     logger.info('  GET  /health                         - Health check')
+    logger.info('  GET  /ready                          - Readiness check (including the queue backend)')
     logger.info('  POST /api/v1/eval/invoke             - Run model evaluation task (blocking)')
     logger.info('  GET  /api/v1/eval/benchmarks         - List supported benchmarks with descriptions')
     logger.info('  GET  /api/v1/eval/log                - Get evaluation log')

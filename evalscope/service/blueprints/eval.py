@@ -27,6 +27,8 @@ from ..utils import (
     DEFAULT_MULTIMODAL_BENCHMARKS,
     DEFAULT_TEXT_BENCHMARKS,
     OUTPUT_DIR,
+    QueueUnavailableError,
+    TaskJob,
     TaskRunner,
     TaskStoppedError,
     build_benchmark_entry,
@@ -279,6 +281,9 @@ def _submit_queued(task_id: str, kind: str, task_meta: ActiveTaskInfo, runner: T
         info = get_task_queue().submit(task_id, kind, task_meta, runner)
     except ValueError:
         return jsonify({'error': 'Task is already queued or running'}), 409
+    except QueueUnavailableError as error:
+        logger.error(f'[{task_id}] Task queue unavailable: {error}')
+        return jsonify({'error': 'Task queue is unavailable'}), 503
     return json_response(
         TaskSubmitResponse,
         {
@@ -309,9 +314,7 @@ def run_evaluation():
     logger.info(f'[{task_id}] Datasets: {task_config.datasets}')
 
     if _async_requested():
-        return _submit_queued(
-            task_id, 'eval', task_meta, lambda: _run_eval_task(task_id, task_config, task_meta=task_meta)
-        )
+        return _submit_queued(task_id, 'eval', task_meta, TaskJob('eval', (task_id, task_config, 'Task', task_meta)))
     return _execute_task(task_id, task_config, label='Task', task_meta=task_meta)
 
 
@@ -331,6 +334,8 @@ def stop_evaluation():
         state = get_task_queue().cancel(task_id)
         if state == 'stopped':
             return json_response(TaskStatusResponse, {'status': 'stopped', 'task_id': task_id})
+        if state == 'cancelling':
+            return json_response(TaskStatusResponse, {'status': 'cancelling', 'task_id': task_id}, status=202)
         stopped = stop_process(task_id)
     except ValueError:
         return jsonify({'error': 'Invalid task_id'}), 400
@@ -370,10 +375,7 @@ def resume_evaluation():
 
     if _async_requested():
         return _submit_queued(
-            task_id,
-            'eval',
-            task_meta,
-            lambda: _run_eval_task(task_id, task_config, label='Resume task', task_meta=task_meta),
+            task_id, 'eval', task_meta, TaskJob('eval', (task_id, task_config, 'Resume task', task_meta))
         )
     return _execute_task(task_id, task_config, label='Resume task', task_meta=task_meta)
 

@@ -33,7 +33,10 @@ from .process import (
     serialize_result,
     stop_process,
 )
-from .task_queue import TaskQueue, TaskRunner, get_task_queue, reset_task_queue
+from .queue_config import QueueUnavailableError
+from .redis_queue import RedisTaskQueue
+from .task_jobs import TaskJob
+from .task_queue import TaskQueue, TaskRunner, get_task_queue, queue_health, reset_task_queue
 
 __all__ = [
     'OUTPUT_DIR',
@@ -53,7 +56,11 @@ __all__ = [
     'ActiveTask',
     'TaskQueue',
     'TaskRunner',
+    'TaskJob',
+    'QueueUnavailableError',
+    'RedisTaskQueue',
     'get_task_queue',
+    'queue_health',
     'reset_task_queue',
     'run_eval_wrapper',
     'run_perf_wrapper',

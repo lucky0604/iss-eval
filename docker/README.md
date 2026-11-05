@@ -1,15 +1,19 @@
 # Docker 部署
 
-本目录包含 EvalScope 服务（Web Dashboard + 精度评测 + 性能压测）的单容器部署配置。
+本目录包含 EvalScope 服务（Web Dashboard + 精度评测 + 性能压测）的容器化部署配置。
 镜像内置两个 Python 环境：框架环境（`eval` / `perf` / `service`）和隔离的 AIPerf 0.13.0 运行时。
+
+Compose 拓扑包含三个服务：`evalscope`（HTTP 服务，只负责接收和排队任务）、`worker`（消费 Redis
+队列并在子进程中执行任务）、`redis`（任务队列与取消信号）。Web 与 Worker 共享同一个输出卷，
+Dashboard 从磁盘读取进度和结果。
 
 ## 目录内容
 
 | 文件 | 说明 |
 | --- | --- |
 | `Dockerfile` | 多阶段构建：Node 编译 Dashboard → Python 运行时 + 独立 AIPerf 环境 |
-| `docker-compose.yml` | 端口、数据卷、ulimit、日志轮转、可选的 GPU 预留 |
-| `entrypoint.sh` | 启动前创建输出目录、探测 AIPerf 版本，然后 `exec` 服务进程 |
+| `docker-compose.yml` | Redis、Web、Worker 三个服务，端口、数据卷、ulimit、日志轮转、可选的 GPU 预留 |
+| `entrypoint.sh` | 启动前创建输出目录、探测 AIPerf 版本，然后 `exec` 服务或 Worker 进程 |
 | `.env.example` | 配置模板，复制为 `.env` 后按需修改 |
 | `verify.sh` | 部署后自检：容器状态、版本、外部 runner 前提、AIPerf 引擎可用性 |
 
@@ -43,7 +47,7 @@ cp .env.example .env        # 按需修改端口、时区、镜像源、数据�
 docker compose build
 docker compose up -d
 docker compose ps
-curl -fsS http://127.0.0.1:9000/health
+curl -fsS http://127.0.0.1:9000/ready      # 就绪检查（包含 Redis 连通性）
 sh verify.sh
 ```
 
@@ -66,12 +70,32 @@ gunzip -c evalscope-latest.tar.gz | docker load
 
 转运镜像时，目标服务器仍需保留仓库中的 `docker/` 目录用于 `docker compose` 编排（镜像已包含代码，不需要重新构建）。
 
-不使用 Compose 时：
+不使用 Compose 时（进程内队列模式，任务在 Web 进程内执行，重启后不保留排队任务）：
 
 ```bash
 docker build -f docker/Dockerfile -t evalscope:latest .
 docker run -d --name evalscope -p 9000:9000 \
   -e TZ=Asia/Shanghai \
+  -v evalscope_outputs:/data/outputs \
+  -v evalscope_cache:/data/cache \
+  evalscope:latest
+```
+
+使用 Redis 后端时需要额外启动 Redis 和 Worker（三者使用同一镜像、同一输出卷与缓存卷）：
+
+```bash
+docker run -d --name evalscope-redis redis:7-alpine \
+  redis-server --appendonly yes --appendfsync everysec
+docker run -d --name evalscope-worker \
+  --no-healthcheck \
+  -e EVALSCOPE_QUEUE_BACKEND=redis \
+  -e EVALSCOPE_REDIS_URL=redis://evalscope-redis:6379/0 \
+  -v evalscope_outputs:/data/outputs \
+  -v evalscope_cache:/data/cache \
+  evalscope:latest worker
+docker run -d --name evalscope -p 9000:9000 \
+  -e EVALSCOPE_QUEUE_BACKEND=redis \
+  -e EVALSCOPE_REDIS_URL=redis://evalscope-redis:6379/0 \
   -v evalscope_outputs:/data/outputs \
   -v evalscope_cache:/data/cache \
   evalscope:latest
@@ -116,6 +140,15 @@ curl -fsS http://127.0.0.1:9000/api/v1/perf/engines
 | `EVALSCOPE_OUTPUTS_VOLUME` / `EVALSCOPE_CACHE_VOLUME` | `evalscope_outputs` / `evalscope_cache` | 命名卷名称 |
 | `EVALSCOPE_UID` / `EVALSCOPE_GID` | `1000` | 容器运行用户，需与绑定目录所有者一致 |
 | `EVALSCOPE_AIPERF_EXECUTABLE` | `/opt/aiperf-venv/bin/aiperf` | 容器内 AIPerf 绝对路径 |
+| `EVALSCOPE_QUEUE_BACKEND` | `redis`（Compose）/ `inprocess`（裸跑） | `redis` 由 Worker 执行任务；`inprocess` 在 Web 进程内执行 |
+| `EVALSCOPE_REDIS_URL` | `redis://redis:6379/0` | Redis 连接地址，Web 与 Worker 必须一致 |
+| `EVALSCOPE_REDIS_QUEUE` | `evalscope` | RQ 队列名，Web 与 Worker 必须一致 |
+| `EVALSCOPE_REDIS_CONTAINER_NAME` / `EVALSCOPE_WORKER_CONTAINER_NAME` | `evalscope-redis` / `evalscope-worker` | 容器名 |
+| `EVALSCOPE_REDIS_MOUNT` / `EVALSCOPE_REDIS_VOLUME` | 空（命名卷）/ `evalscope_redis` | Redis 数据目录，AOF 持久化排队任务 |
+| `EVALSCOPE_TASK_QUEUE_WORKERS` | `1` | 仅 `inprocess` 后端的 Web 进程内工作线程数 |
+
+其余队列参数（`EVALSCOPE_CANCEL_TTL`、`EVALSCOPE_REDIS_FAILURE_TTL`）通常无需调整：取消信号默认保留
+1 小时，失败任务记录默认保留 24 小时。
 
 ## 数据持久化
 
@@ -145,11 +178,29 @@ docker run --rm -v evalscope_outputs:/data -v "$PWD":/backup alpine \
 ## 日常运维
 
 ```bash
-docker compose logs -f evalscope          # 跟踪日志
-docker compose restart evalscope          # 重启服务
+docker compose logs -f evalscope          # 跟踪 Web 日志
+docker compose logs -f worker             # 跟踪 Worker 日志（任务实际执行处）
+docker compose logs -f redis              # 跟踪 Redis 日志
+docker compose restart worker             # 重启 Worker（排队任务保留，运行中任务中断）
 docker compose exec evalscope bash        # 进入容器排查
 docker compose down                       # 停止（保留数据卷）
 ```
+
+队列运维：
+
+```bash
+# 排队与运行中的任务
+docker compose exec redis redis-cli LLEN rq:queue:evalscope
+docker compose exec redis redis-cli SMEMBERS rq:workers
+# 查看 Web 侧视图
+curl -fsS 'http://127.0.0.1:9000/api/v1/tasks/active' | head -c 2000
+```
+
+- `GET /ready` 返回 503 表示 Redis 不可达；`GET /health` 只反映 Web 进程存活。
+- 排队任务保存在 Redis（AOF），重启 Web 或 Worker 不会丢失；运行中的任务会被中断，
+  需要在 Dashboard 中重新提交或在输出目录中续跑。
+- Worker 收到 SIGTERM 后停止领取新任务并等待当前任务结束，`stop_grace_period: 60s` 后强制退出。
+- 任务结果与报告只写在 `/data/outputs`，Redis 中的数据卷可以随时重建（会丢失排队任务）。
 
 升级版本：
 
@@ -161,10 +212,10 @@ docker compose up -d
 
 运行中任务的注意事项：
 
-- 服务是**单进程**应用，任务注册表和运行状态保存在内存中，重启后不会自动恢复运行中的任务，
-  也不会自动续跑实验；请先在 Dashboard 中停止任务再重启。
+- 只有 `evalscope`（Web）实例必须保持单副本；`worker` 可以 `docker compose up -d --scale worker=N`
+  水平扩展，多个 Worker 通过 Redis 队列互斥领取任务。
+- 运行中任务的子进程随 Worker 重启而终止；排队任务保留在 Redis 中，由新 Worker 继续执行。
 - `stop_grace_period: 60s` 为清理留出时间；AIPerf 子进程组由外部 runner 的 watchdog 在父进程退出后回收。
-- 不要使用 `--scale` 起多副本：任务状态与输出目录写入都是单实例语义。
 
 ## 安全建议
 

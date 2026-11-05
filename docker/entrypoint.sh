@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
-# Prepare runtime directories, report backend wiring, then exec the EvalScope service.
-# exec keeps PID 1 signal handling intact so ``docker stop`` reaches the service.
+# Prepare runtime directories, report backend wiring, then exec the EvalScope service
+# (or a task-queue worker when the first argument is "worker").
+# exec keeps PID 1 signal handling intact so ``docker stop`` reaches the process.
 set -eu
 
 OUTPUT_DIR=${EVALSCOPE_OUTPUT_DIR:-/data/outputs}
@@ -32,6 +33,15 @@ else
 fi
 
 printf '[entrypoint] Outputs: %s\n' "$OUTPUT_DIR"
+
+# Worker mode: execute queued jobs instead of serving HTTP. Jobs run in
+# subprocesses and need the same output directory and AIPerf executable.
+if [ "${1:-}" = "worker" ]; then
+    shift
+    printf '[entrypoint] Queue backend: %s\n' "${EVALSCOPE_QUEUE_BACKEND:-inprocess}"
+    exec evalscope worker "$@"
+fi
+
 printf '[entrypoint] Dashboard: http://%s:%s/dashboard\n' "$HOST" "$PORT"
 
 # Extra arguments are appended to the service command line (e.g. --debug).

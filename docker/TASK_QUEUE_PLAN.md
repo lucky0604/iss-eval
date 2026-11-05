@@ -694,7 +694,7 @@ print(json.dumps(stats, ensure_ascii=False, indent=2))
 
 ### 6.1 后端
 
-> Phase 1 已按下面的“实际落地”实现；本节其余表格描述的是 Phase 2 的 RQ 目标布局。
+> Phase 1 / Phase 2 已按“实际落地”实现；本节其余表格是最初的目标布局，实际文件布局以下面的落地表为准。
 
 Phase 1 实际落地文件：
 
@@ -728,6 +728,31 @@ Phase 2 目标布局：
 | `evalscope/service/utils/process.py` | `run_in_subprocess(..., should_cancel=...)`；Linux `PR_SET_PDEATHSIG`；取消/清理路径 |
 | `evalscope/cli/start_worker.py` | `evalscope worker` 子命令、健康检查、Redis 重连 |
 | `evalscope/cli/cli.py` | 注册 worker 子命令 |
+
+Phase 2 实际落地文件（保留 Phase 1 的 `utils/` 布局，没有再引入 `queue/` 子包）：
+
+| 文件 | 改动 |
+| --- | --- |
+| `evalscope/service/utils/queue_config.py` | 后端选择、Redis URL、队列名、取消键/TTL 的共享环境配置 |
+| `evalscope/service/utils/task_jobs.py` | 可序列化 `TaskJob` / `JOB_ENTRYPOINTS`、取消轮询线程、终态兜底落盘 |
+| `evalscope/service/utils/redis_queue.py` | `RedisTaskQueue`：RQ 入队、状态映射、队列位置、取消、健康检查 |
+| `evalscope/service/utils/task_queue.py` | 按 `EVALSCOPE_QUEUE_BACKEND` 选择后端；新增 `queue_health()` |
+| `evalscope/service/worker.py` | `run_worker()`：校验 Redis、选择队列、启动 RQ Worker |
+| `evalscope/cli/start_worker.py` / `cli.py` | `evalscope worker --redis-url --queue --burst --max-jobs --log-level` |
+| `evalscope/service/blueprints/eval.py` / `perf.py` | 异步路径改为 `TaskJob`；`/stop` 支持 `cancelling`（202） |
+| `evalscope/service/app.py` | 新增 `GET /ready`（Redis 连通性，失败返回 503） |
+| `requirements/service.txt` | `redis>=5.0.1`、`rq>=3.0,<4` |
+| `tests/service/test_redis_queue.py` | 真实 `redis-server` + 线程内 `SimpleWorker` 的 10 个场景 |
+
+关键语义：
+
+- 入队 `timeout=-1`（RQ 不设超时，长任务不会被杀）、`result_ttl=0`（结果只落 `result.json`）、
+  `failure_ttl` 默认 86400。
+- 取消排队任务：写取消键（防竞争）后 `Job.cancel()`，并落 `stopped`；取消运行中任务：写
+  `evalscope:cancel:<task_id>`（默认 1 小时过期），worker 侧每 0.5 秒轮询并调用 `stop_process()`。
+- 状态映射：RQ `started` → `running`（有取消键时 `cancelling`），`queued/deferred/...` → `queued` 并带
+  `queue_position`；Web/Worker 重启后排队任务保留在 Redis（AOF）。
+- Web 与 Worker 进程共享 `EVALSCOPE_OUTPUT_DIR`，进度与结果仍由磁盘驱动，Redis 只承载队列与取消信号。
 
 ### 6.2 前端
 
@@ -798,12 +823,22 @@ Phase 2 目标布局：
 
 > 这一阶段不解决“Web 重启丢任务”，但风险最低，可先上线验证前端交互。
 
-### Phase 2：RQ + Worker（解决重启/崩溃/容量）
+### Phase 2：RQ + Worker（解决重启/崩溃/容量）——已完成
 
-- 增加 Redis + RQ 后端、worker CLI、Compose 服务；
-- 取消/重试/队列统计/健康检查；
-- 默认 `concurrency=1`，评测/压测队列；
-- 验收：重启 Web 任务不中断；杀 worker 后任务重排队并 `use_cache` 恢复；压测独占。
+已落地的范围：
+
+- Redis + RQ 3.x 后端（`EVALSCOPE_QUEUE_BACKEND=redis`），Web 只入队，`evalscope worker` 进程执行；
+  默认仍为 `inprocess`，本地开发与老部署行为不变。
+- `TaskJob` 把评测、续跑、原生压测、AIPerf 缓存实验/单次运行统一成可序列化描述，两种后端执行同一入口。
+- 取消：排队任务直接出队并落 `stopped`；运行中任务通过 Redis 取消键由 worker 轮询后终止子进程。
+- 每个 job 无论成功、异常还是产出非法 payload，都会把 `task_info.json` 与 `result.json` 写成终态。
+- `GET /ready` 暴露队列后端与 Redis 连通性；`GET /health` 保持纯存活检查。
+- Compose 新增 `redis`（AOF）与 `worker`（同镜像、共享输出/缓存卷），Web 健康检查改用 `/ready`。
+- 验收（已覆盖）：重启 Web 不丢失排队任务；Worker 重启后排队任务继续；取消排队/运行中任务；
+  失败任务落 `error`；长任务不受 RQ 超时限制（`timeout=-1`）。
+
+尚未覆盖（进入 Phase 3）：Worker 被 `kill -9` 后的 `started` 任务不会自动重排队/恢复，只会在 Redis
+中留下 `failed`/abandoned 记录；无任务锁与队列上限；worker 崩溃后的清理依赖 RQ 自身心跳。
 
 ### Phase 3：稳定性加固
 

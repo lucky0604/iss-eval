@@ -4,10 +4,34 @@
 #   cp .env.example .env      # adjust port, mirror and data paths
 #   docker compose up -d --build
 #
+# Topology: the web service enqueues tasks into Redis; a separate worker
+# container executes them. Both share the outputs volume, so the dashboard sees
+# progress and results even when the web container restarts.
+#
 # The build context is the repository root so the image can include the source tree
 # and build the dashboard; ../.dockerignore keeps the context small.
 
 name: evalscope
+
+# Shared by the web service and the worker: both execute evaluation code and need
+# the same data paths and external engine.
+x-service-env: &service-env
+  TZ: ${TZ:-Asia/Shanghai}
+  EVALSCOPE_OUTPUT_DIR: /data/outputs
+  EVALSCOPE_AIPERF_EXECUTABLE: ${EVALSCOPE_AIPERF_EXECUTABLE:-/opt/aiperf-venv/bin/aiperf}
+  MODELSCOPE_CACHE: /data/cache/modelscope
+  EVALSCOPE_CACHE: /data/cache/evalscope
+  HF_HOME: /data/cache/huggingface
+  HF_DATASETS_CACHE: /data/cache/huggingface/datasets
+
+x-queue-env: &queue-env
+  EVALSCOPE_QUEUE_BACKEND: ${EVALSCOPE_QUEUE_BACKEND:-redis}
+  EVALSCOPE_REDIS_URL: ${EVALSCOPE_REDIS_URL:-redis://redis:6379/0}
+  EVALSCOPE_REDIS_QUEUE: ${EVALSCOPE_REDIS_QUEUE:-evalscope}
+
+x-service-volumes: &service-volumes
+  - ${EVALSCOPE_OUTPUTS_MOUNT:-evalscope_outputs}:/data/outputs
+  - ${EVALSCOPE_CACHE_MOUNT:-evalscope_cache}:/data/cache
 
 services:
   evalscope:
@@ -26,34 +50,37 @@ services:
     image: ${EVALSCOPE_IMAGE:-evalscope:latest}
     container_name: ${EVALSCOPE_CONTAINER_NAME:-evalscope}
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
     ports:
       # The service has no built-in authentication; restrict the bind address or put
       # a reverse proxy with TLS and auth in front of it before exposing it publicly.
       - "${EVALSCOPE_BIND_ADDRESS:-0.0.0.0}:${EVALSCOPE_PORT:-9000}:9000"
     environment:
-      TZ: ${TZ:-Asia/Shanghai}
+      <<: [*service-env, *queue-env]
       EVALSCOPE_SERVICE_HOST: 0.0.0.0
       EVALSCOPE_SERVICE_PORT: "9000"
-      EVALSCOPE_OUTPUT_DIR: /data/outputs
-      EVALSCOPE_AIPERF_EXECUTABLE: ${EVALSCOPE_AIPERF_EXECUTABLE:-/opt/aiperf-venv/bin/aiperf}
-      MODELSCOPE_CACHE: /data/cache/modelscope
-      EVALSCOPE_CACHE: /data/cache/evalscope
-      HF_HOME: /data/cache/huggingface
-      HF_DATASETS_CACHE: /data/cache/huggingface/datasets
-    volumes:
-      - ${EVALSCOPE_OUTPUTS_MOUNT:-evalscope_outputs}:/data/outputs
-      - ${EVALSCOPE_CACHE_MOUNT:-evalscope_cache}:/data/cache
-      # Local tokenizer / checkpoint directories (use the container path in the UI):
-      # - /srv/models:/models:ro
-      # Local evaluation datasets mounted read-only:
-      # - /srv/datasets:/datasets:ro
+    volumes: *service-volumes
     ulimits:
       nofile:
         soft: 65535
         hard: 65535
-    # Running tasks are not resumed after a restart: stop them in the dashboard first.
+    # Queued jobs survive a restart in Redis; only the running job is interrupted.
     # AIPerf process groups are reclaimed by the external runner watchdog on parent exit.
     stop_grace_period: 60s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/ready' % os.environ.get('EVALSCOPE_SERVICE_PORT', '9000'), timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     logging:
       driver: json-file
       options:
@@ -68,8 +95,59 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
+  worker:
+    image: ${EVALSCOPE_IMAGE:-evalscope:latest}
+    container_name: ${EVALSCOPE_WORKER_CONTAINER_NAME:-evalscope-worker}
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["worker"]
+    environment:
+      <<: [*service-env, *queue-env]
+    volumes: *service-volumes
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    # A warm shutdown waits for the running task to stop its subprocess.
+    stop_grace_period: 60s
+    # The image health check probes the HTTP service, which this container does not run.
+    healthcheck:
+      disable: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${EVALSCOPE_REDIS_CONTAINER_NAME:-evalscope-redis}
+    restart: unless-stopped
+    # AOF + RDB persistence: queued tasks survive a Redis restart. Redis only
+    # touches the internal compose network; publish 6379 only if you need to.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - ${EVALSCOPE_REDIS_MOUNT:-evalscope_redis}:/data
+    # ports:
+    #   - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   evalscope_outputs:
     name: ${EVALSCOPE_OUTPUTS_VOLUME:-evalscope_outputs}
   evalscope_cache:
     name: ${EVALSCOPE_CACHE_VOLUME:-evalscope_cache}
+  evalscope_redis:
+    name: ${EVALSCOPE_REDIS_VOLUME:-evalscope_redis}

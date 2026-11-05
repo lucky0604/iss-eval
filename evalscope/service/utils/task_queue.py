@@ -13,17 +13,18 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional, Union
 
 from evalscope.service.api_models.common import ActiveTaskInfo
 from evalscope.utils.logger import get_logger
 
 from . import log as task_log
+from . import queue_config
 from .process import TaskStoppedError
+from .queue_config import TERMINAL_STATUSES
+from .redis_queue import RedisTaskQueue
 
 logger = get_logger()
-
-TERMINAL_STATUSES = ('completed', 'stopped', 'error')
 
 TaskRunner = Callable[[], Dict[str, Any]]
 
@@ -212,21 +213,45 @@ class TaskQueue:
 
 
 _queue_lock = threading.Lock()
-_queue: Optional[TaskQueue] = None
+_queue: Optional[Union[TaskQueue, RedisTaskQueue]] = None
 
 
-def get_task_queue() -> TaskQueue:
-    """Return the process-wide queue, creating it on first use."""
+def _configured_workers() -> int:
+    workers = os.getenv('EVALSCOPE_TASK_QUEUE_WORKERS', '1')
+    try:
+        return max(1, int(workers))
+    except ValueError:
+        return 1
+
+
+def get_task_queue() -> Union[TaskQueue, RedisTaskQueue]:
+    """Return the process-wide queue, creating the configured backend on first use.
+
+    ``EVALSCOPE_QUEUE_BACKEND`` selects ``inprocess`` (default) or ``redis``.
+    """
     global _queue
     with _queue_lock:
         if _queue is None:
-            workers = os.getenv('EVALSCOPE_TASK_QUEUE_WORKERS', '1')
-            try:
-                max_workers = max(1, int(workers))
-            except ValueError:
-                max_workers = 1
-            _queue = TaskQueue(max_workers=max_workers)
+            backend = queue_config.queue_backend()
+            if backend == queue_config.BACKEND_REDIS:
+                _queue = RedisTaskQueue()
+            elif backend == queue_config.BACKEND_INPROCESS:
+                _queue = TaskQueue(max_workers=_configured_workers())
+            else:
+                raise RuntimeError(f'Unknown EVALSCOPE_QUEUE_BACKEND: {backend}')
         return _queue
+
+
+def queue_health() -> Dict[str, Any]:
+    """Return the queue backend and whether it is reachable.
+
+    Raises:
+        Exception: when the Redis backend cannot answer ``PING``.
+    """
+    backend = get_task_queue()
+    if isinstance(backend, RedisTaskQueue):
+        backend.ping()
+    return {'backend': getattr(backend, 'backend_name', 'inprocess')}
 
 
 def reset_task_queue() -> None:

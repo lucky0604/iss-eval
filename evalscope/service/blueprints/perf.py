@@ -87,6 +87,8 @@ from ..perf_archive import PerfArchiveError
 from ..responses import json_response
 from ..utils import (
     OUTPUT_DIR,
+    QueueUnavailableError,
+    TaskJob,
     TaskRunner,
     TaskStoppedError,
     active_task_ids,
@@ -846,6 +848,9 @@ def _submit_queued(task_id: str, task_meta: ActiveTaskInfo, runner: TaskRunner) 
         info = get_task_queue().submit(task_id, 'perf', task_meta, runner)
     except ValueError:
         return jsonify({'error': 'Task is already queued or running'}), 409
+    except QueueUnavailableError as error:
+        logger.error(f'[{task_id}] Task queue unavailable: {error}')
+        return jsonify({'error': 'Task queue is unavailable'}), 503
     return json_response(
         TaskSubmitResponse,
         {
@@ -938,7 +943,7 @@ def _invoke_aiperf(arguments: AIPerfArguments, task_id: str, plan_hash: Optional
         return _submit_queued(
             task_id,
             meta,
-            lambda: _run_perf_safely(task_id, lambda: _run_cache_experiment(arguments, task_id, runtime, plan, meta)),
+            TaskJob('cache_experiment', (task_id, arguments, runtime, plan, meta)),
         )
     try:
         payload = _run_cache_experiment(arguments, task_id, runtime, plan, meta)
@@ -1120,7 +1125,7 @@ def _invoke_single_aiperf(arguments: AIPerfArguments, task_id: str, runtime: Ext
         return _submit_queued(
             task_id,
             prepared['meta'],
-            lambda: _run_perf_safely(task_id, lambda: _run_single_aiperf(prepared, arguments, task_id, runtime)),
+            TaskJob('single_aiperf', (task_id, prepared, arguments, runtime)),
         )
     try:
         payload = _run_single_aiperf(prepared, arguments, task_id, runtime)
@@ -1207,7 +1212,7 @@ def run_performance_test():
         return _run_native_perf(task_id, perf_args, task_meta)
 
     if _async_requested():
-        return _submit_queued(task_id, task_meta, runner)
+        return _submit_queued(task_id, task_meta, TaskJob('perf', (task_id, perf_args, task_meta)))
     payload = runner()
     if payload['status'] == 'error':
         return jsonify(payload), 500
@@ -1248,6 +1253,8 @@ def stop_performance_test():
         state = get_task_queue().cancel(task_id)
         if state == 'stopped':
             return json_response(TaskStatusResponse, {'status': 'stopped', 'task_id': task_id})
+        if state == 'cancelling':
+            return json_response(TaskStatusResponse, {'status': 'cancelling', 'task_id': task_id}, status=202)
         stopped = stop_process(task_id)
     except ValueError:
         return jsonify({'error': 'Invalid task_id'}), 400

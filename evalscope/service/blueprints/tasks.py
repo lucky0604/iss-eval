@@ -245,10 +245,12 @@ def get_task(task_id: str) -> ResponseReturnValue:
 def list_active() -> ResponseReturnValue:
     """List tasks that are queued or whose subprocess is registered on this service.
 
-    Queued tasks live only in the in-process queue; started tasks live in the
-    subprocess registry. Both are in-memory, so the list is empty after a
-    service restart and child processes left behind by an abrupt shutdown are
-    not recovered or supervised.
+    Queued work lives in the configured queue backend: in memory for the
+    ``inprocess`` backend (empty after a restart), or in Redis for the
+    ``redis`` backend (survives restarts of the web process and the worker).
+    Running tasks are reported by the local subprocess registry, so a worker's
+    tasks are not visible from the web process unless the queue backend
+    reports them.
     """
     try:
         records = {task['task_id']: task for task in get_task_queue().list()}
