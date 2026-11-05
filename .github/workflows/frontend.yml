@@ -67,5 +67,9 @@ jobs:
         working-directory: evalscope/web
       - run: npm run drift
         working-directory: evalscope/web
+      # Type-checks the test project too; `npm run build` only builds the app and
+      # its tooling because the Docker stage has no repository tests or scripts.
+      - run: npm run typecheck
+        working-directory: evalscope/web
       - run: npm run build
         working-directory: evalscope/web
