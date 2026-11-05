@@ -837,15 +837,25 @@ Phase 2 实际落地文件（保留 Phase 1 的 `utils/` 布局，没有再引�
 - 验收（已覆盖）：重启 Web 不丢失排队任务；Worker 重启后排队任务继续；取消排队/运行中任务；
   失败任务落 `error`；长任务不受 RQ 超时限制（`timeout=-1`）。
 
-尚未覆盖（进入 Phase 3）：Worker 被 `kill -9` 后的 `started` 任务不会自动重排队/恢复，只会在 Redis
-中留下 `failed`/abandoned 记录；无任务锁与队列上限；worker 崩溃后的清理依赖 RQ 自身心跳。
+尚未覆盖（由 Phase 3 处理）：Worker 被 `kill -9` 后运行中任务的终态记录、队列上限、并发提交锁。
 
-### Phase 3：稳定性加固
+### Phase 3：稳定性加固——已完成
 
-- 任务锁、PDEATHSIG、reconciler、Redis AOF 验证；
-- 长任务（> 7 分钟、> 1 小时）、取消、队列上限、Redis 重启演练；
-- 反向代理/鉴权/资源限制文档；
-- 可选：SSE 日志、任务保留策略、Prometheus 指标。
+已落地的范围：
+
+- 提交锁：`evalscope:submit:<task_id>`（`SET NX` + TTL）防止并发重复入队；无法读取状态的僵尸 job
+  不再永久占用 task_id。
+- 队列上限：`EVALSCOPE_TASK_QUEUE_MAX_DEPTH`（默认 0 = 不限），两种后端一致；超出时提交返回 429。
+- Worker 丢失恢复：Worker 注册 RQ exception handler；RQ 在心跳过期后（Worker 启动或每 10 分钟的维护
+  扫描）把 abandoned job 移入失败队列时，立即把任务写成 `error`（“the worker executing it was lost”）。
+  Worker 启动时再执行一次 `reconcile()`，补齐此前没有 handler 时遗留的中断任务。
+- `EVALSCOPE_RQ_WORKER_TTL`（默认 420s）控制心跳判定；长任务每 30 秒心跳，不会被误判为 abandoned。
+- Redis 不可用：提交返回 503；`/ready` 返回 503 并携带错误类型；历史报告仍可从输出卷读取。
+- 文档：超时、取消延迟、队列上限、Worker 丢失语义与 Redis 重启说明。
+
+未做（按需再评估）：PDEATHSIG（容器内由 tini 回收子进程，崩溃检测由 RQ 心跳覆盖）、
+abandoned 任务自动重排（默认落 `error`，人工确认后重新提交或 `use_cache` 续跑更安全）、
+SSE 日志、Prometheus 指标、任务保留策略。
 
 ---
 

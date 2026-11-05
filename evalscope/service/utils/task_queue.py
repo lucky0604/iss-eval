@@ -1,9 +1,9 @@
-"""In-process task queue for the Web service.
+"""Task queue backends for the Web service.
 
-Phase 1 keeps execution inside the service process: submitted tasks wait in a
-FIFO queue and run on dedicated daemon threads. The queue is deliberately
-small and dependency-free; a shared Redis/RQ backend can replace it later
-without changing the HTTP contract.
+``inprocess`` (default) keeps execution inside the service process: submitted
+tasks wait in a FIFO queue and run on dedicated daemon threads. ``redis``
+enqueues RQ jobs executed by separate worker processes. Both backends expose
+the same producer/consumer API so the blueprints do not depend on one.
 """
 
 from __future__ import annotations
@@ -75,10 +75,14 @@ class TaskQueue:
 
         Raises:
             ValueError: when a task with the same id is already queued or running.
+            QueueFullError: when the configured queue depth is already reached.
         """
         with self._condition:
             if task_id in self._records:
                 raise ValueError('Task is already queued or running')
+            limit = queue_config.max_queue_depth()
+            if limit and len(self._pending) >= limit:
+                raise queue_config.QueueFullError('Task queue is full')
             record = _TaskRecord(
                 task_id=task_id,
                 kind=kind,

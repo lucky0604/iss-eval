@@ -22,9 +22,9 @@ rq = pytest.importorskip('rq')
 
 from evalscope.service.api_models import ActiveTaskInfo  # noqa: E402
 from evalscope.service.utils import log, queue_config, task_jobs  # noqa: E402
-from evalscope.service.utils.log import read_task_manifest, read_task_result  # noqa: E402
+from evalscope.service.utils.log import read_task_manifest, read_task_result, write_task_result  # noqa: E402
 from evalscope.service.utils.process import TaskStoppedError  # noqa: E402
-from evalscope.service.utils.queue_config import QueueUnavailableError  # noqa: E402
+from evalscope.service.utils.queue_config import QueueFullError, QueueUnavailableError  # noqa: E402
 from evalscope.service.utils.redis_queue import RedisTaskQueue  # noqa: E402
 from evalscope.service.utils.task_jobs import JOB_ENTRYPOINTS, TaskJob, execute_job  # noqa: E402
 from evalscope.service.utils.task_queue import get_task_queue, queue_health, reset_task_queue  # noqa: E402
@@ -217,6 +217,48 @@ def test_unknown_entrypoint_is_rejected() -> None:
         TaskJob('does_not_exist', ())
 
 
+def test_queue_depth_limit(queue_env: str, events: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('EVALSCOPE_TASK_QUEUE_MAX_DEPTH', '1')
+    queue = _queue()
+    _install_events('eval_limit_1', events)
+    queue.submit('eval_limit_1', 'eval', _meta('eval_limit_1'), TaskJob('test_job', ('eval_limit_1',)))
+
+    with pytest.raises(QueueFullError):
+        queue.submit('eval_limit_2', 'eval', _meta('eval_limit_2'), TaskJob('test_job', ('eval_limit_2',)))
+
+    assert queue.cancel('eval_limit_1') == 'stopped'
+
+
+def test_reconcile_records_abandoned_job(queue_env: str, redis_url: str, events: dict) -> None:
+    from rq.job import Job, JobStatus
+    from rq.registry import StartedJobRegistry
+
+    queue = _queue()
+    _install_events('eval_abandoned', events)
+    # A previous run with the same id left a terminal result; the new run was
+    # submitted after that, so the stale result must not hide the interruption.
+    write_task_result('eval_abandoned', {'status': 'completed', 'task_id': 'eval_abandoned'})
+    queue.submit('eval_abandoned', 'eval', _meta('eval_abandoned'), TaskJob('test_job', ('eval_abandoned',)))
+
+    connection = redis.Redis.from_url(redis_url)
+    try:
+        job = Job.fetch('eval_abandoned', connection=connection)
+        job.set_status(JobStatus.STARTED)
+        registry = StartedJobRegistry(queue_env, connection=connection)
+        # Expired registry entry, as left behind by a worker that stopped heartbeating.
+        connection.zadd(registry.key, {f'{job.id}:dead-worker': 0})
+    finally:
+        connection.close()
+
+    assert queue.reconcile() == 1
+    result = read_task_result('eval_abandoned')
+    assert result['status'] == 'error'
+    assert 'worker' in result['error']
+    manifest = read_task_manifest(str(Path(log.OUTPUT_DIR) / 'eval_abandoned'))
+    assert manifest['status'] == 'error'
+    assert queue.get('eval_abandoned') is None
+
+
 def test_worker_executes_job_and_persists_result(queue_env: str, events: dict, start_worker) -> None:
     state = _install_events('eval_worker', events)
     state['release'].set()
@@ -301,6 +343,55 @@ def test_submit_reports_unavailable_redis(queue_env: str) -> None:
         backend.shutdown()
 
 
+def test_queue_survives_redis_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    port = _free_port()
+    data_dir = tmp_path / 'redis-data'
+    data_dir.mkdir()
+    command = [
+        REDIS_SERVER,
+        '--port', str(port),
+        '--bind', '127.0.0.1',
+        '--appendonly', 'yes',
+        '--appendfsync', 'always',
+        '--dir', str(data_dir),
+    ]  # fmt: skip
+    url = f'redis://127.0.0.1:{port}/0'
+
+    def start() -> subprocess.Popen:
+        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        connection = redis.Redis.from_url(url)
+        try:
+            _wait_until(lambda: _ping(connection), timeout=10)
+        finally:
+            connection.close()
+        return process
+
+    monkeypatch.setenv('EVALSCOPE_QUEUE_BACKEND', queue_config.BACKEND_REDIS)
+    monkeypatch.setenv('EVALSCOPE_REDIS_URL', url)
+    monkeypatch.setenv('EVALSCOPE_REDIS_QUEUE', f'evalscope-restart-{time.time_ns()}')
+    monkeypatch.setattr(log, 'OUTPUT_DIR', str(tmp_path))
+    monkeypatch.setitem(JOB_ENTRYPOINTS, 'test_job', _redis_test_job)
+    reset_task_queue()
+
+    process = None
+    try:
+        process = start()
+        queue = _queue()
+        queue.submit('eval_restart', 'eval', _meta('eval_restart'), TaskJob('test_job', ('eval_restart',)))
+        process.terminate()
+        process.wait(timeout=10)
+
+        process = start()
+        # redis-py reconnects lazily and AOF restores the queued job.
+        _wait_until(lambda: (queue.get('eval_restart') or {}).get('status') == 'queued', timeout=10)
+        assert queue.cancel('eval_restart') == 'stopped'
+    finally:
+        reset_task_queue()
+        if process is not None:
+            process.terminate()
+            process.wait(timeout=10)
+
+
 def test_api_async_invoke_returns_503_when_queue_is_down(
     queue_env: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -320,6 +411,29 @@ def test_api_async_invoke_returns_503_when_queue_is_down(
     )
     assert response.status_code == 503
     assert response.get_json()['error'] == 'Task queue is unavailable'
+
+
+def test_api_async_invoke_returns_429_when_queue_is_full(
+    queue_env: str, events: dict, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from evalscope.service.app import create_app
+    from evalscope.service.blueprints import eval as eval_routes
+
+    monkeypatch.setattr(eval_routes, 'OUTPUT_DIR', str(tmp_path))
+    monkeypatch.setenv('EVALSCOPE_TASK_QUEUE_MAX_DEPTH', '1')
+    _install_events('eval_full_1', events)
+    _queue().submit('eval_full_1', 'eval', _meta('eval_full_1'), TaskJob('test_job', ('eval_full_1',)))
+
+    client = create_app(outputs=str(tmp_path)).test_client()
+    response = client.post(
+        '/api/v1/eval/invoke',
+        query_string={'async': 1},
+        json={'model': 'demo', 'datasets': ['general_qa'], 'api_url': 'http://localhost:18101/v1'},
+        headers={'EvalScope-Task-Id': 'eval_full_api'},
+    )
+    assert response.status_code == 429
+    assert response.get_json()['error'] == 'Task queue is full; retry later'
+    assert _queue().cancel('eval_full_1') == 'stopped'
 
 
 def test_readiness_endpoint_reflects_redis(queue_env: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -367,6 +481,8 @@ def test_api_async_invoke_runs_on_worker(
     monkeypatch.setattr(SimpleWorker, 'death_penalty_class', TimerDeathPenalty)
 
     client = create_app(outputs=str(tmp_path)).test_client()
+    # A previous run with this id left its result; the new run must not expose it.
+    write_task_result('eval_api', {'status': 'completed', 'task_id': 'eval_api', 'table': '| stale |'})
     response = client.post(
         '/api/v1/eval/invoke',
         query_string={'async': 1},

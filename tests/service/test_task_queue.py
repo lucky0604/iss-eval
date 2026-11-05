@@ -15,6 +15,7 @@ flask = pytest.importorskip('flask')
 from evalscope.service.api_models import ActiveTaskInfo  # noqa: E402
 from evalscope.service.utils import log  # noqa: E402
 from evalscope.service.utils.log import read_task_manifest, read_task_result  # noqa: E402
+from evalscope.service.utils.queue_config import QueueFullError  # noqa: E402
 from evalscope.service.utils.task_queue import TaskQueue, get_task_queue, reset_task_queue  # noqa: E402
 
 
@@ -132,6 +133,26 @@ def test_duplicate_task_id_is_rejected(outputs: Path) -> None:
         queue.submit('eval_1', 'eval', _meta('eval_1'), lambda: {})
     release.set()
     _wait_until(lambda: queue.get('eval_1') is None)
+
+
+def test_queue_depth_limit(outputs: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('EVALSCOPE_TASK_QUEUE_MAX_DEPTH', '1')
+    queue = TaskQueue(max_workers=1)
+    release = threading.Event()
+    started = threading.Event()
+
+    queue.submit(
+        'eval_1', 'eval', _meta('eval_1'),
+        lambda: (started.set(), release.wait(5), {'status': 'completed', 'task_id': 'eval_1'})[-1],
+    )
+    assert started.wait(5)
+    queue.submit('eval_2', 'eval', _meta('eval_2'), lambda: {'status': 'completed', 'task_id': 'eval_2'})
+
+    with pytest.raises(QueueFullError):
+        queue.submit('eval_3', 'eval', _meta('eval_3'), lambda: {'status': 'completed', 'task_id': 'eval_3'})
+
+    release.set()
+    _wait_until(lambda: queue.get('eval_1') is None and queue.get('eval_2') is None)
 
 
 def test_failed_runner_is_recorded_as_error(outputs: Path) -> None:

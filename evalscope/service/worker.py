@@ -40,6 +40,8 @@ def run_worker(
         raise SystemExit('The worker requires the redis and rq packages: pip install "evalscope[service]"') from error
 
     from .utils import queue_config
+    from .utils.redis_queue import RedisTaskQueue
+    from .utils.task_jobs import handle_rq_exception
 
     url = redis_url or queue_config.redis_url()
     name = queue_name or queue_config.queue_name()
@@ -56,7 +58,20 @@ def run_worker(
     except Exception as error:  # noqa: BLE001 - a worker without Redis can do nothing
         raise SystemExit(f'Cannot connect to Redis at {url}: {error}') from error
 
-    worker = Worker([Queue(name, connection=connection)], connection=connection)
+    backend = RedisTaskQueue(url=url, queue_name=name)
+    try:
+        recovered = backend.reconcile()
+    finally:
+        backend.shutdown()
+    if recovered:
+        logger.warning(f'Recorded {recovered} interrupted task(s) left by a previous worker')
+
+    worker = Worker(
+        [Queue(name, connection=connection)],
+        connection=connection,
+        worker_ttl=queue_config.worker_ttl(),
+        exception_handlers=[handle_rq_exception],
+    )
     logger.info(f'EvalScope worker listening on queue "{name}" (burst={burst}, max_jobs={max_jobs})')
     worker.work(burst=burst, max_jobs=max_jobs, logging_level=log_level)
     logger.info('EvalScope worker stopped')

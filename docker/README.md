@@ -143,6 +143,8 @@ curl -fsS http://127.0.0.1:9000/api/v1/perf/engines
 | `EVALSCOPE_QUEUE_BACKEND` | `redis`（Compose）/ `inprocess`（裸跑） | `redis` 由 Worker 执行任务；`inprocess` 在 Web 进程内执行 |
 | `EVALSCOPE_REDIS_URL` | `redis://redis:6379/0` | Redis 连接地址，Web 与 Worker 必须一致 |
 | `EVALSCOPE_REDIS_QUEUE` | `evalscope` | RQ 队列名，Web 与 Worker 必须一致 |
+| `EVALSCOPE_TASK_QUEUE_MAX_DEPTH` | `0`（不限） | 等待中任务上限；超出时提交返回 429 |
+| `EVALSCOPE_RQ_WORKER_TTL` | `420` | Worker 心跳超时（秒）；超时后运行中任务被判为丢失，并在下次维护扫描时记为 `error` |
 | `EVALSCOPE_REDIS_CONTAINER_NAME` / `EVALSCOPE_WORKER_CONTAINER_NAME` | `evalscope-redis` / `evalscope-worker` | 容器名 |
 | `EVALSCOPE_REDIS_MOUNT` / `EVALSCOPE_REDIS_VOLUME` | 空（命名卷）/ `evalscope_redis` | Redis 数据目录，AOF 持久化排队任务 |
 | `EVALSCOPE_TASK_QUEUE_WORKERS` | `1` | 仅 `inprocess` 后端的 Web 进程内工作线程数 |
@@ -201,6 +203,16 @@ curl -fsS 'http://127.0.0.1:9000/api/v1/tasks/active' | head -c 2000
   需要在 Dashboard 中重新提交或在输出目录中续跑。
 - Worker 收到 SIGTERM 后停止领取新任务并等待当前任务结束，`stop_grace_period: 60s` 后强制退出。
 - 任务结果与报告只写在 `/data/outputs`，Redis 中的数据卷可以随时重建（会丢失排队任务）。
+- 任务没有 RQ 侧超时（`timeout=-1`），1 小时以上的长任务不会被误杀；Worker 每 30 秒刷新心跳。
+- 取消请求由 Worker 轮询（间隔 0.5 秒）后终止子进程，通常数秒内生效；排队任务立即出队。
+- Worker 崩溃（含 `kill -9`）后，运行中任务的心跳在 `EVALSCOPE_RQ_WORKER_TTL` 秒后过期，RQ 在 Worker
+  启动时或下一次维护扫描（默认每 10 分钟）把它移入失败队列并记为 `error`（“the worker executing it was
+  lost”）；Worker 启动时还会扫描一次失败队列，补齐此前遗漏的中断任务。任务不会自动重跑——确认原因后
+  重新提交，或带 `use_cache` 续跑。
+- 超过 `EVALSCOPE_TASK_QUEUE_MAX_DEPTH` 时提交返回 429，队列不会无限增长（并发提交的极端情况下可能
+  短暂超出上限）；Dashboard 仍可查看历史报告。
+- Redis 重启后 Web/Worker 自动重连；AOF 每秒落盘，已确认的排队任务在正常重启下不会丢失，
+  最后一次落盘前的极短窗口仍可能丢任务。
 
 升级版本：
 

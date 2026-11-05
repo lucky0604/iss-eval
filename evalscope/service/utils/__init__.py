@@ -33,7 +33,7 @@ from .process import (
     serialize_result,
     stop_process,
 )
-from .queue_config import QueueUnavailableError
+from .queue_config import QueueFullError, QueueUnavailableError
 from .redis_queue import RedisTaskQueue
 from .task_jobs import TaskJob
 from .task_queue import TaskQueue, TaskRunner, get_task_queue, queue_health, reset_task_queue
@@ -57,6 +57,7 @@ __all__ = [
     'TaskQueue',
     'TaskRunner',
     'TaskJob',
+    'QueueFullError',
     'QueueUnavailableError',
     'RedisTaskQueue',
     'get_task_queue',

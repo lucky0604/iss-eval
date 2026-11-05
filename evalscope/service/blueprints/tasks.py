@@ -276,9 +276,8 @@ def get_task_result(task_id: str) -> ResponseReturnValue:
         validate_task_id(task_id)
     except ValueError:
         return jsonify({'error': 'Invalid task_id'}), 400
-    payload = read_task_result(task_id)
-    if payload is not None:
-        return json_response(EvalInvokeResponse, payload)
+    # The active check comes first: reusing a task id keeps the previous run's
+    # result.json on disk, which must not be served while the new run is active.
     active = get_task_queue().get(task_id) or next(
         (item for item in list_active_tasks() if item['task_id'] == task_id), None
     )
@@ -286,4 +285,7 @@ def get_task_result(task_id: str) -> ResponseReturnValue:
         return json_response(
             TaskStatusResponse, {'status': active.get('status', 'running'), 'task_id': task_id}, status=202
         )
+    payload = read_task_result(task_id)
+    if payload is not None:
+        return json_response(EvalInvokeResponse, payload)
     return jsonify({'error': f'Result not found for task_id: {task_id}'}), 404

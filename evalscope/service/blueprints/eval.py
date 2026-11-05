@@ -27,6 +27,7 @@ from ..utils import (
     DEFAULT_MULTIMODAL_BENCHMARKS,
     DEFAULT_TEXT_BENCHMARKS,
     OUTPUT_DIR,
+    QueueFullError,
     QueueUnavailableError,
     TaskJob,
     TaskRunner,
@@ -281,6 +282,8 @@ def _submit_queued(task_id: str, kind: str, task_meta: ActiveTaskInfo, runner: T
         info = get_task_queue().submit(task_id, kind, task_meta, runner)
     except ValueError:
         return jsonify({'error': 'Task is already queued or running'}), 409
+    except QueueFullError:
+        return jsonify({'error': 'Task queue is full; retry later'}), 429
     except QueueUnavailableError as error:
         logger.error(f'[{task_id}] Task queue unavailable: {error}')
         return jsonify({'error': 'Task queue is unavailable'}), 503

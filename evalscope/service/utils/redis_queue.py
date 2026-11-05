@@ -60,6 +60,7 @@ class RedisTaskQueue:
         Raises:
             TypeError: when *runner* is not a serializable job descriptor.
             ValueError: when a task with the same id is queued, running or being submitted.
+            QueueFullError: when the configured queue depth is already reached.
             QueueUnavailableError: when Redis cannot accept the job.
         """
         from .task_jobs import TaskJob, execute_job
@@ -87,6 +88,16 @@ class RedisTaskQueue:
                     existing.delete()
                 except Exception as error:  # noqa: BLE001 - a stale job must not block a new submission
                     logger.warning(f'[{task_id}] Failed to delete a finished job ({type(error).__name__})')
+
+            # Checked after the duplicate/stale handling so an active task keeps
+            # reporting 409 instead of "queue full" when the queue is at capacity.
+            try:
+                limit = queue_config.max_queue_depth()
+                depth = len(self._queue) if limit else 0
+            except Exception as error:  # noqa: BLE001 - any connection problem means "cannot accept work"
+                raise queue_config.QueueUnavailableError('Task queue is unavailable') from error
+            if limit and depth >= limit:
+                raise queue_config.QueueFullError('Task queue is full')
 
             enqueued_at = datetime.now().isoformat()
             queued_info = info.model_copy(update={'status': 'queued', 'enqueued_at': enqueued_at})
@@ -220,6 +231,44 @@ class RedisTaskQueue:
     def ping(self) -> bool:
         """Return whether Redis answers; used by the readiness endpoint."""
         return bool(self._connection.ping())
+
+    def reconcile(self) -> int:
+        """Persist terminal errors for jobs whose worker died before recording them.
+
+        RQ moves abandoned jobs (heartbeat expired) to the failed registry, but
+        nothing would write their ``task_info.json``/``result.json``. This sweep
+        applies the same terminal-state contract the runner would have and
+        returns how many tasks it recorded.
+        """
+        from rq.registry import FailedJobRegistry, clean_registries
+
+        from .task_jobs import persist_interrupted_task
+
+        recorded = 0
+
+        def handler(
+            job: Any,
+            exc_type: Optional[type] = None,
+            exc_value: Any = None,
+            traceback: Any = None,
+        ) -> bool:
+            nonlocal recorded
+            if persist_interrupted_task(job, exc_type):
+                recorded += 1
+            return True
+
+        try:
+            clean_registries(self._queue, [handler])
+            failed_ids = FailedJobRegistry(self._queue_name, connection=self._connection).get_job_ids()[:_LIST_LIMIT]
+        except Exception as error:  # noqa: BLE001 - a sweep must not stop a worker from starting
+            logger.warning(f'Failed to reconcile the Redis queue ({type(error).__name__})')
+            return 0
+
+        for job_id in failed_ids:
+            job = self._fetch_job(job_id)
+            if job is not None and persist_interrupted_task(job):
+                recorded += 1
+        return recorded
 
     # ------------------------------------------------------------------
     # Internals

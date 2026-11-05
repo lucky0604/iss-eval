@@ -15,6 +15,7 @@ The worker path also owns:
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
@@ -106,6 +107,70 @@ def clear_cancellation(task_id: str) -> None:
         logger.warning(f'[{task_id}] Failed to clear cancellation key ({type(error).__name__})')
     finally:
         connection.close()
+
+
+def persist_interrupted_task(job: Any, exc_type: Optional[type] = None) -> bool:
+    """Record a terminal error for a task RQ finished without running our runner.
+
+    An abandoned job (its worker died) or a job that failed before ``_execute``
+    started never reaches the terminal bookkeeping, so without this its manifest
+    would stay queued/running and ``result.json`` would be missing forever.
+
+    Returns:
+        True when a terminal state was written.
+    """
+    task_id = getattr(job, 'id', None)
+    if not task_id:
+        return False
+    try:
+        meta = (getattr(job, 'meta', None) or {}).get('evalscope')
+    except Exception:  # noqa: BLE001 - a corrupt job is not a task we can report on
+        return False
+    if not meta:
+        return False
+
+    # The manifest is the authority: submitting a task id again resets it to
+    # ``queued`` while the previous run's result.json is still on disk, so a
+    # terminal result alone does not prove this run is finished.
+    manifest = task_log.read_task_manifest(os.path.join(task_log.OUTPUT_DIR, task_id))
+    if manifest is not None:
+        if manifest.get('status') in queue_config.TERMINAL_STATUSES:
+            return False
+    else:
+        existing = task_log.read_task_result(task_id)
+        if existing is not None and existing.get('status') in queue_config.TERMINAL_STATUSES:
+            return False
+
+    name = getattr(exc_type, '__name__', '')
+    message = (
+        'Task interrupted: the worker executing it was lost'
+        if name == 'AbandonedJobError'
+        else 'Task failed before it produced a result'
+    )
+    payload = {'status': 'error', 'task_id': task_id, 'error': message}
+    try:
+        task_log.finish_task(task_id, 'error')
+        task_log.write_task_result(task_id, payload)
+    except (OSError, ValueError):
+        logger.exception(f'[{task_id}] Failed to persist interrupted task state')
+        return False
+    clear_cancellation(task_id)
+    logger.error(f'[{task_id}] {message}')
+    return True
+
+
+def handle_rq_exception(
+    job: Any,
+    exc_type: Optional[type] = None,
+    exc_value: Any = None,
+    traceback: Any = None,
+) -> bool:
+    """RQ exception handler: record interrupted tasks and keep the handler chain going."""
+    try:
+        persist_interrupted_task(job, exc_type)
+    except Exception:  # noqa: BLE001 - a handler must never break the worker
+        logger.exception('Failed to persist interrupted task state')
+    return True
 
 
 def _persist_terminal(task_id: str, payload: Dict[str, Any]) -> None:

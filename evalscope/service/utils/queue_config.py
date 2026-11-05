@@ -18,6 +18,8 @@ DEFAULT_QUEUE_NAME = 'evalscope'
 DEFAULT_CANCEL_TTL = 3600
 DEFAULT_REDIS_FAILURE_TTL = 86400
 DEFAULT_SUBMIT_LOCK_TTL = 30
+DEFAULT_MAX_DEPTH = 0
+DEFAULT_WORKER_TTL = 420
 
 BACKEND_INPROCESS = 'inprocess'
 BACKEND_REDIS = 'redis'
@@ -27,6 +29,10 @@ TERMINAL_STATUSES = ('completed', 'stopped', 'error')
 
 class QueueUnavailableError(RuntimeError):
     """Raised when the queue backend cannot accept or answer requests."""
+
+
+class QueueFullError(RuntimeError):
+    """Raised when the queue already holds the configured maximum of waiting tasks."""
 
 
 def _env_int(name: str, default: int, minimum: int) -> int:
@@ -74,3 +80,13 @@ def submit_lock_key(task_id: str) -> str:
 def submit_lock_ttl() -> int:
     """Return how long a submission lock survives a crashed web process, in seconds."""
     return _env_int('EVALSCOPE_SUBMIT_LOCK_TTL', DEFAULT_SUBMIT_LOCK_TTL, minimum=5)
+
+
+def max_queue_depth() -> int:
+    """Return the maximum number of waiting tasks, or 0 when the queue is unbounded."""
+    return _env_int('EVALSCOPE_TASK_QUEUE_MAX_DEPTH', DEFAULT_MAX_DEPTH, minimum=0)
+
+
+def worker_ttl() -> int:
+    """Return how long a worker may miss heartbeats before its job counts as lost."""
+    return _env_int('EVALSCOPE_RQ_WORKER_TTL', DEFAULT_WORKER_TTL, minimum=60)

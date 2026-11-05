@@ -87,6 +87,7 @@ from ..perf_archive import PerfArchiveError
 from ..responses import json_response
 from ..utils import (
     OUTPUT_DIR,
+    QueueFullError,
     QueueUnavailableError,
     TaskJob,
     TaskRunner,
@@ -848,6 +849,8 @@ def _submit_queued(task_id: str, task_meta: ActiveTaskInfo, runner: TaskRunner) 
         info = get_task_queue().submit(task_id, 'perf', task_meta, runner)
     except ValueError:
         return jsonify({'error': 'Task is already queued or running'}), 409
+    except QueueFullError:
+        return jsonify({'error': 'Task queue is full; retry later'}), 429
     except QueueUnavailableError as error:
         logger.error(f'[{task_id}] Task queue unavailable: {error}')
         return jsonify({'error': 'Task queue is unavailable'}), 503
