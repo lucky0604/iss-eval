@@ -181,6 +181,27 @@ async function click(name: string) { await act(async () => { fireEvent.click(scr
     expect(screen.getByText(/This task is not available yet/)).toBeInTheDocument()
     expect(screen.queryByText(/Cannot reach the task service/)).not.toBeInTheDocument()
   })
+  it('hides a missing-task error while the submission is in flight', async () => {
+    let finish!: (value: TaskSubmitResponse) => void
+    vi.mocked(getTask).mockRejectedValue(new DomainError('http-4xx', 'Task not found', 404))
+    render(<Runner submitTask={vi.fn().mockImplementation(() => new Promise<TaskSubmitResponse>((resolve) => { finish = resolve }))} />)
+    await click('Submit')
+    expect(screen.queryByText(/This task is not available yet/)).not.toBeInTheDocument()
+    vi.mocked(getTask).mockImplementation(async (id) => ({ ...TASK, task_id: id, status: 'queued' }))
+    await act(async () => { finish({ task_id: 'eval_pending', status: 'queued' }) })
+    expect(screen.queryByText(/This task is not available yet/)).not.toBeInTheDocument()
+    expect(screen.getByText('Queued')).toBeInTheDocument()
+    expect(getTask).toHaveBeenCalledTimes(2)
+  })
+  it('reports a task that is still missing after the submission settles', async () => {
+    let finish!: (value: TaskSubmitResponse) => void
+    vi.mocked(getTask).mockRejectedValue(new DomainError('http-4xx', 'Task not found', 404))
+    render(<Runner submitTask={vi.fn().mockImplementation(() => new Promise<TaskSubmitResponse>((resolve) => { finish = resolve }))} />)
+    await click('Submit')
+    expect(screen.queryByText(/This task is not available yet/)).not.toBeInTheDocument()
+    await act(async () => { finish({ task_id: 'eval_missing', status: 'queued' }) })
+    expect(screen.getByText(/This task is not available yet/)).toBeInTheDocument()
+  })
   it('reports a connection problem and recovers on retry', async () => {
     vi.mocked(getTask).mockRejectedValueOnce(new Error('network'))
     render(<Runner />); await click('View A')

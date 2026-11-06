@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { ActiveTaskInfo, EvalInvokeResponse, LogResponse } from '@/api/types'
 import { getTask } from '@/api/tasks'
@@ -14,6 +14,7 @@ interface Props {
   taskId: string
   active?: boolean
   result: EvalInvokeResponse | null
+  submissionPending?: boolean
   submissionRejected?: boolean
   stopTask: (taskId: string) => Promise<unknown>
   getLog: (taskId: string, tailLine: number) => Promise<LogResponse>
@@ -21,7 +22,15 @@ interface Props {
 
 type StopRequestState = 'idle' | 'pending' | 'cancelling' | 'confirmed' | 'failed'
 
-export default function TaskRunMonitor({ taskId, result, stopTask, getLog, active = true, submissionRejected = false }: Props) {
+export default function TaskRunMonitor({
+  taskId,
+  result,
+  stopTask,
+  getLog,
+  active = true,
+  submissionPending = false,
+  submissionRejected = false,
+}: Props) {
   const { t } = useLocale()
   const endpointCopy = useCopy()
   const taskIdCopy = useCopy()
@@ -52,6 +61,19 @@ export default function TaskRunMonitor({ taskId, result, stopTask, getLog, activ
     interval: 5000,
     onData: setSnapshot,
   })
+  const { revision: taskRevision, refresh: refreshTask } = task
+  const [dismissedThrough, setDismissedThrough] = useState<number | null>(null)
+  const wasPending = useRef(submissionPending)
+  useLayoutEffect(() => {
+    if (wasPending.current && !submissionPending) {
+      // A failure seen before the service created the task says nothing about
+      // the turn that is now accepted: re-check and hide it until the answer.
+      setDismissedThrough(taskRevision)
+      refreshTask()
+    }
+    wasPending.current = submissionPending
+  }, [submissionPending, taskRevision, refreshTask])
+  const staleFailure = dismissedThrough !== null && taskRevision <= dismissedThrough
   usePolling({
     fn: () => getLog(taskId, logLine),
     enabled: !submissionRejected && (!terminal || !logsComplete),
@@ -134,7 +156,7 @@ export default function TaskRunMonitor({ taskId, result, stopTask, getLog, activ
       {result?.status === 'error' && !terminal && (
         <p role="alert">{result.error}</p>
       )}
-      {task.error && !submissionRejected && (
+      {task.error && !submissionRejected && !submissionPending && !staleFailure && (
         <div role="alert" className="text-[var(--danger)]">
           {t(taskNotFound ? 'tasks.notFound' : 'tasks.connectionError')}
           <button type="button" onClick={() => task.refresh()}>{t('common.retry')}</button>
