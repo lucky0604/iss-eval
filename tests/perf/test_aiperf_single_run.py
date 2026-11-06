@@ -37,9 +37,16 @@ def _dataset(root: Path) -> Path:
     return path
 
 
+def _tokenizer(root: Path, name: str = 'tokenizer') -> Path:
+    path = root / name
+    path.mkdir(parents=True)
+    return path
+
+
 def test_prepared_config_preserves_inputs_without_secret(tmp_path: Path) -> None:
     context = ExecutionContext(task_id='task', output_dir=str(tmp_path), runtime=ExternalRuntime(executable='/aiperf'))
-    args = _arguments('/tokenizer', 'http://localhost:8000/proxy/v1/chat/completions')
+    tokenizer = _tokenizer(tmp_path)
+    args = _arguments(str(tokenizer), 'http://localhost:8000/proxy/v1/chat/completions')
     prepared = prepare_single_run(args, context, str(_dataset(tmp_path)))
     config_path = Path(prepared.config_file)
     try:
@@ -48,6 +55,7 @@ def test_prepared_config_preserves_inputs_without_secret(tmp_path: Path) -> None
         assert 'fixture-key' not in text
         assert config['endpoint']['path'] == '/proxy/v1/chat/completions'
         assert config['endpoint']['api_key'] == '${EVALSCOPE_AIPERF_API_KEY}'
+        assert config['tokenizer']['name'] == str(tokenizer)
         assert config['phases'][0]['concurrency'] == 1
         assert config['phases'][0]['requests'] == 2
         assert config['server_metrics']['enabled'] is False and config['server_metrics']['urls'] == []
@@ -61,11 +69,32 @@ def test_prepared_config_preserves_inputs_without_secret(tmp_path: Path) -> None
         config_path.unlink()
 
 
+def test_modelscope_id_is_downloaded_before_aiperf_resolves_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from evalscope.perf.experiments import tokenizer as tokenizer_module
+
+    snapshot = _tokenizer(tmp_path, 'modelscope-snapshot')
+    requested = []
+
+    def fake_download(model_id: str) -> str:
+        requested.append(model_id)
+        return str(snapshot)
+
+    monkeypatch.setattr(tokenizer_module, '_download_tokenizer_files', fake_download)
+    context = ExecutionContext(task_id='task', output_dir=str(tmp_path), runtime=ExternalRuntime(executable='/aiperf'))
+    prepared = prepare_single_run(_arguments('Qwen/Qwen3.6-27B'), context, str(_dataset(tmp_path)))
+    try:
+        config = json.loads(Path(prepared.config_file).read_text())['benchmark']
+        assert requested == ['Qwen/Qwen3.6-27B']
+        assert config['tokenizer']['name'] == str(snapshot)
+    finally:
+        Path(prepared.config_file).unlink()
+
+
 def test_prepared_model_and_tokenizer_are_data_not_shell_commands(tmp_path: Path) -> None:
     context = ExecutionContext(task_id='task', output_dir=str(tmp_path), runtime=ExternalRuntime(executable='/aiperf'))
     marker = tmp_path / 'executed'
     model = f'model "quoted" `touch {marker}` $(touch {marker})'
-    tokenizer = '/tokenizer with spaces/$(ignored)'
+    tokenizer = str(_tokenizer(tmp_path, 'tokenizer with spaces/$(ignored)'))
     arguments = _arguments(tokenizer).model_copy(update={'model': model})
     prepared = prepare_single_run(arguments, context, str(_dataset(tmp_path)))
     try:
