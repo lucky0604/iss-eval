@@ -52,6 +52,7 @@ export default function TaskRunnerShell({
 }: TaskRunnerShellProps) {
   const { t } = useLocale()
   const [submitting, setSubmitting] = useState(false)
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
   const [result, setResult] = useState<EvalInvokeResponse | null>(null)
   const [rejectedTaskId, setRejectedTaskId] = useState<string | null>(null)
   useEffect(() => {
@@ -68,6 +69,7 @@ export default function TaskRunnerShell({
   const handleSubmit = async (config: Record<string, unknown>): Promise<void> => {
     const id = createTaskId(idPrefix)
     setSubmitting(true)
+    setPendingTaskId(id)
     onSelect(id)
     try {
       await submitTask(config, id)
@@ -80,6 +82,7 @@ export default function TaskRunnerShell({
       setResult({ status: 'error', task_id: id, error: rejected ? error.message : t('tasks.submitUnconfirmed') })
     } finally {
       setSubmitting(false)
+      setPendingTaskId((current) => (current === id ? null : current))
     }
   }
   return (
@@ -96,6 +99,7 @@ export default function TaskRunnerShell({
               taskId={selectedTaskId}
               active={active}
               result={result?.task_id === selectedTaskId ? result : null}
+              submissionPending={pendingTaskId === selectedTaskId}
               submissionRejected={rejectedTaskId === selectedTaskId}
               stopTask={stopTask}
               getLog={getLog}

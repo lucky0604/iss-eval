@@ -13,6 +13,7 @@ from evalscope.perf.executors.arguments import AIPerfArguments
 from evalscope.perf.executors.external import Cancellation, run_external
 from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, ExternalInvocation
 from evalscope.perf.executors.urls import normalize_chat_url, normalize_metrics_url
+from evalscope.perf.experiments.tokenizer import resolve_tokenizer_directory
 from evalscope.perf.integrations.aiperf.metrics_relay import MetricsRelayRoutes, metrics_auth_relay
 from evalscope.utils import BaseArgument
 
@@ -133,6 +134,9 @@ def prepare_single_run(
     validate_single_run_configuration(arguments)
     root = Path(context.output_dir).resolve(strict=True)
     _validate_input(Path(input_file), root, arguments)
+    # AIPerf resolves a tokenizer id against Hugging Face. Resolve it through
+    # ModelScope first so installations without huggingface.co access work.
+    tokenizer_directory = resolve_tokenizer_directory(arguments.tokenizer_path)
     base, endpoint = normalize_chat_url(arguments.url)
     artifacts = (root / 'raw' / 'aiperf').resolve()
     if not artifacts.is_relative_to(root):
@@ -171,7 +175,7 @@ def prepare_single_run(
             ],
             'phases': [phase],
             'runtime': {'stats_interval': 2},
-            'tokenizer': {'name': arguments.tokenizer_path},
+            'tokenizer': {'name': tokenizer_directory},
             'server_metrics': {
                 'enabled': bool(targets),
                 'urls': [

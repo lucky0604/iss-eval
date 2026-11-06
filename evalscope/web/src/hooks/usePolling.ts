@@ -11,6 +11,8 @@ interface UsePollingOptions<T> {
 export function usePolling<T>({ fn, interval = 5000, enabled = false, onData, onError }: UsePollingOptions<T>) {
   const [data, setData] = useState<T | null>(null)
   const [failure, setFailure] = useState<Error | null>(null)
+  // Counts completed polls so callers can tell a stale failure from a fresh one.
+  const [revision, setRevision] = useState(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
   const requestRef = useRef(0)
@@ -33,11 +35,13 @@ export function usePolling<T>({ fn, interval = 5000, enabled = false, onData, on
       if (!mountedRef.current || requestId !== requestRef.current) return
       setData(result)
       setFailure(null)
+      setRevision((value) => value + 1)
       onDataRef.current?.(result)
     } catch (e) {
       if (!mountedRef.current || requestId !== requestRef.current) return
       const message = e instanceof Error ? e.message : String(e)
       setFailure(e instanceof Error ? e : new Error(message))
+      setRevision((value) => value + 1)
       onErrorRef.current?.(message)
     }
   }, [])
@@ -64,5 +68,5 @@ export function usePolling<T>({ fn, interval = 5000, enabled = false, onData, on
     }
   }, [enabled, interval, poll])
 
-  return { data, error: failure?.message ?? null, failure, refresh: poll }
+  return { data, error: failure?.message ?? null, failure, refresh: poll, revision }
 }
