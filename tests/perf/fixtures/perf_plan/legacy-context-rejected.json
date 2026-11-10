@@ -1,0 +1,89 @@
+{
+  "kind": "iss-eval.perf-plan",
+  "schema_version": "1.0",
+  "name": "Legacy DeepSeek migration - EXPECT context_overflow",
+  "intent": "diagnostic",
+  "connection": {
+    "model": "DeepSeek-V4.1-Flash",
+    "url": "http://10.218.105.1:28000/v1",
+    "tokenizer_path": "/models/deepseek-tokenizer",
+    "protocol": "openai_chat",
+    "streaming": true
+  },
+  "deployment": {
+    "mode": "aggregated",
+    "declared_max_model_len": 262144,
+    "evidence": "declared",
+    "routing_policy": "round_robin",
+    "routing_coverage": "unknown"
+  },
+  "workload": {
+    "kind": "aiperf_synthetic",
+    "cases": [
+      {
+        "case_id": "legacy-262000",
+        "declared_total_input_tokens": 262000,
+        "shared_system_tokens": 235800,
+        "unique_user_tokens": 26199,
+        "target_prefix_ratio": 0.9
+      },
+      {
+        "case_id": "legacy-1000000",
+        "declared_total_input_tokens": 1000000,
+        "shared_system_tokens": 900000,
+        "unique_user_tokens": 99999,
+        "target_prefix_ratio": 0.9
+      }
+    ],
+    "apply_chat_template": false,
+    "cache_bust": "none"
+  },
+  "load": {
+    "mode": "closed_loop",
+    "points": [
+      {
+        "concurrency": 1
+      },
+      {
+        "concurrency": 4
+      },
+      {
+        "concurrency": 8
+      },
+      {
+        "concurrency": 16
+      },
+      {
+        "concurrency": 32
+      },
+      {
+        "concurrency": 64
+      },
+      {
+        "concurrency": 128
+      }
+    ],
+    "request_count": 10,
+    "output_token_limit": 1000,
+    "repetitions": 1
+  },
+  "warmup": {
+    "enabled": true,
+    "request_count": 3,
+    "input_tokens": 16000,
+    "output_token_limit": 1000,
+    "concurrency": 1,
+    "failure_policy": "record_and_continue"
+  },
+  "priming": {
+    "policy": "none",
+    "timeout_seconds": 30
+  },
+  "execution": {
+    "order": "load_then_input"
+  },
+  "telemetry": {
+    "required": false,
+    "targets": []
+  }
+}

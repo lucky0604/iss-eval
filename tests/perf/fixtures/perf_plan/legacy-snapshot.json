@@ -1,0 +1,91 @@
+{
+  "kind": "iss-eval.migration-source-snapshot",
+  "not_an_executable_plan": true,
+  "source_script": "run-prefix-cache-hit.sh",
+  "source_runtime_version": "unknown",
+  "source_defaults": {
+    "model": "GLM-5.3-Flash-NVFP4",
+    "url": "http://127.0.0.1:30000/v1",
+    "tokenizer": "/data/models/rtx-6kd/nv-community/GLM-5.3-Flash-NVFP4",
+    "endpoint_type": "chat",
+    "streaming": true,
+    "input_lengths": [
+      262000,
+      1000000
+    ],
+    "target_prefix_ratio": 0.9,
+    "output_tokens": 1000,
+    "request_count": 10,
+    "concurrencies": [
+      1,
+      4,
+      8,
+      16,
+      32,
+      64,
+      128
+    ],
+    "repetitions": 1,
+    "order": "concurrency_then_input",
+    "warmup": {
+      "request_count": 3,
+      "input_tokens": 16000,
+      "output_tokens": 1000,
+      "concurrency": 1,
+      "shared_prefix": false,
+      "failure_policy": "record_and_continue"
+    }
+  },
+  "environment_overrides": [
+    "BENCH_MODEL",
+    "BENCH_TOKENIZER",
+    "BENCH_BASE_URL",
+    "BENCH_WARMUP_ISL"
+  ],
+  "local_awk_observation": {
+    "host_platform": "macOS",
+    "server_awk_not_verified": true,
+    "cases": [
+      {
+        "declared_total": 262000,
+        "shared": 235800,
+        "unique": 26199,
+        "sum": 261999
+      },
+      {
+        "declared_total": 1000000,
+        "shared": 900000,
+        "unique": 99999,
+        "sum": 999999
+      }
+    ]
+  },
+  "deployment_document": {
+    "model": "DeepSeek-V4.1-Flash",
+    "endpoint": "http://10.218.105.1:28000/v1",
+    "mode": "aggregated",
+    "nodes": 2,
+    "gpus_per_node": 8,
+    "tp_per_node": 4,
+    "dp_per_node": 2,
+    "max_model_len": 262144,
+    "max_num_seqs": 64,
+    "routing_policy": "round_robin",
+    "evidence": "document_only"
+  },
+  "required_migration_differences": [
+    "model",
+    "endpoint",
+    "tokenizer",
+    "input_context_budget",
+    "request_count_vs_concurrency",
+    "workload_generator",
+    "ordinary_warmup_vs_priming",
+    "execution_order",
+    "runtime_version_unknown"
+  ],
+  "script_formal_cases": 14,
+  "script_formal_requests": 140,
+  "script_ordinary_warmup_requests": 3,
+  "script_explicit_primer_requests": 0
+}

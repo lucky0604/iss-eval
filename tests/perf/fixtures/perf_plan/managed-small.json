@@ -1,0 +1,64 @@
+{
+  "kind": "iss-eval.perf-plan",
+  "schema_version": "1.0",
+  "name": "Small managed diagnostic",
+  "intent": "diagnostic",
+  "connection": {
+    "model": "served-model",
+    "url": "http://127.0.0.1:8000/v1",
+    "tokenizer_path": "/models/tokenizer",
+    "protocol": "openai_chat",
+    "streaming": true
+  },
+  "deployment": {
+    "mode": "aggregated",
+    "declared_max_model_len": 8192,
+    "evidence": "declared",
+    "routing_policy": "unknown",
+    "routing_coverage": "unknown"
+  },
+  "workload": {
+    "kind": "token_prefix",
+    "input_lengths": [
+      1024
+    ],
+    "target_ratios": [
+      0.9
+    ],
+    "prefix_pool_size": 1,
+    "seed": 42
+  },
+  "load": {
+    "mode": "closed_loop",
+    "points": [
+      {
+        "concurrency": 1
+      },
+      {
+        "concurrency": 4
+      }
+    ],
+    "request_count": 16,
+    "output_token_limit": 32,
+    "repetitions": 1
+  },
+  "warmup": {
+    "enabled": false,
+    "request_count": 3,
+    "input_tokens": 16000,
+    "output_token_limit": 1000,
+    "concurrency": 1,
+    "failure_policy": "abort"
+  },
+  "priming": {
+    "policy": "prime_all_prefixes",
+    "timeout_seconds": 30
+  },
+  "execution": {
+    "order": "seeded_shuffle"
+  },
+  "telemetry": {
+    "required": false,
+    "targets": []
+  }
+}

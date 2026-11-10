@@ -347,7 +347,12 @@ class TestPerfArchive(unittest.TestCase):
         self.assertNotIn('avg_output_tokens', legacy_run)
 
     def test_delete_run(self):
-        res = self.client.delete('/api/v1/perf/run', query_string={'root_path': self.tmp, 'path': self.svc_rel})
+        from unittest import mock
+
+        # Deletion is only allowed on the service's own output root, so the
+        # temporary tree must become that root instead of an external archive.
+        with mock.patch('evalscope.service.blueprints.perf.OUTPUT_DIR', self.tmp):
+            res = self.client.delete('/api/v1/perf/run', query_string={'root_path': self.tmp, 'path': self.svc_rel})
         self.assertEqual(res.status_code, 200)
         body = res.get_json()
         self.assertTrue(body['success'])
@@ -364,20 +369,33 @@ class TestPerfArchive(unittest.TestCase):
         self.assertIn(self.cli_rel, paths)
 
     def test_delete_rejects_traversal_and_non_run_dirs(self):
-        # Path traversal outside the root is rejected.
-        res = self.client.delete('/api/v1/perf/run', query_string={'root_path': self.tmp, 'path': '../../etc'})
-        self.assertEqual(res.status_code, 400)
-        # A directory that is not a perf run (the task_id parent) is rejected.
-        res2 = self.client.delete('/api/v1/perf/run', query_string={'root_path': self.tmp, 'path': 'task_abc'})
-        self.assertEqual(res2.status_code, 400)
+        from unittest import mock
+
+        with mock.patch('evalscope.service.blueprints.perf.OUTPUT_DIR', self.tmp):
+            # Path traversal outside the root is rejected.
+            res = self.client.delete('/api/v1/perf/run', query_string={'root_path': self.tmp, 'path': '../../etc'})
+            self.assertEqual(res.status_code, 400)
+            # A directory that is not a perf run (the task_id parent) is rejected.
+            res2 = self.client.delete('/api/v1/perf/run', query_string={'root_path': self.tmp, 'path': 'task_abc'})
+            self.assertEqual(res2.status_code, 400)
         self.assertTrue(os.path.isdir(os.path.join(self.tmp, 'task_abc')))
         # Missing path is rejected.
         res3 = self.client.delete('/api/v1/perf/run', query_string={'root_path': self.tmp})
         self.assertEqual(res3.status_code, 400)
 
+    def test_delete_rejects_an_external_root(self):
+        # An explicit archive root other than the service outputs dir is read-only.
+        res = self.client.delete('/api/v1/perf/run', query_string={'root_path': self.tmp, 'path': self.svc_rel})
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('read-only', res.get_json()['error'])
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, self.svc_rel)))
+
     def test_delete_rejects_running_task(self):
         from unittest import mock
-        with mock.patch('evalscope.service.blueprints.perf.active_task_ids', return_value={'task_abc'}):
+
+        with mock.patch('evalscope.service.blueprints.perf.OUTPUT_DIR', self.tmp), mock.patch(
+            'evalscope.service.blueprints.perf.active_task_ids', return_value={'task_abc'}
+        ):
             res = self.client.delete('/api/v1/perf/run', query_string={'root_path': self.tmp, 'path': self.svc_rel})
         self.assertEqual(res.status_code, 409)
         self.assertTrue(os.path.isdir(os.path.join(self.tmp, self.svc_rel)))
