@@ -29,9 +29,10 @@ import { DomainError } from '@/api/errors'
 import { loadFixture } from '@/test/loadFixture'
 import type {
   PerfDetailResponse,
+  PerfEntryListResponse,
   PerfRequestsResponse,
   PerfRunsListResponse,
-  PerfRunSummary,
+  PerformanceResultEntry,
 } from '@/api/types'
 
 import PerfReportDetailPage from './PerfReportDetailPage'
@@ -44,10 +45,11 @@ vi.mock('@/api/perf', () => ({
   getPerfDetail: vi.fn(),
   listPerfRunDetails: vi.fn(),
   getPerfRequests: vi.fn(),
-  listPerfRuns: vi.fn(),
-  listCacheExperiments: vi.fn().mockResolvedValue({ experiments: [], total: 0, offset: 0, limit: 50 }),
+  listPerfEntries: vi.fn(),
+  deletePerfRun: vi.fn(),
   getPerfChartUrl: vi.fn(() => '/api/v1/perf/chart'),
   getPerfHistoryReportUrl: vi.fn(() => '/api/v1/perf/history/report'),
+  getCacheExperimentReportUrl: vi.fn(() => '/api/v1/perf/experiments/task/report'),
 }))
 
 import * as perfApi from '@/api/perf'
@@ -67,22 +69,48 @@ const EMPTY_REQUESTS: PerfRequestsResponse = {
   has_db: true,
 }
 
-/** A representative perf-run summary for the list view. */
-const RUN_SUMMARY: PerfRunSummary = {
+/** A representative unified performance entry for the list view. */
+const ENTRY: PerformanceResultEntry = {
+  entry_id: `run:${RUN_PATH}`,
+  result_kind: 'run',
+  root_path: './outputs',
   path: RUN_PATH,
+  display_name: 'test-model-a',
   model: 'test-model-a',
-  api_type: 'openai_api',
+  alias: null,
+  endpoint: 'dashscope.aliyuncs.com',
   dataset: 'openqa',
+  test_type: 'single',
+  engine: 'evalscope',
+  executor_version: null,
+  execution_status: 'completed',
+  quality: 'complete',
+  timestamp: '2024-01-01T00:00:00',
+  time_basis: 'legacy',
   num_runs: 1,
   total_requests: 100,
-  success_rate: 100.0,
   best_rps: 5.43,
   best_latency: 1.842,
-  is_embedding: false,
-  has_html: true,
-  timestamp: '2024-01-01T00:00:00',
-  api_host: 'dashscope.aliyuncs.com',
-  concurrency: [10],
+  success_rate: 100.0,
+  metric_scope: 'run',
+  capabilities: {},
+  detail_path: `/perf-report?path=${encodeURIComponent(RUN_PATH)}&root_path=${encodeURIComponent('./outputs')}`,
+  actions: ['open', 'html', 'compare', 'copy_config', 'delete'],
+  unreadable_reason: null,
+}
+
+/** One page of the unified entry list, with a single readable run. */
+const ENTRY_PAGE: PerfEntryListResponse = {
+  entries: [ENTRY],
+  total: 1,
+  known_total: 1,
+  offset: 0,
+  limit: 25,
+  root_path: './outputs',
+  observed_at: '2024-01-01T00:00:00Z',
+  scanned: 1,
+  skipped: 0,
+  completeness: 'complete',
 }
 
 /**
@@ -108,7 +136,7 @@ beforeEach(() => {
   vi.mocked(perfApi.getPerfDetail).mockResolvedValue(detailFixture)
   vi.mocked(perfApi.listPerfRunDetails).mockResolvedValue(singleRunFixture)
   vi.mocked(perfApi.getPerfRequests).mockResolvedValue(EMPTY_REQUESTS)
-  vi.mocked(perfApi.listPerfRuns).mockResolvedValue({ runs: [RUN_SUMMARY], total: 1 })
+  vi.mocked(perfApi.listPerfEntries).mockResolvedValue(ENTRY_PAGE)
 })
 
 afterEach(() => {
@@ -144,7 +172,7 @@ describe('PerfReportDetailPage', () => {
     await renderDetail({ ...detailFixture, num_runs: 1, engine: 'aiperf', quality_reasons: ['telemetry_missing'],
       node_analysis: { availability: 'missing', reason: 'no_samples', max_gap_ns: 1 } })
     fireEvent.click(screen.getByRole('tab', { name: 'P/D node metrics' }))
-    expect(screen.getByText('telemetry_missing')).toBeInTheDocument()
+    expect(screen.getAllByText('telemetry_missing').length).toBeGreaterThan(0)
     expect(screen.getByText('no_samples')).toBeInTheDocument()
     expect(screen.getByText('No node windows available.')).toBeInTheDocument()
   })
@@ -328,9 +356,8 @@ describe('PerfReportsPage', () => {
   it('lists a run by its model alias, not the raw path', async () => {
     await renderReports()
 
-    // The model alias is the primary identity in the card ...
+    // The entry identity is the display name/model, not the archive path.
     expect(screen.getByText('test-model-a')).toBeInTheDocument()
-    // ... and the raw archive path is never shown as the identity.
     expect(screen.queryByText(RUN_PATH)).not.toBeInTheDocument()
     expect(screen.getByText('dashscope.aliyuncs.com')).toBeInTheDocument()
     expect(screen.getByText('5.43')).toBeInTheDocument()
@@ -338,51 +365,50 @@ describe('PerfReportsPage', () => {
     expect(screen.getByText('Success')).toBeInTheDocument()
   })
 
-  it('searches provider and protocol independently from the API type', async () => {
+  it('sends the search text to the unified entry API after debounce', async () => {
     await renderReports()
     const search = screen.getByPlaceholderText('Search run name / model / endpoint / dataset...')
 
     fireEvent.change(search, { target: { value: 'DashScope' } })
-    expect(screen.getByText('test-model-a')).toBeInTheDocument()
+    await act(async () => { vi.advanceTimersByTime(300) })
+    await settle()
 
-    fireEvent.change(search, { target: { value: 'OpenAI-compatible' } })
-    expect(screen.getByText('test-model-a')).toBeInTheDocument()
+    expect(perfApi.listPerfEntries).toHaveBeenLastCalledWith(
+      expect.objectContaining({ query: 'DashScope', offset: 0 }),
+    )
+  })
+
+  it('filters one unified list by test type and engine', async () => {
+    await renderReports()
+
+    fireEvent.change(screen.getByLabelText('Test type'), { target: { value: 'cache_experiment' } })
+    await settle()
+    expect(perfApi.listPerfEntries).toHaveBeenLastCalledWith(
+      expect.objectContaining({ testType: 'cache_experiment' }),
+    )
+
+    fireEvent.change(screen.getByLabelText('Engine'), { target: { value: 'aiperf' } })
+    await settle()
+    expect(perfApi.listPerfEntries).toHaveBeenLastCalledWith(expect.objectContaining({ engine: 'aiperf' }))
+    // Still one surface: no second AIPerf-only section is rendered.
+    expect(screen.queryByRole('heading', { name: /AIPerf/i })).not.toBeInTheDocument()
   })
 
   it('shows alias and endpoint host so same-model runs stay distinguishable', async () => {
-    vi.mocked(perfApi.listPerfRuns).mockResolvedValue({
-      runs: [
-        { ...RUN_SUMMARY, path: 'perf/run-a', alias: 'server-A', api_host: '10.0.0.2:8000' },
-        { ...RUN_SUMMARY, path: 'perf/run-b', alias: 'server-B', api_host: '10.0.0.3:8000', timestamp: '2024-01-02T00:00:00' },
-      ],
+    vi.mocked(perfApi.listPerfEntries).mockResolvedValue({
+      ...ENTRY_PAGE,
       total: 2,
+      known_total: 2,
+      entries: [
+        { ...ENTRY, entry_id: 'run:a', path: 'perf/run-a', display_name: 'server-A', alias: 'server-A', endpoint: '10.0.0.2:8000' },
+        { ...ENTRY, entry_id: 'run:b', path: 'perf/run-b', display_name: 'server-B', alias: 'server-B', endpoint: '10.0.0.3:8000', timestamp: '2024-01-02T00:00:00' },
+      ],
     })
     await renderReports()
 
     expect(screen.getByText('server-A')).toBeInTheDocument()
     expect(screen.getByText('server-B')).toBeInTheDocument()
-    // With an alias, the secondary line keeps the model and endpoint.
     expect(screen.getByText('10.0.0.2:8000')).toBeInTheDocument()
-  })
-
-  it('searches runs by alias and endpoint host', async () => {
-    vi.mocked(perfApi.listPerfRuns).mockResolvedValue({
-      runs: [
-        { ...RUN_SUMMARY, path: 'perf/run-a', alias: 'server-A', api_host: '10.0.0.2:8000' },
-        { ...RUN_SUMMARY, path: 'perf/run-b', alias: 'server-B', api_host: '10.0.0.3:8000', timestamp: '2024-01-02T00:00:00' },
-      ],
-      total: 2,
-    })
-    await renderReports()
-    const search = screen.getByPlaceholderText('Search run name / model / endpoint / dataset...')
-
-    fireEvent.change(search, { target: { value: '10.0.0.3' } })
-    expect(screen.queryByText('server-A')).not.toBeInTheDocument()
-    expect(screen.getByText('server-B')).toBeInTheDocument()
-
-    fireEvent.change(search, { target: { value: 'server-a' } })
-    expect(screen.getByText('server-A')).toBeInTheDocument()
-    expect(screen.queryByText('server-B')).not.toBeInTheDocument()
   })
 
   it('shows the shared selection tray and opens the selected HTML report', async () => {
@@ -395,15 +421,20 @@ describe('PerfReportsPage', () => {
     expect(screen.getByRole('button', { name: 'Compare' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'View HTML' }))
 
-    expect(perfApi.getPerfHistoryReportUrl).toHaveBeenCalledWith(expect.any(String), RUN_PATH)
+    expect(perfApi.getPerfHistoryReportUrl).toHaveBeenCalledWith('./outputs', RUN_PATH)
     expect(openSpy).toHaveBeenCalledWith('/api/v1/perf/history/report', '_blank')
     openSpy.mockRestore()
   })
 
   it('enables comparison after selecting two performance runs', async () => {
-    vi.mocked(perfApi.listPerfRuns).mockResolvedValue({
-      runs: [RUN_SUMMARY, { ...RUN_SUMMARY, path: `${RUN_PATH}-2`, timestamp: '2024-01-02T00:00:00' }],
+    vi.mocked(perfApi.listPerfEntries).mockResolvedValue({
+      ...ENTRY_PAGE,
       total: 2,
+      known_total: 2,
+      entries: [
+        ENTRY,
+        { ...ENTRY, entry_id: 'run:2', path: `${RUN_PATH}-2`, timestamp: '2024-01-02T00:00:00' },
+      ],
     })
     await renderReports()
 
@@ -417,6 +448,20 @@ describe('PerfReportsPage', () => {
     expect(compareButton).toBeEnabled()
     fireEvent.click(compareButton)
     expect(screen.getByTestId('location-probe')).toHaveTextContent('/perf-compare?paths=')
+  })
+
+  it('keeps an unreadable archive visible with its reason and no actions', async () => {
+    vi.mocked(perfApi.listPerfEntries).mockResolvedValue({
+      ...ENTRY_PAGE,
+      completeness: 'partial',
+      skipped: 1,
+      entries: [{ ...ENTRY, actions: [], detail_path: null, unreadable_reason: 'missing benchmark_summary.json' }],
+    })
+    await renderReports()
+
+    expect(screen.getByRole('status')).toHaveTextContent('Some result archives could not be read')
+    expect(screen.getByText('Unreadable archive')).toBeInTheDocument()
+    expect(screen.getByTitle('missing benchmark_summary.json')).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('keeps the existing run visible when a refreshed response fails schema validation', async () => {
@@ -433,7 +478,7 @@ describe('PerfReportsPage', () => {
     await settle()
     expect(screen.getByText('test-model-a')).toBeInTheDocument()
 
-    vi.mocked(perfApi.listPerfRuns).mockRejectedValueOnce(
+    vi.mocked(perfApi.listPerfEntries).mockRejectedValueOnce(
       new DomainError('validation', 'Performance response did not match its schema'),
     )
     fireEvent.click(screen.getByRole('button', { name: 'Rescan fixture' }))

@@ -7,20 +7,21 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 
 import { LocaleProvider } from '@/contexts/LocaleContext'
 
 vi.mock('@/components/tasks/EvalTaskPanel', () => ({
-  default: ({ selectedTaskId }: { selectedTaskId: string | null }) => <div data-testid="eval-panel">{selectedTaskId || 'eval runner'}<input aria-label="Eval draft" defaultValue="" /></div>
+  default: ({ selectedTaskId, onAccepted }: { selectedTaskId: string | null; onAccepted?: (id: string) => void }) => (
+    <div data-testid="eval-panel">
+      {selectedTaskId || 'eval runner'}
+      <input aria-label="Eval draft" defaultValue="" />
+      <button onClick={() => onAccepted?.('eval_accepted')}>Accept eval</button>
+    </div>
+  )
 }))
 vi.mock('@/components/tasks/PerfTaskPanel', () => ({
   default: ({ selectedTaskId }: { selectedTaskId: string | null }) => <div data-testid="perf-panel">{selectedTaskId || 'perf runner'}<input aria-label="Perf draft" defaultValue="" /></div>
-}))
-vi.mock('@/components/tasks/ActiveTasksPanel', () => ({
-  default: ({ onAdopt }: { onAdopt: (kind: 'eval' | 'perf', taskId: string) => void }) => (
-    <button data-testid="adopt-perf" onClick={() => onAdopt('perf', 'perf_1')} />
-  ),
 }))
 
 import TasksPage from './TasksPage'
@@ -38,10 +39,10 @@ function renderAt(search = '') {
 }
 
 describe('TasksPage', () => {
-  it('keeps drafts across type switches and monitoring selection', () => {
+  it('keeps drafts across type switches', () => {
     renderAt()
     fireEvent.change(screen.getByLabelText('Eval draft'), { target: { value: 'draft' } })
-    fireEvent.click(screen.getByTestId('adopt-perf'))
+    fireEvent.click(screen.getByRole('tab', { name: /perf/i }))
     fireEvent.click(screen.getByRole('tab', { name: /eval/i }))
     expect(screen.getByLabelText('Eval draft')).toHaveValue('draft')
   })
@@ -70,12 +71,21 @@ describe('TasksPage', () => {
     expect(screen.getByTestId('perf-panel')).toBeInTheDocument()
   })
 
-  it('selects an active task without remounting the forms', () => {
-    renderAt()
-    fireEvent.click(screen.getByTestId('adopt-perf'))
-
-    expect(screen.getByTestId('perf-panel')).toHaveTextContent('perf_1')
-    expect(screen.getByTestId('perf-panel')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { selected: true })).toHaveTextContent(/perf/i)
+  it('opens the accepted task detail instead of monitoring it inline', () => {
+    function LocationProbe() {
+      return <div data-testid="location">{useLocation().pathname}</div>
+    }
+    render(
+      <LocaleProvider>
+        <MemoryRouter initialEntries={['/tasks']}>
+          <Routes>
+            <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/tasks/:taskId" element={<LocationProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </LocaleProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Accept eval' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('/tasks/eval_accepted')
   })
 })

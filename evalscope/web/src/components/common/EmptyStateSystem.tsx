@@ -52,11 +52,11 @@ function viewRoute(context: EmptyStateContext): string {
 
 function createTaskRoute(context: EmptyStateContext): string {
   if (context.createTaskTo?.trim()) return context.createTaskTo.trim()
-  if (context.view === 'performance' || context.view === 'perf-compare') return '/tasks?tab=perf'
+  if (context.view === 'performance' || context.view === 'perf-compare') return '/tasks/new?tab=perf'
   if (context.view === 'reports' || context.view === 'evaluations' || context.view === 'compare') {
-    return '/tasks?tab=eval'
+    return '/tasks/new?tab=eval'
   }
-  return '/tasks'
+  return '/tasks/new'
 }
 
 function actionsFor(reason: EmptyReason, context: EmptyStateContext): EmptyStateAction[] {

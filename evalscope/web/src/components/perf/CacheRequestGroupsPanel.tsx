@@ -3,8 +3,8 @@ import type { CacheObservation, CacheRequestGroupsResponse } from '@/api/generat
 import { getCacheRequestGroups } from '@/api/perf'
 import { useLocale } from '@/contexts/LocaleContext'
 
-interface Props { taskId: string; subrunId: string; cache?: CacheObservation | null }
-export default function CacheRequestGroupsPanel({ taskId, subrunId, cache }: Props) {
+interface Props { taskId: string; subrunId: string; cache?: CacheObservation | null; rootPath?: string }
+export default function CacheRequestGroupsPanel({ taskId, subrunId, cache, rootPath }: Props) {
   const { locale } = useLocale()
   const zh = locale === 'zh'
   const [groups, setGroups] = useState<CacheRequestGroupsResponse | null>(null)
@@ -13,10 +13,10 @@ export default function CacheRequestGroupsPanel({ taskId, subrunId, cache }: Pro
     if (cache?.availability !== 'available') return
     const controller = new AbortController()
     let active = true
-    getCacheRequestGroups(taskId, subrunId, controller.signal).then((value) => { if (active) setGroups(value) })
+    getCacheRequestGroups(taskId, subrunId, controller.signal, rootPath).then((value) => { if (active) setGroups(value) })
       .catch(() => { if (active) setFailed(true) })
     return () => { active = false; controller.abort() }
-  }, [taskId, subrunId, cache?.availability])
+  }, [taskId, subrunId, cache?.availability, rootPath])
   return <section className="space-y-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-[var(--shadow-sm)]" aria-label={zh ? '请求级缓存分组' : 'Request-level cache groups'}>
     <h3 className="type-label-xs">{zh ? '请求级缓存分组' : 'Request-level cache groups'}</h3>
     <p className="type-body-xs text-[var(--text-muted)]">{zh ? '仅使用服务端返回的 cached token；百分位为各组原始请求的精确最近秩，不跨轮合并。' : 'Only server-reported cached tokens are grouped. Percentiles are exact nearest-rank request values, not pooled across repetitions.'}</p>

@@ -1,9 +1,10 @@
 import json
 import math
 import os
+from datetime import datetime
 from urllib.parse import quote, urlencode
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from flask.typing import ResponseReturnValue
 from pydantic import ValidationError
 
@@ -12,7 +13,10 @@ from evalscope.service.api_models import (
     ActiveTaskInfo,
     EvalInvokeResponse,
     ListActiveTasksResponse,
+    TaskDetailResponse,
+    TaskListResponse,
     TaskStatusResponse,
+    TaskSummaryResponse,
 )
 from evalscope.service.api_models.common import TaskConfigSummary
 from evalscope.utils.logger import get_logger
@@ -94,7 +98,20 @@ def _experiment_progress(task_id: str) -> dict:
     }
 
 
+def _plan_progress(task_id: str) -> dict:
+    """Progress of a portable plan, read from its own manifest/submission."""
+    from ..perf_plans import plan_progress, task_perf_root
+
+    try:
+        return plan_progress(task_perf_root(OUTPUT_DIR, task_id)) or {}
+    except (OSError, ValueError):
+        return {}
+
+
 def _aiperf_progress(task_id: str) -> dict:
+    progress = _plan_progress(task_id)
+    if progress:
+        return progress
     progress = _experiment_progress(task_id)
     if progress:
         return progress
@@ -107,12 +124,19 @@ def _aiperf_progress(task_id: str) -> dict:
         return {}
 
 
+def _progress_fields(details: dict) -> dict:
+    """Keep only keys the task-info contract accepts."""
+    from ..api_models import ActiveTaskInfo
+
+    return {key: value for key, value in details.items() if key in ActiveTaskInfo.model_fields}
+
+
 def _with_progress(record: dict) -> dict:
     if record.get('status') == 'queued':
         record['percent'] = 0.0
         return record
     if record.get('engine') == 'aiperf':
-        record.update(_aiperf_progress(record['task_id']))
+        record.update(_progress_fields(_aiperf_progress(record['task_id'])))
         if record.get('status') != 'cancelling':
             record['status'] = 'finalizing' if record.get('percent') == 100 else 'running'
         return record
@@ -208,6 +232,101 @@ def _set_report_links(info: ActiveTaskInfo, run_dir: str) -> None:
         info.html_report_url = f'/api/v1/eval/report?{task_query}'
 
 
+@bp_tasks.route('', methods=['GET'])
+def list_tasks() -> ResponseReturnValue:
+    """List tasks from the persistent history index merged with live queue state.
+
+    Query params:
+        view (str): ``all`` | ``active`` | ``attention`` | ``history``
+        kind (str): ``eval`` | ``perf``
+        engine (str): ``evalscope`` | ``aiperf``
+        status (str): repeatable or comma-separated raw status filter
+        q (str): free-text match over task id / model / alias / endpoint
+        from, to (str): ISO time range applied to the effective time
+        offset (int), limit (int, 1-100), sort (str): ``recent`` | ``queue``
+    """
+    from .. import task_detail, task_history
+
+    try:
+        offset = max(0, int(request.args.get('offset', '0')))
+    except ValueError:
+        return jsonify({'error': 'Invalid offset'}), 400
+    try:
+        limit = int(request.args.get('limit', str(task_history.DEFAULT_PAGE_SIZE)))
+    except ValueError:
+        return jsonify({'error': 'Invalid limit'}), 400
+    limit = max(1, min(task_history.MAX_PAGE_SIZE, limit))
+    statuses = [item for value in request.args.getlist('status') for item in value.split(',') if item.strip()]
+    try:
+        result = task_history.query_records(
+            view=request.args.get('view', 'all'),
+            kind=request.args.get('kind') or None,
+            engine=request.args.get('engine') or None,
+            statuses=statuses,
+            query=request.args.get('q', ''),
+            start=request.args.get('from') or None,
+            end=request.args.get('to') or None,
+            sort=request.args.get('sort', 'recent'),
+        )
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+
+    records = result['records']
+    page = records[offset : offset + limit]
+    items = []
+    for record in page:
+        if record.get('status') in ('queued', 'preparing', 'running', 'cancelling', 'finalizing'):
+            record = _with_progress(dict(record))
+        items.append(task_detail.build_summary_item(record).model_dump(mode='json'))
+    return json_response(
+        TaskListResponse,
+        {
+            'items': items,
+            'total': len(records),
+            'known_total': result['known_total'],
+            'completeness': result['completeness'],
+            'offset': offset,
+            'limit': limit,
+            'observed_at': datetime.now().astimezone().isoformat(),
+            'revision': result['revision'],
+            'indexing': result['indexing'],
+            'excluded_without_time': result['excluded_without_time'],
+        },
+    )
+
+
+@bp_tasks.route('/summary', methods=['GET'])
+def summarize_tasks() -> ResponseReturnValue:
+    """Global Task Center counts, computed over the whole history (never one page)."""
+    from .. import task_history
+
+    try:
+        summary = task_history.summarize(
+            start=request.args.get('from') or None,
+            end=request.args.get('to') or None,
+        )
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    return json_response(TaskSummaryResponse, summary)
+
+
+@bp_tasks.route('/<task_id>/detail', methods=['GET'])
+def get_task_detail(task_id: str) -> ResponseReturnValue:
+    """Task detail: list projection plus the sanitized configuration snapshot."""
+    from .. import task_detail, task_history
+
+    try:
+        validate_task_id(task_id)
+    except ValueError:
+        return jsonify({'error': 'Invalid task_id'}), 400
+    record = task_history.find_record(task_id)
+    if record is None:
+        return jsonify({'error': 'Task not found'}), 404
+    if record.get('status') in ('queued', 'preparing', 'running', 'cancelling', 'finalizing'):
+        record = _with_progress(record)
+    return json_response(TaskDetailResponse, task_detail.build_detail(record).model_dump(mode='json'))
+
+
 @bp_tasks.route('/<task_id>', methods=['GET'])
 def get_task(task_id: str) -> ResponseReturnValue:
     try:
@@ -233,7 +352,7 @@ def get_task(task_id: str) -> ResponseReturnValue:
     except ValidationError:
         return jsonify({'error': 'Task metadata is unreadable'}), 400
     if info.engine == 'aiperf':
-        for key, value in _aiperf_progress(task_id).items():
+        for key, value in _progress_fields(_aiperf_progress(task_id)).items():
             setattr(info, key, value)
     else:
         info.percent = _read_progress_percent(task_id, info.kind)

@@ -16,6 +16,12 @@ interface SelectionTrayProps {
   onClear: () => void
   onDelete?: () => void
   deleting?: boolean
+  /** Selection is large enough to compare, but some entry cannot be compared. */
+  compareDisabled?: boolean
+  /** Selection is large enough to delete, but some entry cannot be deleted. */
+  deleteDisabled?: boolean
+  /** One short explanation for a disabled typed action. */
+  actionNote?: string
 }
 
 export default function SelectionTray({
@@ -27,6 +33,9 @@ export default function SelectionTray({
   onClear,
   onDelete,
   deleting,
+  compareDisabled = false,
+  deleteDisabled = false,
+  actionNote,
 }: SelectionTrayProps) {
   const { t } = useLocale()
 
@@ -45,13 +54,20 @@ export default function SelectionTray({
           </span>
         )}
 
+        {actionNote && (
+          <span className="text-xs text-[var(--warning-color)]" role="status">
+            {actionNote}
+          </span>
+        )}
+
         <div className="ml-auto flex items-center gap-2">
           {onDelete && (
             <Button
               variant="outline"
               size="sm"
-              disabled={deleting}
+              disabled={deleting || deleteDisabled}
               onClick={onDelete}
+              title={deleteDisabled ? actionNote : undefined}
               className="border-[var(--danger-border)] text-[var(--danger)] hover:border-[var(--danger)] hover:text-[var(--danger)]"
             >
               <Trash2 size={14} />
@@ -62,7 +78,7 @@ export default function SelectionTray({
             <Eye size={14} />
             {t('reports.viewHtml')}
           </Button>
-          <Button variant="primary" size="sm" disabled={count < 2} onClick={onCompare}>
+          <Button variant="primary" size="sm" disabled={count < 2 || compareDisabled} onClick={onCompare}>
             <GitCompareArrows size={14} />
             {t('reports.compare')}
           </Button>

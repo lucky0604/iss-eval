@@ -360,6 +360,170 @@
       ],
       "type": "object"
     },
+    "AiPerfSingleConfigSnapshot": {
+      "additionalProperties": false,
+      "description": "Public settings of an AIPerf single load run imported by the service.",
+      "properties": {
+        "alias": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "api_type": {
+          "default": "openai",
+          "type": "string"
+        },
+        "concurrency": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "engine": {
+          "const": "aiperf",
+          "default": "aiperf",
+          "type": "string"
+        },
+        "input_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "const": "perf",
+          "default": "perf",
+          "type": "string"
+        },
+        "load_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "model": {
+          "default": "",
+          "type": "string"
+        },
+        "output_token_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "planned_requests": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "schema_version": {
+          "default": 1,
+          "type": "integer"
+        },
+        "snapshot_type": {
+          "const": "perf_aiperf_single",
+          "default": "perf_aiperf_single",
+          "type": "string"
+        },
+        "test_type": {
+          "const": "single",
+          "default": "single",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "AlignmentDimension": {
+      "additionalProperties": false,
+      "description": "One comparable dimension with concrete reasons.",
+      "properties": {
+        "dimension": {
+          "enum": [
+            "parameters",
+            "request_semantics",
+            "cache",
+            "environment",
+            "version",
+            "statistics"
+          ],
+          "type": "string"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "matched",
+            "different",
+            "unknown",
+            "unsupported"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "dimension",
+        "status"
+      ],
+      "type": "object"
+    },
     "AnalysisResponse": {
       "additionalProperties": false,
       "properties": {
@@ -370,6 +534,36 @@
       "required": [
         "analysis"
       ],
+      "type": "object"
+    },
+    "AvailabilityState": {
+      "additionalProperties": false,
+      "description": "Whether one result surface can be read, with the reason when it cannot.",
+      "properties": {
+        "availability": {
+          "default": "unknown",
+          "enum": [
+            "available",
+            "pending",
+            "not_configured",
+            "unsupported",
+            "unavailable",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
       "type": "object"
     },
     "BenchmarkDescription": {
@@ -642,6 +836,179 @@
         "target_ratios",
         "total_input_tokens"
       ],
+      "type": "object"
+    },
+    "CacheExperimentConfigSnapshot": {
+      "additionalProperties": false,
+      "description": "Public plan identity of a prefix-cache experiment (credentials excluded).",
+      "properties": {
+        "alias": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "configuration_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "deployment_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "evalscope",
+                "aiperf"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "const": "perf",
+          "default": "perf",
+          "type": "string"
+        },
+        "load_modes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "model": {
+          "default": "",
+          "type": "string"
+        },
+        "node_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "plan_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "repetitions": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "schema_version": {
+          "default": 1,
+          "type": "integer"
+        },
+        "snapshot_type": {
+          "const": "perf_cache_experiment",
+          "default": "perf_cache_experiment",
+          "type": "string"
+        },
+        "stream": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "target_ratios": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "template_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "test_type": {
+          "const": "cache_experiment",
+          "default": "cache_experiment",
+          "type": "string"
+        },
+        "tokenizer_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "total_subruns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
       "type": "object"
     },
     "CacheExperimentListItem": {
@@ -994,6 +1361,134 @@
       ],
       "type": "object"
     },
+    "CacheExperimentSummaryResponse": {
+      "additionalProperties": false,
+      "description": "Authoritative, plan-wide experiment counts for the report header.",
+      "properties": {
+        "availability": {
+          "default": "available",
+          "enum": [
+            "available",
+            "pending",
+            "not_configured",
+            "unsupported",
+            "unavailable",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "completeness": {
+          "default": "complete",
+          "enum": [
+            "complete",
+            "partial"
+          ],
+          "type": "string"
+        },
+        "completeness_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "configuration_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "counts_by_quality": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "counts_by_status": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "coverage": {
+          "$ref": "#/$defs/ExperimentCoverage"
+        },
+        "execution_status": {
+          "type": "string"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/ExperimentGroup"
+          },
+          "type": "array"
+        },
+        "missing_subruns": {
+          "default": 0,
+          "type": "integer"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "plan_hash": {
+          "type": "string"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "readable_subruns": {
+          "default": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "default": 0,
+          "type": "integer"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "total_planned_subruns": {
+          "default": 0,
+          "type": "integer"
+        },
+        "unreadable_subruns": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task_id",
+        "plan_hash",
+        "observed_at",
+        "execution_status",
+        "coverage",
+        "groups"
+      ],
+      "type": "object"
+    },
     "CacheNodeMetricsResponse": {
       "additionalProperties": false,
       "properties": {
@@ -1188,6 +1683,76 @@
         "cache",
         "load",
         "telemetry"
+      ],
+      "type": "object"
+    },
+    "CacheRatioVerification": {
+      "additionalProperties": false,
+      "description": "Declared-versus-observed prefix reuse for one synthetic run.\n\nThe declared ratio is a property of the generated workload; only a\nserver-reported ratio can confirm or refute it. A ratio the server did not\nreport is ``unavailable``, never an invented deviation, and it only becomes\na data-quality defect when the plan explicitly requires the observation.",
+      "properties": {
+        "declared_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "declared_source": {
+          "default": "token_split",
+          "enum": [
+            "target_prefix_ratio",
+            "token_split"
+          ],
+          "type": "string"
+        },
+        "delta": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "observed_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "verified",
+            "mismatch",
+            "unavailable",
+            "not_applicable"
+          ],
+          "type": "string"
+        },
+        "tolerance": {
+          "default": 0.05,
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "status"
       ],
       "type": "object"
     },
@@ -2108,6 +2673,70 @@
       ],
       "type": "object"
     },
+    "ContextCheck": {
+      "additionalProperties": false,
+      "description": "One distinct context judgement, exposed so the UI can explain the basis.",
+      "properties": {
+        "case_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "overhead": {
+          "default": "unknown",
+          "enum": [
+            "included",
+            "known",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "required_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "default": "unknown",
+          "enum": [
+            "fits",
+            "overflow",
+            "unknown"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "type": "object"
+    },
     "DataFrameResponse": {
       "additionalProperties": false,
       "properties": {
@@ -2165,6 +2794,442 @@
         "run_id",
         "model_id"
       ],
+      "type": "object"
+    },
+    "DeploymentFacts": {
+      "additionalProperties": false,
+      "description": "Declared deployment shape; facts are recorded, never used to reprogram a cluster.",
+      "properties": {
+        "declared_max_model_len": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "deployment_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dp": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "engine_image_digest": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "engine_version": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ep": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "evidence": {
+          "default": "unknown",
+          "enum": [
+            "declared",
+            "measured",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "gpu_count": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kv_dtype": {
+          "anyOf": [
+            {
+              "maxLength": 32,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_num_seqs": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mode": {
+          "default": "unknown",
+          "enum": [
+            "aggregated",
+            "disaggregated",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "model_revision": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_count": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pp": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prefix_cache": {
+          "anyOf": [
+            {
+              "enum": [
+                "enabled",
+                "disabled",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "routing_coverage": {
+          "default": "unknown",
+          "enum": [
+            "unknown",
+            "partial",
+            "all_replicas"
+          ],
+          "type": "string"
+        },
+        "routing_policy": {
+          "default": "unknown",
+          "enum": [
+            "round_robin",
+            "unknown",
+            "other"
+          ],
+          "type": "string"
+        },
+        "tp": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "EffectiveIdentity": {
+      "additionalProperties": false,
+      "description": "Execution-time identity, kept apart from the accepted plan hash.\n\n``identity_version`` versions the comparison semantics. A comparison of two\nrecords with different versions, or with unknown content hashes, is\n``unknown``: an equal unknown fingerprint never means \"matched\".",
+      "properties": {
+        "aiperf_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "compiler_version": {
+          "type": "string"
+        },
+        "contract_version": {
+          "type": "string"
+        },
+        "deployment_evidence": {
+          "default": "unknown",
+          "enum": [
+            "declared",
+            "measured",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "executor": {
+          "const": "evalscope_service",
+          "default": "evalscope_service",
+          "type": "string"
+        },
+        "identity_version": {
+          "const": "1",
+          "default": "1",
+          "type": "string"
+        },
+        "parent_plan_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plan_hash": {
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "type": "string"
+        },
+        "tokenizer": {
+          "$ref": "#/$defs/TokenizerIdentity",
+          "default": {
+            "content_hash": null,
+            "path": null,
+            "status": "unknown",
+            "template_hash": null
+          }
+        }
+      },
+      "required": [
+        "plan_hash",
+        "contract_version",
+        "compiler_version"
+      ],
+      "type": "object"
+    },
+    "EvalConfigSnapshot": {
+      "additionalProperties": false,
+      "description": "Public evaluation settings that are safe to display and copy.",
+      "properties": {
+        "alias": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "datasets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "evalscope",
+                "aiperf"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "eval_batch_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "const": "eval",
+          "default": "eval",
+          "type": "string"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "model": {
+          "default": "",
+          "type": "string"
+        },
+        "repeats": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "schema_version": {
+          "default": 1,
+          "type": "integer"
+        },
+        "snapshot_type": {
+          "const": "eval",
+          "default": "eval",
+          "type": "string"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "top_k": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "top_p": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
       "type": "object"
     },
     "EvalInvokeResponse": {
@@ -2274,6 +3339,121 @@
           "type": "integer"
         }
       },
+      "type": "object"
+    },
+    "ExperimentCoverage": {
+      "additionalProperties": false,
+      "description": "Planned / completed / readable subrun counts, kept explicitly distinct.",
+      "properties": {
+        "completed": {
+          "default": 0,
+          "type": "integer"
+        },
+        "included": {
+          "default": 0,
+          "type": "integer"
+        },
+        "planned": {
+          "default": 0,
+          "type": "integer"
+        },
+        "readable": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ExperimentGroup": {
+      "additionalProperties": false,
+      "description": "One comparable cell of the experiment matrix (dimensions never merged).",
+      "properties": {
+        "concurrency": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "group_key": {
+          "type": "string"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "load_mode": {
+          "type": "string"
+        },
+        "observed_requests": {
+          "default": 0,
+          "type": "integer"
+        },
+        "output_token_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "planned_requests": {
+          "default": 0,
+          "type": "integer"
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "readable_subruns": {
+          "default": 0,
+          "type": "integer"
+        },
+        "status_counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "successful_requests": {
+          "default": 0,
+          "type": "integer"
+        },
+        "target_ratio": {
+          "type": "number"
+        },
+        "total_subruns": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "group_key",
+        "load_mode",
+        "target_ratio"
+      ],
       "type": "object"
     },
     "HistogramWindow": {
@@ -3186,6 +4366,191 @@
       ],
       "type": "object"
     },
+    "NativePerfConfigSnapshot": {
+      "additionalProperties": false,
+      "description": "Public settings of a native EvalScope performance run (single or sweep).",
+      "properties": {
+        "alias": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "api": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dataset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "engine": {
+          "const": "evalscope",
+          "default": "evalscope",
+          "type": "string"
+        },
+        "kind": {
+          "const": "perf",
+          "default": "perf",
+          "type": "string"
+        },
+        "max_prompt_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "min_prompt_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "min_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "model": {
+          "default": "",
+          "type": "string"
+        },
+        "number": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "parallel": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "schema_version": {
+          "default": 1,
+          "type": "integer"
+        },
+        "snapshot_type": {
+          "const": "perf_native",
+          "default": "perf_native",
+          "type": "string"
+        },
+        "test_type": {
+          "default": "unknown",
+          "enum": [
+            "single",
+            "sweep",
+            "cache_experiment",
+            "unknown"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "NodeCacheRatio": {
       "additionalProperties": false,
       "description": "vLLM lookup-token ratio; never confused with response cache usage.",
@@ -3845,6 +5210,9 @@
           },
           "type": "object"
         },
+        "capabilities": {
+          "$ref": "#/$defs/ResultCapabilities"
+        },
         "configuration": {
           "anyOf": [
             {
@@ -3957,6 +5325,16 @@
           },
           "type": "array"
         },
+        "test_type": {
+          "default": "unknown",
+          "enum": [
+            "single",
+            "sweep",
+            "cache_experiment",
+            "unknown"
+          ],
+          "type": "string"
+        },
         "total_requests": {
           "type": "integer"
         }
@@ -4041,6 +5419,62 @@
       },
       "required": [
         "engines"
+      ],
+      "type": "object"
+    },
+    "PerfEntryListResponse": {
+      "additionalProperties": false,
+      "description": "A filtered page of unified performance entries.",
+      "properties": {
+        "completeness": {
+          "enum": [
+            "complete",
+            "partial"
+          ],
+          "type": "string"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/PerformanceResultEntry"
+          },
+          "type": "array"
+        },
+        "known_total": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "root_path": {
+          "type": "string"
+        },
+        "scanned": {
+          "default": 0,
+          "type": "integer"
+        },
+        "skipped": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entries",
+        "total",
+        "known_total",
+        "completeness",
+        "offset",
+        "limit",
+        "observed_at",
+        "root_path"
       ],
       "type": "object"
     },
@@ -4268,6 +5702,603 @@
       ],
       "type": "object"
     },
+    "PerfPlanArchiveResponse": {
+      "additionalProperties": false,
+      "description": "Archived plan provenance, bounded run page and effective runtime identity.",
+      "properties": {
+        "alignment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanAlignment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "archive": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "budgets": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanBudgets"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "compiler_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "completed_runs": {
+          "default": 0,
+          "type": "integer"
+        },
+        "context": {
+          "items": {
+            "$ref": "#/$defs/ContextCheck"
+          },
+          "type": "array"
+        },
+        "contract_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "current_run": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "effective": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EffectiveIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "default": 100,
+          "type": "integer"
+        },
+        "model": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "normalized_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plan_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "report_available": {
+          "default": false,
+          "type": "boolean"
+        },
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/PerfPlanRunView"
+          },
+          "type": "array"
+        },
+        "semantic_fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state": {
+          "default": "queued",
+          "enum": [
+            "reserved",
+            "queued",
+            "running",
+            "completed",
+            "stopped",
+            "error",
+            "lost"
+          ],
+          "type": "string"
+        },
+        "state_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "running",
+                "completed",
+                "stopped",
+                "error"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "total_runs": {
+          "default": 0,
+          "type": "integer"
+        },
+        "warmup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanWarmupState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workload_semantics": {
+          "anyOf": [
+            {
+              "enum": [
+                "managed_token_prefix",
+                "aiperf_synthetic_compat"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "type": "object"
+    },
+    "PerfPlanDocument": {
+      "additionalProperties": false,
+      "description": "A portable, versioned and credential-free performance plan.",
+      "properties": {
+        "connection": {
+          "$ref": "#/$defs/PlanConnection"
+        },
+        "deployment": {
+          "$ref": "#/$defs/DeploymentFacts"
+        },
+        "execution": {
+          "$ref": "#/$defs/PlanExecution"
+        },
+        "intent": {
+          "default": "benchmark",
+          "enum": [
+            "diagnostic",
+            "benchmark"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "const": "iss-eval.perf-plan",
+          "default": "iss-eval.perf-plan",
+          "type": "string"
+        },
+        "load": {
+          "$ref": "#/$defs/PlanLoad"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "priming": {
+          "$ref": "#/$defs/PlanPriming"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "type": "string"
+        },
+        "telemetry": {
+          "$ref": "#/$defs/PlanTelemetry"
+        },
+        "warmup": {
+          "$ref": "#/$defs/PlanWarmup"
+        },
+        "workload": {
+          "discriminator": {
+            "mapping": {
+              "aiperf_synthetic": "#/$defs/SyntheticWorkload",
+              "token_prefix": "#/$defs/TokenPrefixWorkload"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TokenPrefixWorkload"
+            },
+            {
+              "$ref": "#/$defs/SyntheticWorkload"
+            }
+          ]
+        }
+      },
+      "required": [
+        "connection",
+        "workload",
+        "load"
+      ],
+      "type": "object"
+    },
+    "PerfPlanExportResponse": {
+      "additionalProperties": false,
+      "description": "A stable, credential-free serialization that can be imported again.",
+      "properties": {
+        "can_submit": {
+          "type": "boolean"
+        },
+        "content": {
+          "type": "string"
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/PlanDiagnosticView"
+          },
+          "type": "array"
+        },
+        "normalized_hash": {
+          "type": "string"
+        },
+        "plan_hash": {
+          "type": "string"
+        },
+        "semantic_fingerprint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "plan_hash",
+        "normalized_hash",
+        "semantic_fingerprint",
+        "can_submit"
+      ],
+      "type": "object"
+    },
+    "PerfPlanInvokeResponse": {
+      "additionalProperties": false,
+      "description": "Terminal result of a synchronous plan execution.",
+      "properties": {
+        "result": {
+          "$ref": "#/$defs/PerfPlanOutcome"
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "error",
+            "stopped"
+          ],
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "task_id",
+        "result"
+      ],
+      "type": "object"
+    },
+    "PerfPlanOutcome": {
+      "additionalProperties": false,
+      "description": "Small terminal result; per-run details stay in the plan manifest.",
+      "properties": {
+        "cleanup_confirmed": {
+          "default": true,
+          "type": "boolean"
+        },
+        "completed_runs": {
+          "type": "integer"
+        },
+        "manifest": {
+          "default": "plan/manifest.json",
+          "type": "string"
+        },
+        "plan_hash": {
+          "type": "string"
+        },
+        "quality": {
+          "enum": [
+            "complete",
+            "partial",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "quality_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "stopped",
+            "error"
+          ],
+          "type": "string"
+        },
+        "total_runs": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "quality",
+        "plan_hash",
+        "completed_runs",
+        "total_runs"
+      ],
+      "type": "object"
+    },
+    "PerfPlanPreviewResponse": {
+      "additionalProperties": false,
+      "description": "A side-effect-free preview: normalized plan, matrix, budgets, diagnostics and alignment.",
+      "properties": {
+        "acknowledged": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "alignment": {
+          "$ref": "#/$defs/PlanAlignment"
+        },
+        "budgets": {
+          "$ref": "#/$defs/PlanBudgets"
+        },
+        "can_submit": {
+          "type": "boolean"
+        },
+        "compiler_version": {
+          "type": "string"
+        },
+        "context": {
+          "items": {
+            "$ref": "#/$defs/ContextCheck"
+          },
+          "type": "array"
+        },
+        "contract_version": {
+          "type": "string"
+        },
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/PlanDiagnosticView"
+          },
+          "type": "array"
+        },
+        "engine_available": {
+          "type": "boolean"
+        },
+        "intent": {
+          "enum": [
+            "diagnostic",
+            "benchmark"
+          ],
+          "type": "string"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 500,
+          "type": "integer"
+        },
+        "normalized": {
+          "$ref": "#/$defs/PerfPlanDocument"
+        },
+        "normalized_hash": {
+          "type": "string"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "plan_hash": {
+          "type": "string"
+        },
+        "requires_acknowledgement": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/PlanRunSummary"
+          },
+          "type": "array"
+        },
+        "runtime": {
+          "$ref": "#/$defs/PlanRuntimeIdentity"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "type": "string"
+        },
+        "semantic_fingerprint": {
+          "type": "string"
+        },
+        "source_hash": {
+          "type": "string"
+        },
+        "total_runs": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "workload_semantics": {
+          "enum": [
+            "managed_token_prefix",
+            "aiperf_synthetic_compat"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract_version",
+        "compiler_version",
+        "workload_semantics",
+        "intent",
+        "plan_hash",
+        "normalized_hash",
+        "source_hash",
+        "semantic_fingerprint",
+        "normalized",
+        "runs",
+        "total_runs",
+        "offset",
+        "limit",
+        "budgets",
+        "diagnostics",
+        "alignment",
+        "context",
+        "can_submit",
+        "engine_available",
+        "runtime"
+      ],
+      "type": "object"
+    },
     "PerfPlanResponse": {
       "additionalProperties": false,
       "description": "A side-effect-free cache experiment plan and its limitations.",
@@ -4302,6 +6333,274 @@
       "required": [
         "plan",
         "engine_available"
+      ],
+      "type": "object"
+    },
+    "PerfPlanRunView": {
+      "additionalProperties": false,
+      "description": "One planned run as requested (dimensions) and as executed (state).\n\nThe dimensions come from the accepted plan and the state from the manifest,\nso a partially executed matrix shows the real length/concurrency/repetition\nof every point instead of the first run's arguments.",
+      "properties": {
+        "cache_verification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CacheRatioVerification"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "case_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "concurrency": {
+          "type": "integer"
+        },
+        "declared_total_input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "finished_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "formal_requests": {
+          "type": "integer"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "message_structure": {
+          "enum": [
+            "user_only",
+            "system_and_user"
+          ],
+          "type": "string"
+        },
+        "normalized": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "order": {
+          "type": "integer"
+        },
+        "output_token_limit": {
+          "type": "integer"
+        },
+        "primer_requests": {
+          "default": 0,
+          "type": "integer"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "repetition": {
+          "type": "integer"
+        },
+        "requests_available": {
+          "default": false,
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "shared_system_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "started_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "default": "not_started",
+          "enum": [
+            "not_started",
+            "running",
+            "completed",
+            "cancelled",
+            "error"
+          ],
+          "type": "string"
+        },
+        "target_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unique_user_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workload_kind": {
+          "enum": [
+            "token_prefix",
+            "aiperf_synthetic"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "order",
+        "workload_kind",
+        "message_structure",
+        "concurrency",
+        "formal_requests",
+        "output_token_limit",
+        "repetition"
+      ],
+      "type": "object"
+    },
+    "PerfPlanSubmitResponse": {
+      "additionalProperties": false,
+      "description": "The truthful acceptance answer for one plan submission.\n\n``state`` is the state of the task this plan already owns, so an accepted\nretry never pretends a finished run is still queued.",
+      "properties": {
+        "duplicate": {
+          "default": false,
+          "type": "boolean"
+        },
+        "enqueued_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "queue_position": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state": {
+          "enum": [
+            "reserved",
+            "queued",
+            "running",
+            "completed",
+            "stopped",
+            "error",
+            "lost"
+          ],
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "state"
       ],
       "type": "object"
     },
@@ -4940,6 +7239,28 @@
           ],
           "default": null
         },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "queued",
+                "preparing",
+                "running",
+                "cancelling",
+                "finalizing",
+                "completed",
+                "stopped",
+                "error",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "success_rate": {
           "anyOf": [
             {
@@ -5083,6 +7404,1178 @@
       "required": [
         "values",
         "sample_counts"
+      ],
+      "type": "object"
+    },
+    "PerformanceResultEntry": {
+      "additionalProperties": false,
+      "description": "One row of the unified performance result list.",
+      "properties": {
+        "actions": {
+          "items": {
+            "enum": [
+              "open",
+              "compare",
+              "delete",
+              "html",
+              "copy_config"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "alias": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "best_latency": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "best_rps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ResultCapabilities"
+        },
+        "dataset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "detail_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "display_name": {
+          "default": "",
+          "type": "string"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "evalscope",
+                "aiperf"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "entry_id": {
+          "type": "string"
+        },
+        "execution_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "executor_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metric_scope": {
+          "default": "none",
+          "enum": [
+            "run",
+            "none"
+          ],
+          "type": "string"
+        },
+        "model": {
+          "default": "",
+          "type": "string"
+        },
+        "num_runs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "type": "string"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "result_kind": {
+          "enum": [
+            "run",
+            "experiment"
+          ],
+          "type": "string"
+        },
+        "root_path": {
+          "type": "string"
+        },
+        "success_rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "test_type": {
+          "default": "unknown",
+          "enum": [
+            "single",
+            "sweep",
+            "cache_experiment",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "time_basis": {
+          "default": "unknown",
+          "enum": [
+            "aware",
+            "legacy",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "timestamp": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "total_requests": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unreadable_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "entry_id",
+        "result_kind",
+        "root_path",
+        "path",
+        "capabilities"
+      ],
+      "type": "object"
+    },
+    "PlanAlignment": {
+      "additionalProperties": false,
+      "description": "All comparable dimensions for one plan and the resulting overall status.",
+      "properties": {
+        "dimensions": {
+          "items": {
+            "$ref": "#/$defs/AlignmentDimension"
+          },
+          "type": "array"
+        },
+        "overall": {
+          "default": "unknown",
+          "enum": [
+            "matched",
+            "different",
+            "unknown",
+            "unsupported"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "PlanBudgets": {
+      "additionalProperties": false,
+      "description": "Request and output ceilings, with the one-off phases kept separate.",
+      "properties": {
+        "formal_output_tokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "formal_requests": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "primer_requests": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_requests": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "warmup_output_tokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "warmup_requests": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "formal_requests",
+        "formal_output_tokens",
+        "warmup_requests",
+        "warmup_output_tokens",
+        "primer_requests",
+        "total_requests"
+      ],
+      "type": "object"
+    },
+    "PlanConfigSnapshot": {
+      "additionalProperties": false,
+      "description": "Public identity and mechanics of a portable performance plan.\n\nDeclared deployment facts are labelled as declared; the effective tokenizer\nand template hashes come from the archive and stay ``None`` until a run\nresolves them.",
+      "properties": {
+        "aiperf_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "alias": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "compiler_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "concurrencies": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "contract_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "declared_max_model_len": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "deployment_evidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "deployment_measured": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "deployment_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "engine": {
+          "const": "aiperf",
+          "default": "aiperf",
+          "type": "string"
+        },
+        "input_lengths": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "intent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "const": "perf",
+          "default": "perf",
+          "type": "string"
+        },
+        "model": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "normalized_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_token_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plan_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "primer_timeout_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "repetitions": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "request_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "schema_version": {
+          "default": 1,
+          "type": "integer"
+        },
+        "semantic_fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "snapshot_type": {
+          "const": "perf_plan",
+          "default": "perf_plan",
+          "type": "string"
+        },
+        "source_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "target_ratios": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "template_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "test_type": {
+          "const": "cache_experiment",
+          "default": "cache_experiment",
+          "type": "string"
+        },
+        "tokenizer_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "total_runs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "warmup_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "warmup_input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "warmup_output_token_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workload_semantics": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "PlanConnection": {
+      "additionalProperties": false,
+      "description": "Where the plan sends requests; never carries a credential.",
+      "properties": {
+        "model": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "protocol": {
+          "const": "openai_chat",
+          "default": "openai_chat",
+          "type": "string"
+        },
+        "streaming": {
+          "const": true,
+          "default": true,
+          "type": "boolean"
+        },
+        "tokenizer_path": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        "url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "url",
+        "tokenizer_path"
+      ],
+      "type": "object"
+    },
+    "PlanDiagnosticView": {
+      "additionalProperties": false,
+      "description": "One structured diagnostic; never contains prompts, secrets or local paths.",
+      "properties": {
+        "case_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "code": {
+          "type": "string"
+        },
+        "field_path": {
+          "default": "",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "type": "string"
+        },
+        "message_key": {
+          "default": "",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "severity"
+      ],
+      "type": "object"
+    },
+    "PlanExecution": {
+      "additionalProperties": false,
+      "description": "Deterministic ordering of the compiled matrix.",
+      "properties": {
+        "order": {
+          "default": "load_then_input",
+          "enum": [
+            "seeded_shuffle",
+            "load_then_input"
+          ],
+          "type": "string"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "PlanLoad": {
+      "additionalProperties": false,
+      "description": "Load axis, request count and output budget shared by every run.",
+      "properties": {
+        "mode": {
+          "const": "closed_loop",
+          "default": "closed_loop",
+          "type": "string"
+        },
+        "output_token_limit": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/PlanLoadPoint"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array"
+        },
+        "repetitions": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "request_count": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "points",
+        "request_count",
+        "output_token_limit"
+      ],
+      "type": "object"
+    },
+    "PlanLoadPoint": {
+      "additionalProperties": false,
+      "description": "One closed-loop concurrency point.",
+      "properties": {
+        "concurrency": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "concurrency"
+      ],
+      "type": "object"
+    },
+    "PlanPriming": {
+      "additionalProperties": false,
+      "description": "Prefix priming policy, separate from ordinary warmup.",
+      "properties": {
+        "policy": {
+          "default": "prime_all_prefixes",
+          "enum": [
+            "prime_all_prefixes",
+            "none"
+          ],
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "PlanRunSummary": {
+      "additionalProperties": false,
+      "description": "Bounded per-run projection of the compiled matrix.",
+      "properties": {
+        "case_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "concurrency": {
+          "type": "integer"
+        },
+        "declared_total_input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "message_structure": {
+          "enum": [
+            "user_only",
+            "system_and_user"
+          ],
+          "type": "string"
+        },
+        "order": {
+          "type": "integer"
+        },
+        "output_token_limit": {
+          "type": "integer"
+        },
+        "primer_requests": {
+          "type": "integer"
+        },
+        "repetition": {
+          "type": "integer"
+        },
+        "request_count": {
+          "type": "integer"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "shared_system_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "target_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unique_user_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workload_kind": {
+          "enum": [
+            "token_prefix",
+            "aiperf_synthetic"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "order",
+        "workload_kind",
+        "message_structure",
+        "concurrency",
+        "request_count",
+        "output_token_limit",
+        "repetition",
+        "primer_requests"
+      ],
+      "type": "object"
+    },
+    "PlanRuntimeIdentity": {
+      "additionalProperties": false,
+      "description": "Identity of the runtime/tokenizer/template, explicitly unknown until checked.",
+      "properties": {
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "runtime_status": {
+          "default": "unknown",
+          "enum": [
+            "unknown",
+            "available",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        "runtime_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "template_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tokenizer_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tokenizer_status": {
+          "default": "unknown",
+          "enum": [
+            "unknown",
+            "resolved",
+            "unavailable"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PlanTelemetry": {
+      "additionalProperties": false,
+      "description": "Node telemetry stays outside the portable document in this version.\n\nThe Web form still supports required node metrics, but a portable plan has\nno field that can name a collection target: the target URL and its bearer\ntoken are runtime configuration. Accepting ``required=true`` here would\npromise a collection this document cannot describe, so it is rejected\ninstead of being silently downgraded to ``required=false``.",
+      "properties": {
+        "required": {
+          "default": false,
+          "type": "boolean"
+        },
+        "targets": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "PlanWarmup": {
+      "additionalProperties": false,
+      "description": "Ordinary warmup sent once before the whole matrix; never counted as formal samples.",
+      "properties": {
+        "concurrency": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "failure_policy": {
+          "default": "abort",
+          "enum": [
+            "abort",
+            "record_and_continue"
+          ],
+          "type": "string"
+        },
+        "input_tokens": {
+          "default": 16000,
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "output_token_limit": {
+          "default": 1000,
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "request_count": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "PlanWarmupState": {
+      "additionalProperties": false,
+      "description": "Ordinary warmup outcome, kept out of the formal request counts.",
+      "properties": {
+        "completed_requests": {
+          "default": 0,
+          "type": "integer"
+        },
+        "concurrency": {
+          "default": 1,
+          "type": "integer"
+        },
+        "executor": {
+          "const": "evalscope_http",
+          "default": "evalscope_http",
+          "type": "string"
+        },
+        "failed_requests": {
+          "default": 0,
+          "type": "integer"
+        },
+        "output_token_limit": {
+          "default": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "request_count": {
+          "default": 0,
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "skipped",
+            "completed",
+            "failed",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        "total_input_tokens": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status"
       ],
       "type": "object"
     },
@@ -5598,6 +9091,33 @@
       ],
       "type": "object"
     },
+    "QueueConnectivity": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "backend",
+        "reachable"
+      ],
+      "type": "object"
+    },
     "ReportCategory": {
       "additionalProperties": false,
       "properties": {
@@ -6048,6 +9568,64 @@
       ],
       "type": "object"
     },
+    "ResultAvailability": {
+      "additionalProperties": false,
+      "description": "Readability of a task's result as a whole (independent of its quality).",
+      "properties": {
+        "availability": {
+          "default": "unknown",
+          "enum": [
+            "available",
+            "pending",
+            "not_configured",
+            "unsupported",
+            "unavailable",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "ResultCapabilities": {
+      "additionalProperties": false,
+      "description": "Per-surface capability set resolved from the archive, never from the engine label.",
+      "properties": {
+        "cache_experiment": {
+          "$ref": "#/$defs/AvailabilityState"
+        },
+        "configuration": {
+          "$ref": "#/$defs/AvailabilityState"
+        },
+        "html": {
+          "$ref": "#/$defs/AvailabilityState"
+        },
+        "node_metrics": {
+          "$ref": "#/$defs/AvailabilityState"
+        },
+        "overview": {
+          "$ref": "#/$defs/AvailabilityState"
+        },
+        "requests": {
+          "$ref": "#/$defs/AvailabilityState"
+        },
+        "sweep": {
+          "$ref": "#/$defs/AvailabilityState"
+        }
+      },
+      "type": "object"
+    },
     "SamplePerfMetrics": {
       "additionalProperties": false,
       "properties": {
@@ -6102,6 +9680,90 @@
         "excluded"
       ],
       "type": "string"
+    },
+    "SyntheticCase": {
+      "additionalProperties": false,
+      "description": "One explicit shared-system / unique-user split copied from a legacy script.",
+      "properties": {
+        "case_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "declared_total_input_tokens": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "shared_system_tokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target_prefix_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unique_user_tokens": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "case_id",
+        "declared_total_input_tokens",
+        "shared_system_tokens",
+        "unique_user_tokens"
+      ],
+      "type": "object"
+    },
+    "SyntheticWorkload": {
+      "additionalProperties": false,
+      "description": "AIPerf synthetic compatibility workload: system + user messages, not one user blob.",
+      "properties": {
+        "apply_chat_template": {
+          "const": false,
+          "default": false,
+          "type": "boolean"
+        },
+        "cache_bust": {
+          "const": "none",
+          "default": "none",
+          "type": "string"
+        },
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/SyntheticCase"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array"
+        },
+        "kind": {
+          "const": "aiperf_synthetic",
+          "type": "string"
+        },
+        "ratio_tolerance": {
+          "default": 0.05,
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "require_observed_ratio": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "cases"
+      ],
+      "type": "object"
     },
     "TaskConfigSummary": {
       "additionalProperties": false,
@@ -6312,6 +9974,413 @@
       },
       "type": "object"
     },
+    "TaskDetailResponse": {
+      "additionalProperties": false,
+      "description": "Task detail: the list projection plus the sanitized configuration snapshot.",
+      "properties": {
+        "alias": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ResultCapabilities"
+        },
+        "completed_subruns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "config_completeness": {
+          "default": "unavailable",
+          "enum": [
+            "full",
+            "summary_only",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        "config_snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvalConfigSnapshot"
+            },
+            {
+              "$ref": "#/$defs/NativePerfConfigSnapshot"
+            },
+            {
+              "$ref": "#/$defs/AiPerfSingleConfigSnapshot"
+            },
+            {
+              "$ref": "#/$defs/CacheExperimentConfigSnapshot"
+            },
+            {
+              "$ref": "#/$defs/PlanConfigSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "current_subrun": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "effective_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "evalscope",
+                "aiperf"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "enqueued_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "html_report_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "enum": [
+            "eval",
+            "perf"
+          ],
+          "type": "string"
+        },
+        "logs_available": {
+          "default": false,
+          "type": "boolean"
+        },
+        "model": {
+          "default": "",
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "queue_position": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "report_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "result_availability": {
+          "$ref": "#/$defs/ResultAvailability"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "preparing",
+            "running",
+            "cancelling",
+            "finalizing",
+            "completed",
+            "stopped",
+            "error",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "status_group": {
+          "enum": [
+            "executing",
+            "queued",
+            "completed",
+            "stopped",
+            "failed",
+            "uncertain"
+          ],
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "test_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "single",
+                "sweep",
+                "cache_experiment",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "time_basis": {
+          "default": "unknown",
+          "enum": [
+            "aware",
+            "legacy",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "total_subruns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "task_id",
+        "kind",
+        "status",
+        "status_group",
+        "observed_at"
+      ],
+      "type": "object"
+    },
+    "TaskIndexingState": {
+      "additionalProperties": false,
+      "description": "How much of the output root the persistent index has discovered.",
+      "properties": {
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scanned": {
+          "default": 0,
+          "type": "integer"
+        },
+        "state": {
+          "default": "ready",
+          "enum": [
+            "ready",
+            "indexing",
+            "unavailable"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "TaskListResponse": {
+      "additionalProperties": false,
+      "description": "A filtered page of tasks plus the scope it was read from.",
+      "properties": {
+        "completeness": {
+          "enum": [
+            "complete",
+            "partial"
+          ],
+          "type": "string"
+        },
+        "excluded_without_time": {
+          "default": 0,
+          "type": "integer"
+        },
+        "indexing": {
+          "$ref": "#/$defs/TaskIndexingState"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/TaskSummaryItem"
+          },
+          "type": "array"
+        },
+        "known_total": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "items",
+        "total",
+        "known_total",
+        "completeness",
+        "offset",
+        "limit",
+        "observed_at",
+        "revision",
+        "indexing"
+      ],
+      "type": "object"
+    },
     "TaskStatusResponse": {
       "additionalProperties": false,
       "properties": {
@@ -6368,6 +10437,351 @@
       ],
       "type": "object"
     },
+    "TaskSummaryItem": {
+      "additionalProperties": false,
+      "description": "One task as shown in the Task Center list or used for detail headers.",
+      "properties": {
+        "alias": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ResultCapabilities"
+        },
+        "completed_subruns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "current_subrun": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "effective_time": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "evalscope",
+                "aiperf"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "enqueued_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "html_report_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "enum": [
+            "eval",
+            "perf"
+          ],
+          "type": "string"
+        },
+        "model": {
+          "default": "",
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "queue_position": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "report_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "result_availability": {
+          "$ref": "#/$defs/ResultAvailability"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "preparing",
+            "running",
+            "cancelling",
+            "finalizing",
+            "completed",
+            "stopped",
+            "error",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "status_group": {
+          "enum": [
+            "executing",
+            "queued",
+            "completed",
+            "stopped",
+            "failed",
+            "uncertain"
+          ],
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "test_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "single",
+                "sweep",
+                "cache_experiment",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "time_basis": {
+          "default": "unknown",
+          "enum": [
+            "aware",
+            "legacy",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "total_subruns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "task_id",
+        "kind",
+        "status",
+        "status_group",
+        "observed_at"
+      ],
+      "type": "object"
+    },
+    "TaskSummaryResponse": {
+      "additionalProperties": false,
+      "description": "Global task counts; never derived from a single page of list items.",
+      "properties": {
+        "attention": {
+          "type": "integer"
+        },
+        "completed_in_range": {
+          "type": "integer"
+        },
+        "completeness": {
+          "default": "complete",
+          "enum": [
+            "complete",
+            "partial"
+          ],
+          "type": "string"
+        },
+        "excluded_from_range": {
+          "default": 0,
+          "type": "integer"
+        },
+        "executing": {
+          "type": "integer"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "queue": {
+          "$ref": "#/$defs/QueueConnectivity"
+        },
+        "queued": {
+          "type": "integer"
+        },
+        "revision": {
+          "default": 0,
+          "type": "integer"
+        },
+        "scope": {
+          "default": "global",
+          "enum": [
+            "global",
+            "global+range"
+          ],
+          "type": "string"
+        },
+        "unknown_timestamp_count": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "executing",
+        "queued",
+        "attention",
+        "completed_in_range",
+        "observed_at",
+        "queue"
+      ],
+      "type": "object"
+    },
     "ThroughputSummary": {
       "additionalProperties": false,
       "properties": {
@@ -6382,6 +10796,95 @@
         "avg_output_tps",
         "avg_req_ps"
       ],
+      "type": "object"
+    },
+    "TokenPrefixWorkload": {
+      "additionalProperties": false,
+      "description": "Managed token-prefix workload: a target reuse ratio per input length.",
+      "properties": {
+        "input_lengths": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array"
+        },
+        "kind": {
+          "const": "token_prefix",
+          "type": "string"
+        },
+        "prefix_pool_size": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "seed": {
+          "default": 42,
+          "type": "integer"
+        },
+        "target_ratios": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "input_lengths",
+        "target_ratios"
+      ],
+      "type": "object"
+    },
+    "TokenizerIdentity": {
+      "additionalProperties": false,
+      "description": "What was actually resolved, never what a path suggests.",
+      "properties": {
+        "content_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "default": "unknown",
+          "enum": [
+            "resolved",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "template_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
       "type": "object"
     },
     "ToolMessageError": {
@@ -6665,8 +11168,14 @@
     "active_task_info": {
       "$ref": "#/$defs/ActiveTaskInfo"
     },
+    "aiperf_single_config_snapshot": {
+      "$ref": "#/$defs/AiPerfSingleConfigSnapshot"
+    },
     "analysis_response": {
       "$ref": "#/$defs/AnalysisResponse"
+    },
+    "availability_state": {
+      "$ref": "#/$defs/AvailabilityState"
     },
     "benchmark_entry": {
       "$ref": "#/$defs/BenchmarkEntry"
@@ -6674,11 +11183,17 @@
     "benchmarks_response": {
       "$ref": "#/$defs/BenchmarksResponse"
     },
+    "cache_experiment_config_snapshot": {
+      "$ref": "#/$defs/CacheExperimentConfigSnapshot"
+    },
     "cache_experiment_list_response": {
       "$ref": "#/$defs/CacheExperimentListResponse"
     },
     "cache_experiment_response": {
       "$ref": "#/$defs/CacheExperimentResponse"
+    },
+    "cache_experiment_summary_response": {
+      "$ref": "#/$defs/CacheExperimentSummaryResponse"
     },
     "cache_node_metrics_response": {
       "$ref": "#/$defs/CacheNodeMetricsResponse"
@@ -6716,11 +11231,20 @@
     "delete_report_response": {
       "$ref": "#/$defs/DeleteReportResponse"
     },
+    "eval_config_snapshot": {
+      "$ref": "#/$defs/EvalConfigSnapshot"
+    },
     "eval_invoke_response": {
       "$ref": "#/$defs/EvalInvokeResponse"
     },
     "execution_summary": {
       "$ref": "#/$defs/ExecutionSummary"
+    },
+    "experiment_coverage": {
+      "$ref": "#/$defs/ExperimentCoverage"
+    },
+    "experiment_group": {
+      "$ref": "#/$defs/ExperimentGroup"
     },
     "judge_attempt": {
       "$ref": "#/$defs/JudgeAttempt"
@@ -6755,6 +11279,9 @@
     "metric_semantics": {
       "$ref": "#/$defs/MetricSemantics"
     },
+    "native_perf_config_snapshot": {
+      "$ref": "#/$defs/NativePerfConfigSnapshot"
+    },
     "percentile_stats": {
       "$ref": "#/$defs/PercentileStats"
     },
@@ -6763,6 +11290,9 @@
     },
     "perf_engines_response": {
       "$ref": "#/$defs/PerfEnginesResponse"
+    },
+    "perf_entry_list_response": {
+      "$ref": "#/$defs/PerfEntryListResponse"
     },
     "perf_invoke_response": {
       "$ref": "#/$defs/PerfInvokeResponse"
@@ -6773,8 +11303,26 @@
     "perf_metrics": {
       "$ref": "#/$defs/PerfMetrics"
     },
+    "perf_plan_archive_response": {
+      "$ref": "#/$defs/PerfPlanArchiveResponse"
+    },
+    "perf_plan_export_response": {
+      "$ref": "#/$defs/PerfPlanExportResponse"
+    },
+    "perf_plan_invoke_response": {
+      "$ref": "#/$defs/PerfPlanInvokeResponse"
+    },
+    "perf_plan_preview_response": {
+      "$ref": "#/$defs/PerfPlanPreviewResponse"
+    },
     "perf_plan_response": {
       "$ref": "#/$defs/PerfPlanResponse"
+    },
+    "perf_plan_run_view": {
+      "$ref": "#/$defs/PerfPlanRunView"
+    },
+    "perf_plan_submit_response": {
+      "$ref": "#/$defs/PerfPlanSubmitResponse"
     },
     "perf_requests_response": {
       "$ref": "#/$defs/PerfRequestsResponse"
@@ -6790,6 +11338,18 @@
     },
     "perf_single_plan_response": {
       "$ref": "#/$defs/PerfSinglePlanResponse"
+    },
+    "performance_result_entry": {
+      "$ref": "#/$defs/PerformanceResultEntry"
+    },
+    "plan_config_snapshot": {
+      "$ref": "#/$defs/PlanConfigSnapshot"
+    },
+    "plan_diagnostic_view": {
+      "$ref": "#/$defs/PlanDiagnosticView"
+    },
+    "plan_run_summary": {
+      "$ref": "#/$defs/PlanRunSummary"
     },
     "prediction_row": {
       "$ref": "#/$defs/PredictionRow"
@@ -6815,11 +11375,29 @@
     "report_summary": {
       "$ref": "#/$defs/ReportSummary"
     },
+    "result_availability": {
+      "$ref": "#/$defs/ResultAvailability"
+    },
+    "result_capabilities": {
+      "$ref": "#/$defs/ResultCapabilities"
+    },
+    "task_detail_response": {
+      "$ref": "#/$defs/TaskDetailResponse"
+    },
+    "task_list_response": {
+      "$ref": "#/$defs/TaskListResponse"
+    },
     "task_status_response": {
       "$ref": "#/$defs/TaskStatusResponse"
     },
     "task_submit_response": {
       "$ref": "#/$defs/TaskSubmitResponse"
+    },
+    "task_summary_item": {
+      "$ref": "#/$defs/TaskSummaryItem"
+    },
+    "task_summary_response": {
+      "$ref": "#/$defs/TaskSummaryResponse"
     },
     "tool_call": {
       "$ref": "#/$defs/PredictionToolCall"
@@ -6878,12 +11456,37 @@
     "delete_perf_run_response",
     "active_task_info",
     "list_active_tasks_response",
+    "task_summary_item",
+    "task_detail_response",
+    "task_list_response",
+    "task_summary_response",
+    "result_capabilities",
+    "result_availability",
+    "availability_state",
+    "eval_config_snapshot",
+    "native_perf_config_snapshot",
+    "plan_config_snapshot",
+    "aiperf_single_config_snapshot",
+    "cache_experiment_config_snapshot",
+    "performance_result_entry",
+    "perf_entry_list_response",
+    "cache_experiment_summary_response",
+    "experiment_coverage",
+    "experiment_group",
     "metric_identity",
     "metric_display_kind",
     "metric_semantics",
     "value_range",
     "report_metric",
-    "execution_summary"
+    "execution_summary",
+    "perf_plan_preview_response",
+    "perf_plan_export_response",
+    "perf_plan_archive_response",
+    "plan_diagnostic_view",
+    "plan_run_summary",
+    "perf_plan_invoke_response",
+    "perf_plan_run_view",
+    "perf_plan_submit_response"
   ],
   "title": "WebApiContracts",
   "type": "object"

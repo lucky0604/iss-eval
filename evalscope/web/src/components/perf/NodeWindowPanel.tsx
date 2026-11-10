@@ -4,11 +4,16 @@ import { useLocale } from '@/contexts/LocaleContext'
 import Button from '@/components/ui/Button'
 import NodeSeriesChart, { type NodeSeriesSource } from './NodeSeriesChart'
 
-type Props = { analysis?: NodeMetricsAnalysis | null } & ({ taskId: string; subrunId: string; archive?: never } | { archive: { rootPath: string; path: string }; taskId?: never; subrunId?: never })
+type Props = { analysis?: NodeMetricsAnalysis | null } & (
+  | { taskId: string; subrunId: string; rootPath?: string; archive?: never }
+  | { archive: { rootPath: string; path: string }; taskId?: never; subrunId?: never; rootPath?: never }
+)
 const display = (value: number | null | undefined) => value == null ? '—' : String(value)
 
-export default function NodeWindowPanel({ analysis, taskId, subrunId, archive }: Props) {
-  const source: NodeSeriesSource = archive ? { kind: 'archive', ...archive } : { kind: 'experiment', taskId: taskId!, subrunId: subrunId! }
+export default function NodeWindowPanel({ analysis, taskId, subrunId, rootPath, archive }: Props) {
+  const source: NodeSeriesSource = archive
+    ? { kind: 'archive', ...archive }
+    : { kind: 'experiment', taskId: taskId!, subrunId: subrunId!, rootPath }
   const { locale } = useLocale()
   const zh = locale === 'zh'
   const [selected, setSelected] = useState('')

@@ -4,6 +4,11 @@
 //
 // Public performance API types are generated from backend Pydantic response models.
 export type {
+  CacheExperimentSummaryResponse,
+  ExperimentCoverage,
+  ExperimentGroup,
+  PerfEntryListResponse,
+  PerformanceResultEntry,
   PerfRunSummary,
   ListPerfRunsResponse,
   PerfDetailResponse,

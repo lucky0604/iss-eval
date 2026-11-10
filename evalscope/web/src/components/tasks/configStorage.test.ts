@@ -158,11 +158,11 @@ describe('Browser configuration storage', () => {
     expect(localStorage.getItem(CONFIG_STORAGE_KEY)).toBe(text)
   })
   it('reports unavailable storage and write failures', () => {
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    vi.spyOn(Object.getPrototypeOf(localStorage), 'getItem').mockImplementation(() => {
       throw new Error('Denied')
     })
     expect(readWorkspace()).toEqual({ ok: false, error: 'storageFailed' })
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    vi.spyOn(Object.getPrototypeOf(localStorage), 'setItem').mockImplementation(() => {
       throw new Error('Quota')
     })
     expect(writeWorkspace(emptyWorkspace())).toEqual({ ok: false, error: 'storageFailed' })

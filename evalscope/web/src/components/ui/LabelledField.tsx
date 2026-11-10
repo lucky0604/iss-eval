@@ -21,7 +21,7 @@ export default function LabelledField({ label, value, numeric, className }: Labe
   return (
     <div className={cn('flex min-w-0 items-baseline gap-1.5', className)}>
       <span className="type-table-xs">{label}</span>
-      <span className={cn('type-body-sm break-words text-[var(--text)]', numeric && 'tabular-nums')}>
+      <span className={cn('type-body-sm min-w-0 [overflow-wrap:anywhere] text-[var(--text)]', numeric && 'tabular-nums')}>
         {value}
       </span>
     </div>

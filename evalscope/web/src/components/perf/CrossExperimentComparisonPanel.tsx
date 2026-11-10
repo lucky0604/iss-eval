@@ -8,9 +8,10 @@ import { PANEL_BUTTON, PANEL_INPUT, PANEL_SELECT } from './panelControls'
 interface Props {
   experiment: CacheExperimentResponse
   baseline?: { plan: CacheSubrunPlan; scenario: CacheScenarioResponse }
+  rootPath?: string
 }
 
-export default function CrossExperimentComparisonPanel({ experiment, baseline }: Props) {
+export default function CrossExperimentComparisonPanel({ experiment, baseline, rootPath }: Props) {
   const { locale } = useLocale()
   const zh = locale === 'zh'
   const [input, setInput] = useState('')
@@ -22,11 +23,11 @@ export default function CrossExperimentComparisonPanel({ experiment, baseline }:
       <label>{zh ? '候选实验任务 ID' : 'Candidate experiment task ID'} <input className={PANEL_INPUT} value={input} onChange={(event) => setInput(event.target.value)} /></label>{' '}
       <button className={PANEL_BUTTON} type="submit" disabled={!input.trim()}>{zh ? '加载实验' : 'Load experiment'}</button>
     </form>
-    {target && <CandidateExperiment key={target} target={target} experiment={experiment} baseline={baseline} />}
+    {target && <CandidateExperiment key={target} target={target} experiment={experiment} baseline={baseline} rootPath={rootPath} />}
   </section>
 }
 
-function CandidateExperiment({ target, experiment, baseline }: Props & { target: string }) {
+function CandidateExperiment({ target, experiment, baseline, rootPath }: Props & { target: string }) {
   const { locale } = useLocale()
   const zh = locale === 'zh'
   const [other, setOther] = useState<CacheExperimentResponse | null>(null)
@@ -36,19 +37,19 @@ function CandidateExperiment({ target, experiment, baseline }: Props & { target:
   const [page, setPage] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
-    getCacheExperiment(target, controller.signal).then(setOther).catch((err: unknown) => {
+    getCacheExperiment(target, controller.signal, rootPath).then(setOther).catch((err: unknown) => {
       if (!controller.signal.aborted) setError(err instanceof Error ? err.message : String(err))
     })
     return () => controller.abort()
-  }, [target])
+  }, [target, rootPath])
   useEffect(() => {
     if (!selected) return
     const controller = new AbortController()
-    getCacheScenario(target, selected, controller.signal).then(setScenario).catch((err: unknown) => {
+    getCacheScenario(target, selected, controller.signal, rootPath).then(setScenario).catch((err: unknown) => {
       if (!controller.signal.aborted) setError(err instanceof Error ? err.message : String(err))
     })
     return () => controller.abort()
-  }, [target, selected])
+  }, [target, selected, rootPath])
   const plan = other?.plan.subruns.find((row) => row.subrun_id === selected)
   const candidate = plan && scenario?.subrun_id === selected ? { plan, scenario } : undefined
   const rows = other?.plan.subruns.slice(page, page + 100) ?? []

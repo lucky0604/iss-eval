@@ -42,11 +42,15 @@ export type EventType =
  */
 export interface WebApiContracts {
   active_task_info: ActiveTaskInfo;
+  aiperf_single_config_snapshot: AiPerfSingleConfigSnapshot;
   analysis_response: AnalysisResponse;
+  availability_state: AvailabilityState;
   benchmark_entry: BenchmarkEntry;
   benchmarks_response: BenchmarksResponse;
+  cache_experiment_config_snapshot: CacheExperimentConfigSnapshot;
   cache_experiment_list_response: CacheExperimentListResponse;
   cache_experiment_response: CacheExperimentResponse;
+  cache_experiment_summary_response: CacheExperimentSummaryResponse;
   cache_node_metrics_response: CacheNodeMetricsResponse;
   cache_node_series_response: CacheNodeSeriesResponse;
   cache_repetitions_response: CacheRepetitionsResponse;
@@ -59,8 +63,11 @@ export interface WebApiContracts {
   data_frame_response: DataFrameResponse;
   delete_perf_run_response: DeletePerfRunResponse;
   delete_report_response: DeleteReportResponse;
+  eval_config_snapshot: EvalConfigSnapshot;
   eval_invoke_response: EvalInvokeResponse;
   execution_summary: ExecutionSummary;
+  experiment_coverage: ExperimentCoverage;
+  experiment_group: ExperimentGroup;
   judge_attempt: JudgeAttempt;
   judge_summary: JudgeSummary;
   list_active_tasks_response: ListActiveTasksResponse;
@@ -72,18 +79,30 @@ export interface WebApiContracts {
   metric_display_kind: MetricDisplayKind;
   metric_identity: MetricIdentity;
   metric_semantics: MetricSemantics;
+  native_perf_config_snapshot: NativePerfConfigSnapshot;
   percentile_stats: PercentileStats;
   perf_detail_response: PerfDetailResponse;
   perf_engines_response: PerfEnginesResponse;
+  perf_entry_list_response: PerfEntryListResponse;
   perf_invoke_response: PerfInvokeResponse;
   perf_live_response: PerfLiveResponse;
   perf_metrics: PerfMetrics;
+  perf_plan_archive_response: PerfPlanArchiveResponse;
+  perf_plan_export_response: PerfPlanExportResponse;
+  perf_plan_invoke_response: PerfPlanInvokeResponse;
+  perf_plan_preview_response: PerfPlanPreviewResponse;
   perf_plan_response: PerfPlanResponse;
+  perf_plan_run_view: PerfPlanRunView;
+  perf_plan_submit_response: PerfPlanSubmitResponse;
   perf_requests_response: PerfRequestsResponse;
   perf_run_item: PerfRunItem;
   perf_run_summary: PerfRunSummary;
   perf_runs_list_response: PerfRunsListResponse;
   perf_single_plan_response: PerfSinglePlanResponse;
+  performance_result_entry: PerformanceResultEntry;
+  plan_config_snapshot: PlanConfigSnapshot;
+  plan_diagnostic_view: PlanDiagnosticView;
+  plan_run_summary: PlanRunSummary;
   prediction_row: PredictionRow;
   prediction_score: PredictionScore;
   predictions_response: PredictionsResponse;
@@ -92,8 +111,14 @@ export interface WebApiContracts {
   report_group: ReportGroup;
   report_metric: ReportMetric;
   report_summary: ReportSummary;
+  result_availability: ResultAvailability;
+  result_capabilities: ResultCapabilities;
+  task_detail_response: TaskDetailResponse;
+  task_list_response: TaskListResponse;
   task_status_response: TaskStatusResponse;
   task_submit_response: TaskSubmitResponse;
+  task_summary_item: TaskSummaryItem;
+  task_summary_response: TaskSummaryResponse;
   tool_call: PredictionToolCall;
   value_range: ValueRange;
   [k: string]: any;
@@ -143,8 +168,35 @@ export interface TaskConfigSummary {
   top_k?: number | null;
   top_p?: number | null;
 }
+/**
+ * Public settings of an AIPerf single load run imported by the service.
+ */
+export interface AiPerfSingleConfigSnapshot {
+  alias?: string | null;
+  api_type?: string;
+  concurrency?: number | null;
+  endpoint?: string | null;
+  engine?: "aiperf";
+  input_sha256?: string | null;
+  kind?: "perf";
+  load_mode?: string | null;
+  model?: string;
+  output_token_limit?: number | null;
+  planned_requests?: number | null;
+  rate?: number | null;
+  schema_version?: number;
+  snapshot_type?: "perf_aiperf_single";
+  test_type?: "single";
+}
 export interface AnalysisResponse {
   analysis: string;
+}
+/**
+ * Whether one result surface can be read, with the reason when it cannot.
+ */
+export interface AvailabilityState {
+  availability?: "available" | "pending" | "not_configured" | "unsupported" | "unavailable" | "unknown";
+  reason?: string | null;
 }
 export interface BenchmarkEntry {
   category: "llm" | "vlm" | "agent" | "aigc";
@@ -177,6 +229,30 @@ export interface BenchmarksResponse {
   aigc?: BenchmarkEntry[] | null;
   multimodal?: BenchmarkEntry[] | null;
   text?: BenchmarkEntry[] | null;
+}
+/**
+ * Public plan identity of a prefix-cache experiment (credentials excluded).
+ */
+export interface CacheExperimentConfigSnapshot {
+  alias?: string | null;
+  configuration_hash?: string | null;
+  deployment_mode?: string | null;
+  endpoint?: string | null;
+  engine?: ("evalscope" | "aiperf") | null;
+  kind?: "perf";
+  load_modes?: string[];
+  model?: string;
+  node_ids?: string[];
+  plan_hash?: string | null;
+  repetitions?: number | null;
+  schema_version?: number;
+  snapshot_type?: "perf_cache_experiment";
+  stream?: boolean | null;
+  target_ratios?: number[];
+  template_id?: string | null;
+  test_type?: "cache_experiment";
+  tokenizer_id?: string | null;
+  total_subruns?: number | null;
 }
 export interface CacheExperimentListResponse {
   experiments: CacheExperimentListItem[];
@@ -342,6 +418,62 @@ export interface CacheWarmupState {
   request_count?: number | null;
   status: "completed" | "failed" | "cancelled";
   total_input_tokens?: number | null;
+}
+/**
+ * Authoritative, plan-wide experiment counts for the report header.
+ */
+export interface CacheExperimentSummaryResponse {
+  availability?: "available" | "pending" | "not_configured" | "unsupported" | "unavailable" | "unknown";
+  completeness?: "complete" | "partial";
+  completeness_reason?: string | null;
+  configuration_hash?: string | null;
+  counts_by_quality?: {
+    [k: string]: number;
+  };
+  counts_by_status?: {
+    [k: string]: number;
+  };
+  coverage: ExperimentCoverage;
+  execution_status: string;
+  groups: ExperimentGroup[];
+  missing_subruns?: number;
+  observed_at: string;
+  plan_hash: string;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  readable_subruns?: number;
+  revision?: number;
+  task_id: string;
+  total_planned_subruns?: number;
+  unreadable_subruns?: number;
+}
+/**
+ * Planned / completed / readable subrun counts, kept explicitly distinct.
+ */
+export interface ExperimentCoverage {
+  completed?: number;
+  included?: number;
+  planned?: number;
+  readable?: number;
+}
+/**
+ * One comparable cell of the experiment matrix (dimensions never merged).
+ */
+export interface ExperimentGroup {
+  concurrency?: number | null;
+  group_key: string;
+  input_tokens?: number | null;
+  load_mode: string;
+  observed_requests?: number;
+  output_token_limit?: number | null;
+  planned_requests?: number;
+  rate?: number | null;
+  readable_subruns?: number;
+  status_counts?: {
+    [k: string]: number;
+  };
+  successful_requests?: number;
+  target_ratio: number;
+  total_subruns?: number;
 }
 export interface CacheNodeMetricsResponse {
   aggregation?: "raw";
@@ -715,6 +847,26 @@ export interface DeleteReportResponse {
   run_id: string;
   success: boolean;
 }
+/**
+ * Public evaluation settings that are safe to display and copy.
+ */
+export interface EvalConfigSnapshot {
+  alias?: string | null;
+  datasets?: string[];
+  endpoint?: string | null;
+  engine?: ("evalscope" | "aiperf") | null;
+  eval_batch_size?: number | null;
+  kind?: "eval";
+  limit?: number | null;
+  max_tokens?: number | null;
+  model?: string;
+  repeats?: number | null;
+  schema_version?: number;
+  snapshot_type?: "eval";
+  temperature?: number | null;
+  top_k?: number | null;
+  top_p?: number | null;
+}
 export interface EvalInvokeResponse {
   error?: string | null;
   result?: {
@@ -838,6 +990,9 @@ export interface PerfRunSummary {
   protocol?: string | null;
   provider?: string | null;
   quality?: ("complete" | "partial" | "invalid") | null;
+  status?:
+    | ("queued" | "preparing" | "running" | "cancelling" | "finalizing" | "completed" | "stopped" | "error" | "unknown")
+    | null;
   success_rate: number | null;
   timestamp: string;
   total_requests: number;
@@ -1001,6 +1156,28 @@ export interface LogResponse {
   text: string;
   total_lines: number;
 }
+/**
+ * Public settings of a native EvalScope performance run (single or sweep).
+ */
+export interface NativePerfConfigSnapshot {
+  alias?: string | null;
+  api?: string | null;
+  dataset?: string | null;
+  endpoint?: string | null;
+  engine?: "evalscope";
+  kind?: "perf";
+  max_prompt_length?: number | null;
+  max_tokens?: number | number[] | null;
+  min_prompt_length?: number | null;
+  min_tokens?: number | null;
+  model?: string;
+  number?: number | number[] | null;
+  parallel?: number | number[] | null;
+  rate?: number | number[] | null;
+  schema_version?: number;
+  snapshot_type?: "perf_native";
+  test_type?: "single" | "sweep" | "cache_experiment" | "unknown";
+}
 export interface PerfDetailResponse {
   alias?: string | null;
   api_type: string;
@@ -1010,6 +1187,7 @@ export interface PerfDetailResponse {
   best_config: {
     [k: string]: string;
   };
+  capabilities?: ResultCapabilities;
   configuration?: {
     [k: string]: string;
   } | null;
@@ -1028,7 +1206,20 @@ export interface PerfDetailResponse {
   recommendations: string[];
   summary_columns: PerfSummaryColumn[];
   summary_rows: PerfSummaryRow[];
+  test_type?: "single" | "sweep" | "cache_experiment" | "unknown";
   total_requests: number;
+}
+/**
+ * Per-surface capability set resolved from the archive, never from the engine label.
+ */
+export interface ResultCapabilities {
+  cache_experiment?: AvailabilityState;
+  configuration?: AvailabilityState;
+  html?: AvailabilityState;
+  node_metrics?: AvailabilityState;
+  overview?: AvailabilityState;
+  requests?: AvailabilityState;
+  sweep?: AvailabilityState;
 }
 export interface PerfSummaryColumn {
   key: string;
@@ -1058,6 +1249,53 @@ export interface PerfEngineCapability {
   protocols?: string[];
   reason?: string | null;
   version?: string | null;
+}
+/**
+ * A filtered page of unified performance entries.
+ */
+export interface PerfEntryListResponse {
+  completeness: "complete" | "partial";
+  entries: PerformanceResultEntry[];
+  known_total: number;
+  limit: number;
+  observed_at: string;
+  offset: number;
+  root_path: string;
+  scanned?: number;
+  skipped?: number;
+  total: number;
+}
+/**
+ * One row of the unified performance result list.
+ */
+export interface PerformanceResultEntry {
+  actions?: ("open" | "compare" | "delete" | "html" | "copy_config")[];
+  alias?: string | null;
+  best_latency?: number | null;
+  best_rps?: number | null;
+  capabilities: ResultCapabilities;
+  dataset?: string | null;
+  detail_path?: string | null;
+  display_name?: string;
+  endpoint?: string | null;
+  engine?: ("evalscope" | "aiperf") | null;
+  entry_id: string;
+  execution_status?: string | null;
+  executor_version?: string | null;
+  metric_scope?: "run" | "none";
+  model?: string;
+  num_runs?: number | null;
+  path: string;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  result_kind: "run" | "experiment";
+  root_path: string;
+  success_rate?: number | null;
+  task_id?: string | null;
+  test_type?: "single" | "sweep" | "cache_experiment" | "unknown";
+  time_basis?: "aware" | "legacy" | "unknown";
+  timestamp?: string | null;
+  total_requests?: number | null;
+  unreadable_reason?: string | null;
 }
 /**
  * Typed AIPerf task result, compatible with the shared task monitor.
@@ -1248,6 +1486,479 @@ export interface LiveGauge {
   value: number;
 }
 /**
+ * Archived plan provenance, bounded run page and effective runtime identity.
+ */
+export interface PerfPlanArchiveResponse {
+  alignment?: PlanAlignment | null;
+  archive?: {
+    [k: string]: string;
+  };
+  budgets?: PlanBudgets | null;
+  compiler_version?: string | null;
+  completed_runs?: number;
+  context?: ContextCheck[];
+  contract_version?: string | null;
+  current_run?: string | null;
+  effective?: EffectiveIdentity | null;
+  limit?: number;
+  model?: string;
+  name?: string | null;
+  normalized_hash?: string | null;
+  offset?: number;
+  phase?: string | null;
+  plan_hash?: string | null;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  quality_reasons?: string[];
+  report_available?: boolean;
+  runs?: PerfPlanRunView[];
+  semantic_fingerprint?: string | null;
+  source_hash?: string | null;
+  state?: "reserved" | "queued" | "running" | "completed" | "stopped" | "error" | "lost";
+  state_reason?: string | null;
+  status?: ("running" | "completed" | "stopped" | "error") | null;
+  task_id: string;
+  total_runs?: number;
+  warmup?: PlanWarmupState | null;
+  workload_semantics?: ("managed_token_prefix" | "aiperf_synthetic_compat") | null;
+}
+/**
+ * All comparable dimensions for one plan and the resulting overall status.
+ */
+export interface PlanAlignment {
+  dimensions?: AlignmentDimension[];
+  overall?: "matched" | "different" | "unknown" | "unsupported";
+  schema_version?: "1.0";
+  source?: string | null;
+}
+/**
+ * One comparable dimension with concrete reasons.
+ */
+export interface AlignmentDimension {
+  dimension: "parameters" | "request_semantics" | "cache" | "environment" | "version" | "statistics";
+  reasons?: string[];
+  status: "matched" | "different" | "unknown" | "unsupported";
+}
+/**
+ * Request and output ceilings, with the one-off phases kept separate.
+ */
+export interface PlanBudgets {
+  formal_output_tokens: number;
+  formal_requests: number;
+  primer_requests: number;
+  total_requests: number;
+  warmup_output_tokens: number;
+  warmup_requests: number;
+}
+/**
+ * One distinct context judgement, exposed so the UI can explain the basis.
+ */
+export interface ContextCheck {
+  case_id?: string | null;
+  limit_tokens?: number | null;
+  overhead?: "included" | "known" | "unknown";
+  required_tokens?: number | null;
+  run_id: string;
+  status?: "fits" | "overflow" | "unknown";
+}
+/**
+ * Execution-time identity, kept apart from the accepted plan hash.
+ *
+ * ``identity_version`` versions the comparison semantics. A comparison of two
+ * records with different versions, or with unknown content hashes, is
+ * ``unknown``: an equal unknown fingerprint never means "matched".
+ */
+export interface EffectiveIdentity {
+  aiperf_version?: string | null;
+  compiler_version: string;
+  contract_version: string;
+  deployment_evidence?: "declared" | "measured" | "unknown";
+  executor?: "evalscope_service";
+  identity_version?: "1";
+  parent_plan_hash?: string | null;
+  plan_hash: string;
+  schema_version?: "1.0";
+  tokenizer?: TokenizerIdentity;
+}
+/**
+ * What was actually resolved, never what a path suggests.
+ */
+export interface TokenizerIdentity {
+  content_hash?: string | null;
+  path?: string | null;
+  status?: "resolved" | "unknown";
+  template_hash?: string | null;
+}
+/**
+ * One planned run as requested (dimensions) and as executed (state).
+ *
+ * The dimensions come from the accepted plan and the state from the manifest,
+ * so a partially executed matrix shows the real length/concurrency/repetition
+ * of every point instead of the first run's arguments.
+ */
+export interface PerfPlanRunView {
+  cache_verification?: CacheRatioVerification | null;
+  case_id?: string | null;
+  concurrency: number;
+  declared_total_input_tokens?: number | null;
+  finished_ns?: number | null;
+  formal_requests: number;
+  input_tokens?: number | null;
+  message_structure: "user_only" | "system_and_user";
+  normalized?: string | null;
+  order: number;
+  output_token_limit: number;
+  primer_requests?: number;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  reason?: string | null;
+  repetition: number;
+  requests_available?: boolean;
+  run_id: string;
+  shared_system_tokens?: number | null;
+  started_ns?: number | null;
+  status?: "not_started" | "running" | "completed" | "cancelled" | "error";
+  target_ratio?: number | null;
+  unique_user_tokens?: number | null;
+  workload_kind: "token_prefix" | "aiperf_synthetic";
+}
+/**
+ * Declared-versus-observed prefix reuse for one synthetic run.
+ *
+ * The declared ratio is a property of the generated workload; only a
+ * server-reported ratio can confirm or refute it. A ratio the server did not
+ * report is ``unavailable``, never an invented deviation, and it only becomes
+ * a data-quality defect when the plan explicitly requires the observation.
+ */
+export interface CacheRatioVerification {
+  declared_ratio?: number | null;
+  declared_source?: "target_prefix_ratio" | "token_split";
+  delta?: number | null;
+  observed_ratio?: number | null;
+  required?: boolean;
+  status: "verified" | "mismatch" | "unavailable" | "not_applicable";
+  tolerance?: number;
+}
+/**
+ * Ordinary warmup outcome, kept out of the formal request counts.
+ */
+export interface PlanWarmupState {
+  completed_requests?: number;
+  concurrency?: number;
+  executor?: "evalscope_http";
+  failed_requests?: number;
+  output_token_limit?: number;
+  reason?: string | null;
+  request_count?: number;
+  status: "skipped" | "completed" | "failed" | "cancelled";
+  total_input_tokens?: number;
+}
+/**
+ * A stable, credential-free serialization that can be imported again.
+ */
+export interface PerfPlanExportResponse {
+  can_submit: boolean;
+  content: string;
+  diagnostics?: PlanDiagnosticView[];
+  normalized_hash: string;
+  plan_hash: string;
+  semantic_fingerprint: string;
+}
+/**
+ * One structured diagnostic; never contains prompts, secrets or local paths.
+ */
+export interface PlanDiagnosticView {
+  case_id?: string | null;
+  code: string;
+  field_path?: string;
+  message?: string;
+  message_key?: string;
+  parameters?: {
+    [k: string]: any;
+  };
+  severity: "error" | "warning" | "info";
+}
+/**
+ * Terminal result of a synchronous plan execution.
+ */
+export interface PerfPlanInvokeResponse {
+  result: PerfPlanOutcome;
+  status: "completed" | "error" | "stopped";
+  task_id: string;
+}
+/**
+ * Small terminal result; per-run details stay in the plan manifest.
+ */
+export interface PerfPlanOutcome {
+  cleanup_confirmed?: boolean;
+  completed_runs: number;
+  manifest?: string;
+  plan_hash: string;
+  quality: "complete" | "partial" | "invalid";
+  quality_reasons?: string[];
+  status: "completed" | "stopped" | "error";
+  total_runs: number;
+}
+/**
+ * A side-effect-free preview: normalized plan, matrix, budgets, diagnostics and alignment.
+ */
+export interface PerfPlanPreviewResponse {
+  acknowledged?: string[];
+  alignment: PlanAlignment;
+  budgets: PlanBudgets;
+  can_submit: boolean;
+  compiler_version: string;
+  context: ContextCheck[];
+  contract_version: string;
+  diagnostics: PlanDiagnosticView[];
+  engine_available: boolean;
+  intent: "diagnostic" | "benchmark";
+  limit: number;
+  normalized: PerfPlanDocument;
+  normalized_hash: string;
+  offset: number;
+  plan_hash: string;
+  requires_acknowledgement?: string[];
+  runs: PlanRunSummary[];
+  runtime: PlanRuntimeIdentity;
+  schema_version?: "1.0";
+  semantic_fingerprint: string;
+  source_hash: string;
+  total_runs: number;
+  workload_semantics: "managed_token_prefix" | "aiperf_synthetic_compat";
+}
+/**
+ * A portable, versioned and credential-free performance plan.
+ */
+export interface PerfPlanDocument {
+  connection: PlanConnection;
+  deployment?: DeploymentFacts;
+  execution?: PlanExecution;
+  intent?: "diagnostic" | "benchmark";
+  kind?: "iss-eval.perf-plan";
+  load: PlanLoad;
+  name?: string | null;
+  priming?: PlanPriming;
+  schema_version?: "1.0";
+  telemetry?: PlanTelemetry;
+  warmup?: PlanWarmup;
+  workload: TokenPrefixWorkload | SyntheticWorkload;
+}
+/**
+ * Where the plan sends requests; never carries a credential.
+ */
+export interface PlanConnection {
+  model: string;
+  protocol?: "openai_chat";
+  streaming?: true;
+  tokenizer_path: string;
+  url: string;
+}
+/**
+ * Declared deployment shape; facts are recorded, never used to reprogram a cluster.
+ */
+export interface DeploymentFacts {
+  declared_max_model_len?: number | null;
+  deployment_id?: string | null;
+  dp?: number | null;
+  engine_image_digest?: string | null;
+  engine_version?: string | null;
+  ep?: number | null;
+  evidence?: "declared" | "measured" | "unknown";
+  gpu_count?: number | null;
+  kv_dtype?: string | null;
+  max_num_seqs?: number | null;
+  mode?: "aggregated" | "disaggregated" | "unknown";
+  model_revision?: string | null;
+  node_count?: number | null;
+  pp?: number | null;
+  prefix_cache?: ("enabled" | "disabled" | "unknown") | null;
+  routing_coverage?: "unknown" | "partial" | "all_replicas";
+  routing_policy?: "round_robin" | "unknown" | "other";
+  tp?: number | null;
+}
+/**
+ * Deterministic ordering of the compiled matrix.
+ */
+export interface PlanExecution {
+  order?: "seeded_shuffle" | "load_then_input";
+  seed?: number | null;
+}
+/**
+ * Load axis, request count and output budget shared by every run.
+ */
+export interface PlanLoad {
+  mode?: "closed_loop";
+  output_token_limit: number;
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  points: [PlanLoadPoint, ...PlanLoadPoint[]];
+  repetitions?: number;
+  request_count: number;
+}
+/**
+ * One closed-loop concurrency point.
+ */
+export interface PlanLoadPoint {
+  concurrency: number;
+}
+/**
+ * Prefix priming policy, separate from ordinary warmup.
+ */
+export interface PlanPriming {
+  policy?: "prime_all_prefixes" | "none";
+  timeout_seconds?: number;
+}
+/**
+ * Node telemetry stays outside the portable document in this version.
+ *
+ * The Web form still supports required node metrics, but a portable plan has
+ * no field that can name a collection target: the target URL and its bearer
+ * token are runtime configuration. Accepting ``required=true`` here would
+ * promise a collection this document cannot describe, so it is rejected
+ * instead of being silently downgraded to ``required=false``.
+ */
+export interface PlanTelemetry {
+  required?: boolean;
+  targets?: {
+    [k: string]: any;
+  }[];
+}
+/**
+ * Ordinary warmup sent once before the whole matrix; never counted as formal samples.
+ */
+export interface PlanWarmup {
+  concurrency?: number;
+  enabled?: boolean;
+  failure_policy?: "abort" | "record_and_continue";
+  input_tokens?: number;
+  output_token_limit?: number;
+  request_count?: number;
+}
+/**
+ * Managed token-prefix workload: a target reuse ratio per input length.
+ */
+export interface TokenPrefixWorkload {
+  /**
+   * @minItems 1
+   * @maxItems 64
+   */
+  input_lengths: [number, ...number[]];
+  kind: "token_prefix";
+  prefix_pool_size?: number;
+  seed?: number;
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  target_ratios:
+    | [number]
+    | [number, number]
+    | [number, number, number]
+    | [number, number, number, number]
+    | [number, number, number, number, number]
+    | [number, number, number, number, number, number]
+    | [number, number, number, number, number, number, number]
+    | [number, number, number, number, number, number, number, number]
+    | [number, number, number, number, number, number, number, number, number]
+    | [number, number, number, number, number, number, number, number, number, number]
+    | [number, number, number, number, number, number, number, number, number, number, number]
+    | [number, number, number, number, number, number, number, number, number, number, number, number]
+    | [number, number, number, number, number, number, number, number, number, number, number, number, number]
+    | [number, number, number, number, number, number, number, number, number, number, number, number, number, number]
+    | [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number
+      ]
+    | [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number
+      ];
+}
+/**
+ * AIPerf synthetic compatibility workload: system + user messages, not one user blob.
+ */
+export interface SyntheticWorkload {
+  apply_chat_template?: false;
+  cache_bust?: "none";
+  /**
+   * @minItems 1
+   * @maxItems 64
+   */
+  cases: [SyntheticCase, ...SyntheticCase[]];
+  kind: "aiperf_synthetic";
+  ratio_tolerance?: number;
+  require_observed_ratio?: boolean;
+}
+/**
+ * One explicit shared-system / unique-user split copied from a legacy script.
+ */
+export interface SyntheticCase {
+  case_id: string;
+  declared_total_input_tokens: number;
+  shared_system_tokens: number;
+  target_prefix_ratio?: number | null;
+  unique_user_tokens: number;
+}
+/**
+ * Bounded per-run projection of the compiled matrix.
+ */
+export interface PlanRunSummary {
+  case_id?: string | null;
+  concurrency: number;
+  declared_total_input_tokens?: number | null;
+  input_tokens?: number | null;
+  message_structure: "user_only" | "system_and_user";
+  order: number;
+  output_token_limit: number;
+  primer_requests: number;
+  repetition: number;
+  request_count: number;
+  run_id: string;
+  shared_system_tokens?: number | null;
+  target_ratio?: number | null;
+  unique_user_tokens?: number | null;
+  workload_kind: "token_prefix" | "aiperf_synthetic";
+}
+/**
+ * Identity of the runtime/tokenizer/template, explicitly unknown until checked.
+ */
+export interface PlanRuntimeIdentity {
+  reason?: string | null;
+  runtime_status?: "unknown" | "available" | "unavailable";
+  runtime_version?: string | null;
+  template_id?: string | null;
+  tokenizer_id?: string | null;
+  tokenizer_status?: "unknown" | "resolved" | "unavailable";
+}
+/**
  * A side-effect-free cache experiment plan and its limitations.
  */
 export interface PerfPlanResponse {
@@ -1269,6 +1980,20 @@ export interface NodePreflight {
   role: "prefill" | "decode";
   status: "available" | "missing" | "unreachable" | "invalid";
   verification?: "deployment_unverified";
+}
+/**
+ * The truthful acceptance answer for one plan submission.
+ *
+ * ``state`` is the state of the task this plan already owns, so an accepted
+ * retry never pretends a finished run is still queued.
+ */
+export interface PerfPlanSubmitResponse {
+  duplicate?: boolean;
+  enqueued_at?: string | null;
+  message?: string | null;
+  queue_position?: number | null;
+  state: "reserved" | "queued" | "running" | "completed" | "stopped" | "error" | "lost";
+  task_id: string;
 }
 export interface PerfRequestsResponse {
   columns: string[];
@@ -1307,6 +2032,50 @@ export interface PerfSinglePlanResponse {
   nodes?: NodePreflight[];
   profiling_requests: number;
   warnings?: string[];
+}
+/**
+ * Public identity and mechanics of a portable performance plan.
+ *
+ * Declared deployment facts are labelled as declared; the effective tokenizer
+ * and template hashes come from the archive and stay ``None`` until a run
+ * resolves them.
+ */
+export interface PlanConfigSnapshot {
+  aiperf_version?: string | null;
+  alias?: string | null;
+  compiler_version?: string | null;
+  concurrencies?: number[];
+  contract_version?: string | null;
+  declared_max_model_len?: number | null;
+  deployment_evidence?: string | null;
+  deployment_measured?: boolean | null;
+  deployment_mode?: string | null;
+  endpoint?: string | null;
+  engine?: "aiperf";
+  input_lengths?: number[];
+  intent?: string | null;
+  kind?: "perf";
+  model?: string;
+  name?: string | null;
+  normalized_hash?: string | null;
+  output_token_limit?: number | null;
+  plan_hash?: string | null;
+  primer_timeout_seconds?: number | null;
+  repetitions?: number | null;
+  request_count?: number | null;
+  schema_version?: number;
+  semantic_fingerprint?: string | null;
+  snapshot_type?: "perf_plan";
+  source_hash?: string | null;
+  target_ratios?: number[];
+  template_id?: string | null;
+  test_type?: "cache_experiment";
+  tokenizer_id?: string | null;
+  total_runs?: number | null;
+  warmup_enabled?: boolean | null;
+  warmup_input_tokens?: number | null;
+  warmup_output_token_limit?: number | null;
+  workload_semantics?: string | null;
 }
 export interface PredictionRow {
   AgentTrace?: AgentTrace | null;
@@ -1399,6 +2168,111 @@ export interface ProgressResponse {
   total_subruns?: number | null;
   [k: string]: any;
 }
+/**
+ * Readability of a task's result as a whole (independent of its quality).
+ */
+export interface ResultAvailability {
+  availability?: "available" | "pending" | "not_configured" | "unsupported" | "unavailable" | "unknown";
+  reason?: string | null;
+}
+/**
+ * Task detail: the list projection plus the sanitized configuration snapshot.
+ */
+export interface TaskDetailResponse {
+  alias?: string | null;
+  capabilities?: ResultCapabilities;
+  completed_subruns?: number | null;
+  config_completeness?: "full" | "summary_only" | "unavailable";
+  config_snapshot?:
+    | EvalConfigSnapshot
+    | NativePerfConfigSnapshot
+    | AiPerfSingleConfigSnapshot
+    | CacheExperimentConfigSnapshot
+    | PlanConfigSnapshot
+    | null;
+  current_subrun?: string | null;
+  effective_time?: string | null;
+  endpoint?: string | null;
+  engine?: ("evalscope" | "aiperf") | null;
+  enqueued_at?: string | null;
+  error?: string | null;
+  finished_at?: string | null;
+  html_report_url?: string | null;
+  kind: "eval" | "perf";
+  logs_available?: boolean;
+  model?: string;
+  observed_at: string;
+  percent?: number | null;
+  phase?: string | null;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  queue_position?: number | null;
+  report_url?: string | null;
+  result_availability?: ResultAvailability;
+  started_at?: string | null;
+  status:
+    "queued" | "preparing" | "running" | "cancelling" | "finalizing" | "completed" | "stopped" | "error" | "unknown";
+  status_group: "executing" | "queued" | "completed" | "stopped" | "failed" | "uncertain";
+  task_id: string;
+  test_type?: ("single" | "sweep" | "cache_experiment" | "unknown") | null;
+  time_basis?: "aware" | "legacy" | "unknown";
+  total_subruns?: number | null;
+}
+/**
+ * A filtered page of tasks plus the scope it was read from.
+ */
+export interface TaskListResponse {
+  completeness: "complete" | "partial";
+  excluded_without_time?: number;
+  indexing: TaskIndexingState;
+  items: TaskSummaryItem[];
+  known_total: number;
+  limit: number;
+  observed_at: string;
+  offset: number;
+  revision: number;
+  total: number;
+}
+/**
+ * How much of the output root the persistent index has discovered.
+ */
+export interface TaskIndexingState {
+  reason?: string | null;
+  scanned?: number;
+  state?: "ready" | "indexing" | "unavailable";
+}
+/**
+ * One task as shown in the Task Center list or used for detail headers.
+ */
+export interface TaskSummaryItem {
+  alias?: string | null;
+  capabilities?: ResultCapabilities;
+  completed_subruns?: number | null;
+  current_subrun?: string | null;
+  effective_time?: string | null;
+  endpoint?: string | null;
+  engine?: ("evalscope" | "aiperf") | null;
+  enqueued_at?: string | null;
+  error?: string | null;
+  finished_at?: string | null;
+  html_report_url?: string | null;
+  kind: "eval" | "perf";
+  model?: string;
+  observed_at: string;
+  percent?: number | null;
+  phase?: string | null;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  queue_position?: number | null;
+  report_url?: string | null;
+  result_availability?: ResultAvailability;
+  started_at?: string | null;
+  status:
+    "queued" | "preparing" | "running" | "cancelling" | "finalizing" | "completed" | "stopped" | "error" | "unknown";
+  status_group: "executing" | "queued" | "completed" | "stopped" | "failed" | "uncertain";
+  task_id: string;
+  test_type?: ("single" | "sweep" | "cache_experiment" | "unknown") | null;
+  time_basis?: "aware" | "legacy" | "unknown";
+  total_subruns?: number | null;
+}
 export interface TaskStatusResponse {
   status: string;
   task_id: string;
@@ -1411,4 +2285,25 @@ export interface TaskSubmitResponse {
   queue_position?: number | null;
   status?: "queued";
   task_id: string;
+}
+/**
+ * Global task counts; never derived from a single page of list items.
+ */
+export interface TaskSummaryResponse {
+  attention: number;
+  completed_in_range: number;
+  completeness?: "complete" | "partial";
+  excluded_from_range?: number;
+  executing: number;
+  observed_at: string;
+  queue: QueueConnectivity;
+  queued: number;
+  revision?: number;
+  scope?: "global" | "global+range";
+  unknown_timestamp_count?: number;
+}
+export interface QueueConnectivity {
+  backend: string;
+  reachable: boolean;
+  reason?: string | null;
 }

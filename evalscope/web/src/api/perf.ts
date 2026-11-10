@@ -1,5 +1,5 @@
 import { apiDeleteValidated, apiPostValidated, apiValidated } from './client'
-import type { PerfEnginesResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, CacheExperimentResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse, CacheRepetitionsResponse, CacheNodeSeriesResponse } from './generated/contracts'
+import type { PerfEnginesResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, CacheExperimentResponse, CacheExperimentSummaryResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse, CacheRepetitionsResponse, CacheNodeSeriesResponse, PerfEntryListResponse } from './generated/contracts'
 import type {
   DeletePerfRunResponse,
   ListPerfRunsResponse,
@@ -55,22 +55,41 @@ export async function submitPerfSingle(payload: Record<string, unknown>, taskId:
   })
 }
 
-export function getCacheExperiment(taskId: string, signal?: AbortSignal): Promise<CacheExperimentResponse> {
-  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}`, { signal })
+export function getCacheExperiment(taskId: string, signal?: AbortSignal, rootPath?: string): Promise<CacheExperimentResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}`, {
+    params: { root_path: rootPath }, signal,
+  })
+}
+
+export function getCacheExperimentSummary(taskId: string, signal?: AbortSignal,
+                                          rootPath?: string): Promise<CacheExperimentSummaryResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/summary`, {
+    params: { root_path: rootPath }, signal,
+  })
+}
+
+export function getCacheExperimentReportUrl(taskId: string, rootPath?: string): string {
+  const params = new URLSearchParams()
+  if (rootPath) params.set('root_path', rootPath)
+  const query = params.toString()
+  return `/api/v1/perf/experiments/${encodeURIComponent(taskId)}/report${query ? `?${query}` : ''}`
 }
 
 export function listCacheExperiments(offset = 0): Promise<CacheExperimentListResponse> {
   return apiValidated('/api/v1/perf/experiments', { params: { offset, limit: 50 } })
 }
 
-export function getCacheScenario(taskId: string, subrunId: string, signal?: AbortSignal): Promise<CacheScenarioResponse> {
-  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}`, { signal })
+export function getCacheScenario(taskId: string, subrunId: string, signal?: AbortSignal,
+                                 rootPath?: string): Promise<CacheScenarioResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}`, {
+    params: { root_path: rootPath }, signal,
+  })
 }
 
 export function getCacheRepetitions(taskId: string, subrunId: string, metric: string, offset: number,
-                                    signal?: AbortSignal): Promise<CacheRepetitionsResponse> {
+                                    signal?: AbortSignal, rootPath?: string): Promise<CacheRepetitionsResponse> {
   return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/repetitions`, {
-    params: { metric, offset, limit: 100 }, signal,
+    params: { metric, offset, limit: 100, root_path: rootPath }, signal,
   })
 }
 
@@ -79,10 +98,12 @@ interface NodeSeriesFilter {
   maxPoints?: number; signal?: AbortSignal
 }
 
-export function getCacheNodeSeries(taskId: string, subrunId: string, filter: NodeSeriesFilter): Promise<CacheNodeSeriesResponse> {
+export function getCacheNodeSeries(taskId: string, subrunId: string, filter: NodeSeriesFilter,
+                                   rootPath?: string): Promise<CacheNodeSeriesResponse> {
   return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/metrics/series`, {
     params: { node_id: filter.nodeId, metric_name: filter.metricName, labels: JSON.stringify(filter.labels),
-      start_ns: filter.start ?? undefined, end_ns: filter.end ?? undefined, max_points: filter.maxPoints ?? 500 }, signal: filter.signal,
+      start_ns: filter.start ?? undefined, end_ns: filter.end ?? undefined, max_points: filter.maxPoints ?? 500,
+      root_path: rootPath }, signal: filter.signal,
   })
 }
 
@@ -94,26 +115,65 @@ export function getPerfNodeSeries(rootPath: string, path: string, filter: NodeSe
   })
 }
 
-export function getCacheNodeMetrics(taskId: string, subrunId: string, offset = 0,
-  filter?: { nodeId: string; metricName: string; signal?: AbortSignal }): Promise<CacheNodeMetricsResponse> {
+export function getCacheNodeMetrics(taskId: string, subrunId: string, offset = 0, rootPath?: string,
+  signal?: AbortSignal): Promise<CacheNodeMetricsResponse> {
   return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/metrics`, {
-    params: { offset, limit: filter ? 500 : 100, node_id: filter?.nodeId, metric_name: filter?.metricName }, signal: filter?.signal,
+    params: { offset, limit: 100, root_path: rootPath }, signal,
   })
 }
 
-export function getCacheRequests(taskId: string, subrunId: string, offset = 0): Promise<CacheRequestsResponse> {
+export function getCacheRequests(taskId: string, subrunId: string, offset = 0, rootPath?: string,
+                                 signal?: AbortSignal): Promise<CacheRequestsResponse> {
   return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/requests`, {
-    params: { offset, limit: 50 },
+    params: { offset, limit: 50, root_path: rootPath }, signal,
   })
 }
 
-export function getCacheRequestGroups(taskId: string, subrunId: string, signal?: AbortSignal): Promise<CacheRequestGroupsResponse> {
-  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/request-cache-groups`, { signal })
+export function getCacheRequestGroups(taskId: string, subrunId: string, signal?: AbortSignal,
+                                      rootPath?: string): Promise<CacheRequestGroupsResponse> {
+  return apiValidated(`/api/v1/perf/experiments/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(subrunId)}/request-cache-groups`, {
+    params: { root_path: rootPath }, signal,
+  })
 }
 
 // ------------------------------------------------------------------ //
 // Historical perf-run archive                                         //
 // ------------------------------------------------------------------ //
+
+export type PerfEntryTestType = 'single' | 'sweep' | 'cache_experiment' | 'unknown'
+export type PerfEntryEngine = 'evalscope' | 'aiperf'
+export type PerfEntrySort = 'time' | 'rps' | 'latency'
+
+export interface PerfEntryFilters {
+  rootPath: string
+  testType?: PerfEntryTestType
+  engine?: PerfEntryEngine
+  query?: string
+  sort?: PerfEntrySort
+  offset?: number
+  limit?: number
+  signal?: AbortSignal
+}
+
+/**
+ * One page of the unified performance-result list. Native EvalScope runs,
+ * AIPerf single runs and cache experiments share this endpoint; `engine` is a
+ * secondary filter, never a separate product surface.
+ */
+export function listPerfEntries(filters: PerfEntryFilters): Promise<PerfEntryListResponse> {
+  return apiValidated<PerfEntryListResponse>('/api/v1/perf/entries', {
+    params: {
+      root_path: filters.rootPath,
+      test_type: filters.testType,
+      engine: filters.engine,
+      q: filters.query?.trim() || undefined,
+      sort: filters.sort ?? 'time',
+      offset: filters.offset ?? 0,
+      limit: filters.limit ?? 25,
+    },
+    signal: filters.signal,
+  })
+}
 
 export async function listPerfRuns(rootPath: string, signal?: AbortSignal): Promise<ListPerfRunsResponse> {
   return apiValidated<ListPerfRunsResponse>('/api/v1/perf/list', {

@@ -18,6 +18,39 @@ const FIXED_SYSTEM_TIME = new Date('2026-07-01T00:00:00.000Z')
 const FAST_CHECK_SEED = 42
 const FAST_CHECK_NUM_RUNS = 100
 
+// Node 26 exposes its own file-backed `localStorage` global, which is shared by
+// every test file in the run. Replacing it with a per-environment in-memory
+// Storage keeps browser-storage state isolated between test files (the jsdom
+// window is the test global, so the app and the tests read the same object).
+class MemoryStorage implements Storage {
+  private readonly data = new Map<string, string>()
+
+  get length(): number {
+    return this.data.size
+  }
+
+  clear(): void {
+    this.data.clear()
+  }
+
+  getItem(key: string): string | null {
+    return this.data.has(key) ? this.data.get(key)! : null
+  }
+
+  key(index: number): string | null {
+    return [...this.data.keys()][index] ?? null
+  }
+
+  removeItem(key: string): void {
+    this.data.delete(key)
+  }
+
+  setItem(key: string, value: string): void {
+    this.data.set(key, String(value))
+  }
+}
+
+
 fc.configureGlobal({ seed: FAST_CHECK_SEED, numRuns: FAST_CHECK_NUM_RUNS })
 
 // Guard against accidental network access from tests. Any attempt to call
@@ -34,6 +67,7 @@ const forbiddenFetch: typeof fetch = (input) => {
 }
 
 beforeAll(() => {
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() })
   // Fake timers with a fixed "now" so timers and timestamps are deterministic.
   vi.useFakeTimers()
   vi.setSystemTime(FIXED_SYSTEM_TIME)

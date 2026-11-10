@@ -210,6 +210,22 @@ async function click(name: string) { await act(async () => { fireEvent.click(scr
     expect(screen.queryByText(/Cannot reach the task service/)).not.toBeInTheDocument()
     expect(screen.getByText('Running 10%')).toBeInTheDocument()
   })
+  it('hands an accepted task id to the caller and leaves the form usable', async () => {
+    const onAccepted = vi.fn()
+    const submitTask = vi.fn().mockResolvedValue({ task_id: 'eval_ignored', status: 'queued' })
+    render(<Runner onAccepted={onAccepted} submitTask={submitTask} />)
+    await click('Submit')
+    expect(onAccepted).toHaveBeenCalledTimes(1)
+    expect(onAccepted).toHaveBeenCalledWith(expect.stringMatching(/^eval_\d+$/))
+    expect(onAccepted).toHaveBeenCalledWith(submitTask.mock.calls[0][1])
+    expect(screen.getByRole('button', { name: 'Submit' })).toBeEnabled()
+  })
+  it('does not hand over a submission the service rejected', async () => {
+    const onAccepted = vi.fn()
+    render(<Runner onAccepted={onAccepted} submitTask={vi.fn().mockRejectedValue(new DomainError('http-4xx', 'Dataset is not registered', 400))} />)
+    await click('Submit')
+    expect(onAccepted).not.toHaveBeenCalled()
+  })
   it('localizes restored terminal outcomes', async () => {
     localStorage.setItem('evalscope-locale', 'zh')
     vi.mocked(getTask).mockResolvedValue({ ...TASK, status: 'error' })

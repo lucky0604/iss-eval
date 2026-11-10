@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 import { useLocale } from '@/contexts/LocaleContext'
 import { useQueryParams } from '@/hooks/useQueryParams'
 import Tabs from '@/components/ui/Tabs'
-import ActiveTasksPanel from '@/components/tasks/ActiveTasksPanel'
 import EvalTaskPanel from '@/components/tasks/EvalTaskPanel'
 import PerfTaskPanel from '@/components/tasks/PerfTaskPanel'
 import ModelConnectionEditor from '@/components/tasks/ModelConnectionEditor'
@@ -30,6 +31,7 @@ import {
  */
 export default function TasksPage() {
   const { t } = useLocale()
+  const navigate = useNavigate()
   const { get, set } = useQueryParams()
   const tab = get('tab') === 'perf' ? 'perf' : 'eval'
   const { workspace, setWorkspace, message, setMessage, commit, clear } = useTaskWorkspace(get('model'), get('dataset'))
@@ -242,6 +244,14 @@ export default function TasksPage() {
     },
     [set],
   )
+  // Creation ends when the service accepts the task: continue on its detail
+  // page, and keep the draft here so another task can be created right away.
+  const openDetail = useCallback(
+    (taskId: string) => {
+      navigate(`/tasks/${encodeURIComponent(taskId)}`)
+    },
+    [navigate],
+  )
 
   const tabs = [
     { key: 'eval', label: t('tasks.evalTab'), panelId: 'tasks-eval-panel' },
@@ -252,7 +262,10 @@ export default function TasksPage() {
     <div className="page-enter flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">{t('tasks.library.title')}</h1>
+          <Link to="/tasks" className="inline-flex items-center gap-1 text-sm text-[var(--accent)]">
+            <ArrowLeft size={14} aria-hidden /> {t('tasks.center.title')}
+          </Link>
+          <h1 className="mt-1 text-xl font-semibold">{t('tasks.library.title')}</h1>
           <p className="mt-1 text-sm text-[var(--text-muted)]">{t('tasks.library.subtitle')}</p>
         </div>
         <ConfigLibraryTools
@@ -269,7 +282,6 @@ export default function TasksPage() {
           {t(`tasks.library.${message}`)}
         </p>
       )}
-      <ActiveTasksPanel onAdopt={handleAdopt} selectedTaskId={selected[tab]} />
       <Tabs
         keepMounted
         beforePanels={
@@ -319,6 +331,7 @@ export default function TasksPage() {
               active={tab === 'eval'}
               selectedTaskId={selected.eval}
               onSelect={(id) => handleAdopt('eval', id)}
+              onAccepted={openDetail}
             />
           ),
           'tasks-perf-panel': (
@@ -337,6 +350,7 @@ export default function TasksPage() {
               active={tab === 'perf'}
               selectedTaskId={selected.perf}
               onSelect={(id) => handleAdopt('perf', id)}
+              onAccepted={openDetail}
             />
           ),
         }}

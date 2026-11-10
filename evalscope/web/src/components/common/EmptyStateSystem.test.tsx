@@ -161,7 +161,7 @@ describe('EmptyStateSystem', () => {
 
       expect(currentLocation()).toBe('/performance')
       fireEvent.click(screen.getByRole('button', { name: 'Create a task' }))
-      expect(currentLocation()).toBe('/tasks?tab=perf')
+      expect(currentLocation()).toBe('/tasks/new?tab=perf')
     })
   })
 })
