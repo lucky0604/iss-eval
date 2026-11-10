@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evalscope
+  namespace: evalscope
+  labels:
+    app.kubernetes.io/name: evalscope
+spec:
+  # Exactly one replica: the outputs claim is ReadWriteOnce and the task
+  # registry assumes a single web writer. Use the Redis queue backend for
+  # durability, not for horizontal scaling.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: evalscope
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: evalscope
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      # A running task stops its AIPerf subprocess and the worker imports the
+      # partial tail before exit; a shorter grace period leaves orphans behind.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: web
+          # Replace with the release tag or a digest before applying; never
+          # deploy the floating ``latest`` tag.
+          image: evalscope:0.0.0_dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: evalscope-config
+          ports:
+            - name: http
+              containerPort: 9000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 4Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+        - name: worker
+          image: evalscope:0.0.0_dev
+          imagePullPolicy: IfNotPresent
+          # The image entrypoint dispatches "worker" to `evalscope worker`; it
+          # never starts the HTTP service, so no HTTP probe applies here.
+          command: ['worker']
+          envFrom:
+            - configMapRef:
+                name: evalscope-config
+          # The probe reads Redis for this worker's registration key, which RQ
+          # refreshes while the process is alive. Connect/read errors fail the
+          # probe instead of silently passing.
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os
+                  import redis
+                  connection = redis.from_url(os.environ['EVALSCOPE_REDIS_URL'])
+                  raise SystemExit(0 if connection.keys('rq:worker:*') else 1)
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              memory: 8Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: evalscope-data
+        - name: tmp
+          emptyDir: {}
+        # Optional read-only tokenizer example. Create the claim first and
+        # uncomment both the mount and the volume; the default manifest must
+        # stay applicable without it.
+        # - name: tokenizer
+        #   persistentVolumeClaim:
+        #     claimName: tokenizer-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evalscope
+  namespace: evalscope
+  labels:
+    app.kubernetes.io/name: evalscope
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: evalscope
+  ports:
+    - name: http
+      port: 9000
+      targetPort: http

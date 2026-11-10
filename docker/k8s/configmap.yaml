@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: evalscope-config
+  namespace: evalscope
+  labels:
+    app.kubernetes.io/name: evalscope
+data:
+  # AIPerf 0.13.0 is installed into the image at this path; the service probes it
+  # as an external executable and never imports it into the framework process.
+  EVALSCOPE_AIPERF_EXECUTABLE: /opt/aiperf-venv/bin/aiperf
+  EVALSCOPE_OUTPUT_DIR: /data/outputs
+  EVALSCOPE_CACHE: /data/cache/evalscope
+  EVALSCOPE_SERVICE_HOST: 0.0.0.0
+  EVALSCOPE_SERVICE_PORT: '9000'
+  # Web and worker must read the same queue; a mismatch silently splits the
+  # deployment into a producer with no consumer.
+  EVALSCOPE_QUEUE_BACKEND: redis
+  EVALSCOPE_REDIS_URL: redis://evalscope-redis:6379/0
+  EVALSCOPE_REDIS_QUEUE: evalscope
+  # The worker refreshes this registration TTL while it runs; the worker probe
+  # below fails once the key expires.
+  EVALSCOPE_RQ_WORKER_TTL: '420'
+  EVALSCOPE_CANCEL_TTL: '3600'
+  MODELSCOPE_CACHE: /data/cache/modelscope
+  HF_HOME: /data/cache/huggingface
+  HF_DATASETS_CACHE: /data/cache/huggingface/datasets
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: evalscope-data
+  namespace: evalscope
+  labels:
+    app.kubernetes.io/name: evalscope
+spec:
+  accessModes:
+    # ReadWriteOnce keeps one writer per outputs volume. Plan runs and their
+    # provenance archive assume exclusive ownership of a task directory, so do
+    # not mount this claim from a second Pod.
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: evalscope-redis-data
+  namespace: evalscope
+  labels:
+    app.kubernetes.io/name: evalscope
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
