@@ -1,0 +1,67 @@
+{
+  "kind": "iss-eval.perf-plan",
+  "schema_version": "1.0",
+  "name": "Small synthetic compatibility diagnostic",
+  "intent": "diagnostic",
+  "connection": {
+    "model": "served-model",
+    "url": "http://127.0.0.1:8000/v1",
+    "tokenizer_path": "/models/tokenizer",
+    "protocol": "openai_chat",
+    "streaming": true
+  },
+  "deployment": {
+    "mode": "aggregated",
+    "declared_max_model_len": 8192,
+    "evidence": "declared",
+    "routing_policy": "unknown",
+    "routing_coverage": "unknown"
+  },
+  "workload": {
+    "kind": "aiperf_synthetic",
+    "cases": [
+      {
+        "case_id": "input-1000",
+        "declared_total_input_tokens": 1000,
+        "shared_system_tokens": 900,
+        "unique_user_tokens": 100,
+        "target_prefix_ratio": 0.9
+      }
+    ],
+    "apply_chat_template": false,
+    "cache_bust": "none"
+  },
+  "load": {
+    "mode": "closed_loop",
+    "points": [
+      {
+        "concurrency": 1
+      },
+      {
+        "concurrency": 4
+      }
+    ],
+    "request_count": 16,
+    "output_token_limit": 32,
+    "repetitions": 1
+  },
+  "warmup": {
+    "enabled": true,
+    "request_count": 3,
+    "input_tokens": 256,
+    "output_token_limit": 16,
+    "concurrency": 1,
+    "failure_policy": "abort"
+  },
+  "priming": {
+    "policy": "none",
+    "timeout_seconds": 30
+  },
+  "execution": {
+    "order": "load_then_input"
+  },
+  "telemetry": {
+    "required": false,
+    "targets": []
+  }
+}

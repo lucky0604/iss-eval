@@ -112,5 +112,13 @@
   ],
   "num_runs": 1,
   "is_embedding": false,
-  "has_html": true
+  "has_html": true,
+  "test_type": "single",
+  "capabilities": {
+    "overview": { "availability": "available" },
+    "requests": { "availability": "available" },
+    "node_metrics": { "availability": "unknown" },
+    "configuration": { "availability": "available" },
+    "html": { "availability": "available" }
+  }
 }

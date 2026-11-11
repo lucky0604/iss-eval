@@ -21,6 +21,7 @@ from evalscope.perf.results.models import (
 
 from .common import ApiResponseModel
 from .reports import MetricSemantics
+from .tasks import PerfTestType, ResultCapabilities, TaskRawStatus
 
 
 def _finite_or_none(value: Optional[float]) -> Optional[float]:
@@ -53,6 +54,7 @@ class PerfRunSummary(ApiResponseModel):
     concurrency: Optional[List[int]] = None
     engine: Optional[Literal['evalscope', 'aiperf']] = None
     executor_version: Optional[str] = None
+    status: Optional[TaskRawStatus] = None
     quality: Optional[Literal['complete', 'partial', 'invalid']] = None
 
 
@@ -95,6 +97,8 @@ class PerfDetailResponse(ApiResponseModel):
     quality: Optional[Literal['complete', 'partial', 'invalid']] = None
     node_analysis: Optional[NodeMetricsAnalysis] = None
     quality_reasons: List[str] = Field(default_factory=list)
+    test_type: PerfTestType = 'unknown'
+    capabilities: ResultCapabilities = Field(default_factory=ResultCapabilities)
 
 
 class PerfRunItem(ApiResponseModel):

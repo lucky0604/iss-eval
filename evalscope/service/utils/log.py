@@ -134,6 +134,10 @@ def write_task_manifest(task_id: str, manifest: dict) -> str:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
         temporary_path = f.name
     os.replace(temporary_path, manifest_file)
+    # Best-effort read-model update; a broken index must never fail a task write.
+    from ..task_history import record_manifest
+
+    record_manifest(task_id, manifest)
     return manifest_file
 
 

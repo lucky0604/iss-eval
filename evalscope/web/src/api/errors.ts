@@ -26,12 +26,15 @@ export class DomainError extends Error {
   readonly kind: DomainErrorKind
   /** HTTP status code when the failure originated from an HTTP response. */
   readonly status?: number
+  /** Parsed error body, when the server sent structured details (for example plan diagnostics). */
+  readonly details?: unknown
 
-  constructor(kind: DomainErrorKind, message: string, status?: number) {
+  constructor(kind: DomainErrorKind, message: string, status?: number, details?: unknown) {
     super(message)
     this.name = 'DomainError'
     this.kind = kind
     this.status = status
+    this.details = details
     // Restore the prototype chain: extending built-ins (Error) breaks `instanceof`
     // when compiled down to ES5-style output, so pin it explicitly.
     Object.setPrototypeOf(this, DomainError.prototype)

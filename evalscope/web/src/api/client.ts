@@ -78,7 +78,7 @@ async function ensureOk(res: Response): Promise<void> {
   const body = await res.json().catch(() => ({ error: res.statusText }))
   const message: string = (body && typeof body.error === 'string' && body.error) || `HTTP ${res.status}`
   const kind = res.status >= 500 ? 'http-5xx' : 'http-4xx'
-  throw new DomainError(kind, message, res.status)
+  throw new DomainError(kind, message, res.status, body)
 }
 
 /**

@@ -42,7 +42,7 @@ it('requests exact labels and window and identifies uniformly sampled raw points
     window: { start_ns: 10, end_ns: 80 }, series: [{ node_id: 'p', role: 'prefill', engine: 'vllm', labels: { model: 'm' }, window_source: 'observed_request_bounds',
       metric: { engine: 'vllm', upstream_version: '0.10.2', name: 'vllm:num_requests_waiting', key: 'waiting_requests', kind: 'gauge', unit: 'requests', source_unit: 'requests', source_url: 'https://example.invalid' } }] }
   await act(async () => { render(<LocaleProvider><NodeWindowPanel analysis={analysis} taskId="task" subrunId="run" /></LocaleProvider>) })
-  expect(getCacheNodeSeries).toHaveBeenCalledWith('task', 'run', expect.objectContaining({ labels: { model: 'm' }, start: 10, end: 80 }))
+  expect(getCacheNodeSeries).toHaveBeenCalledWith('task', 'run', expect.objectContaining({ labels: { model: 'm' }, start: 10, end: 80 }), undefined)
   expect(screen.getByText(/Uniform index selection of raw samples: 2 \/ 1200/)).toHaveTextContent('Peaks may be omitted')
   expect(screen.getByRole('img', { name: 'Node metric time series' }).querySelectorAll('polyline')).toHaveLength(0)
 })

@@ -153,7 +153,7 @@ export default function Tabs({
           role="tablist"
           aria-orientation={orientation}
           className={cn(
-            'inline-flex self-start items-center gap-1 p-1 rounded-[var(--radius)] bg-[var(--bg-deep)] border border-[var(--border)]',
+            'inline-flex max-w-full flex-wrap self-start items-center gap-1 p-1 rounded-[var(--radius)] bg-[var(--bg-deep)] border border-[var(--border)]',
             className,
           )}
         >

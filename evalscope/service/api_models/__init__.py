@@ -17,6 +17,11 @@ from .common import (
     TaskSubmitResponse,
 )
 from .eval import BenchmarkEntry, BenchmarksResponse, EvalInvokeResponse
+from .experiment_summary import (
+    CacheExperimentSummaryResponse,
+    ExperimentCoverage,
+    ExperimentGroup,
+)
 from .perf import (
     CacheExperimentListResponse,
     CacheExperimentResponse,
@@ -38,6 +43,17 @@ from .perf import (
     PerfRunsListResponse,
     PerfRunSummary,
     PerfSinglePlanResponse,
+)
+from .perf_entries import PerfEntryListResponse, PerformanceResultEntry
+from .perf_plans import (
+    PerfPlanArchiveResponse,
+    PerfPlanExportResponse,
+    PerfPlanInvokeResponse,
+    PerfPlanPreviewResponse,
+    PerfPlanRunView,
+    PerfPlanSubmitResponse,
+    PlanDiagnosticView,
+    PlanRunSummary,
 )
 from .reports import (
     AnalysisResponse,
@@ -61,6 +77,22 @@ from .reports import (
     ReportMetric,
     ReportSummary,
     ValueRange,
+)
+from .tasks import (
+    AiPerfSingleConfigSnapshot,
+    AvailabilityState,
+    CacheExperimentConfigSnapshot,
+    EvalConfigSnapshot,
+    NativePerfConfigSnapshot,
+    PlanConfigSnapshot,
+    QueueConnectivity,
+    ResultAvailability,
+    ResultCapabilities,
+    TaskDetailResponse,
+    TaskIndexingState,
+    TaskListResponse,
+    TaskSummaryItem,
+    TaskSummaryResponse,
 )
 
 
@@ -116,20 +148,64 @@ class WebApiContracts(BaseModel):
     delete_perf_run_response: DeletePerfRunResponse
     active_task_info: ActiveTaskInfo
     list_active_tasks_response: ListActiveTasksResponse
+    task_summary_item: TaskSummaryItem
+    task_detail_response: TaskDetailResponse
+    task_list_response: TaskListResponse
+    task_summary_response: TaskSummaryResponse
+    result_capabilities: ResultCapabilities
+    result_availability: ResultAvailability
+    availability_state: AvailabilityState
+    eval_config_snapshot: EvalConfigSnapshot
+    native_perf_config_snapshot: NativePerfConfigSnapshot
+    plan_config_snapshot: PlanConfigSnapshot
+    aiperf_single_config_snapshot: AiPerfSingleConfigSnapshot
+    cache_experiment_config_snapshot: CacheExperimentConfigSnapshot
+    performance_result_entry: PerformanceResultEntry
+    perf_entry_list_response: PerfEntryListResponse
+    cache_experiment_summary_response: CacheExperimentSummaryResponse
+    experiment_coverage: ExperimentCoverage
+    experiment_group: ExperimentGroup
     metric_identity: MetricIdentity
     metric_display_kind: MetricDisplayKind
     metric_semantics: MetricSemantics
     value_range: ValueRange
     report_metric: ReportMetric
     execution_summary: ExecutionSummary
+    perf_plan_preview_response: PerfPlanPreviewResponse
+    perf_plan_export_response: PerfPlanExportResponse
+    perf_plan_archive_response: PerfPlanArchiveResponse
+    plan_diagnostic_view: PlanDiagnosticView
+    plan_run_summary: PlanRunSummary
+    perf_plan_invoke_response: PerfPlanInvokeResponse
+    perf_plan_run_view: PerfPlanRunView
+    perf_plan_submit_response: PerfPlanSubmitResponse
 
 
 __all__ = [
     'ActiveTaskInfo',
+    'AiPerfSingleConfigSnapshot',
     'AnalysisResponse',
     'ApiResponseModel',
+    'AvailabilityState',
     'BenchmarkEntry',
+    'CacheExperimentConfigSnapshot',
     'CacheExperimentResponse',
+    'CacheExperimentSummaryResponse',
+    'EvalConfigSnapshot',
+    'ExperimentCoverage',
+    'ExperimentGroup',
+    'NativePerfConfigSnapshot',
+    'PlanConfigSnapshot',
+    'PerfEntryListResponse',
+    'PerformanceResultEntry',
+    'QueueConnectivity',
+    'ResultAvailability',
+    'ResultCapabilities',
+    'TaskDetailResponse',
+    'TaskIndexingState',
+    'TaskListResponse',
+    'TaskSummaryItem',
+    'TaskSummaryResponse',
     'CacheExperimentListResponse',
     'CacheNodeMetricsResponse',
     'CacheNodeSeriesResponse',
@@ -153,11 +229,19 @@ __all__ = [
     'PerfEnginesResponse',
     'PerfInvokeResponse',
     'PerfLiveResponse',
+    'PerfPlanArchiveResponse',
+    'PerfPlanExportResponse',
+    'PerfPlanInvokeResponse',
+    'PerfPlanPreviewResponse',
     'PerfPlanResponse',
+    'PerfPlanRunView',
+    'PerfPlanSubmitResponse',
     'PerfSinglePlanResponse',
     'PerfRequestsResponse',
     'PerfRunsListResponse',
     'PredictionsResponse',
+    'PlanDiagnosticView',
+    'PlanRunSummary',
     'ProgressResponse',
     'TaskStatusResponse',
     'TaskSubmitResponse',

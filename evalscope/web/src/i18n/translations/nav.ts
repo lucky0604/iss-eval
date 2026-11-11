@@ -5,7 +5,7 @@ export const en: Dict = {
   benchmarks: 'Benchmarks',
   evaluations: 'Evaluations',
   performance: 'Performance',
-  tasks: 'Tasks',
+  tasks: 'Task Center',
 }
 
 export const zh: Dict = {
@@ -13,5 +13,5 @@ export const zh: Dict = {
   benchmarks: '基准测试',
   evaluations: '评估',
   performance: '性能',
-  tasks: '任务',
+  tasks: '任务中心',
 }

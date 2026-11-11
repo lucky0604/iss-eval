@@ -18,6 +18,7 @@ from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, 
 from evalscope.perf.experiments.orchestrator import CacheExperimentOutcome
 from evalscope.perf.integrations.aiperf.single_run import AIPerfSingleRunRequest, run_single
 from evalscope.perf.main import run_perf_benchmark
+from evalscope.perf.plans.execution import PerfPlanOutcome, PerfPlanRunRequest
 from evalscope.run import run_task
 from evalscope.service.api_models.common import ActiveTaskInfo
 from evalscope.utils.logger import get_logger
@@ -33,7 +34,7 @@ class ActiveTask:
     info: ActiveTaskInfo
     cancel_event: Any = None
     cleanup_event: threading.Event = field(default_factory=threading.Event)
-    external_outcome: Optional[ExecutionOutcome | CacheExperimentOutcome] = None
+    external_outcome: Optional[ExecutionOutcome | CacheExperimentOutcome | PerfPlanOutcome] = None
     stop_timeout: float = 0
 
 
@@ -389,14 +390,111 @@ def run_cache_experiment_in_subprocess(
     return result
 
 
+def _perf_plan_worker(
+    context: ExecutionContext, request: PerfPlanRunRequest, cancel_event: Any, start_event: Any
+) -> PerfPlanOutcome:
+    from evalscope.perf.experiments.prefix_workload import WorkloadCancelled
+    from evalscope.perf.experiments.tokenizer import HuggingFacePrefixTokenizer
+    from evalscope.perf.plans.execution import run_perf_plan
+    from evalscope.perf.plans.provenance import (
+        PlanExecutionConflict,
+        PlanIdentityError,
+        read_submission,
+        write_submission,
+    )
+
+    while not start_event.wait(timeout=0.1):
+        parent = multiprocessing.parent_process()
+        if parent is not None and not parent.is_alive():
+            return PerfPlanOutcome(
+                status='error',
+                quality='invalid',
+                plan_hash=request.plan.plan_hash,
+                completed_runs=0,
+                total_runs=request.plan.run_count,
+                cleanup_confirmed=True,
+            )
+
+    def stale(reason: str) -> PerfPlanOutcome:
+        """Refuse to execute a reservation whose accepted identity no longer compiles."""
+        submission = read_submission(context.output_dir)
+        if submission is not None:
+            write_submission(
+                context.output_dir,
+                submission.model_copy(update={'state': 'failed', 'reason': reason}),
+            )
+        return PerfPlanOutcome(
+            status='error',
+            quality='invalid',
+            plan_hash=request.plan.plan_hash,
+            completed_runs=0,
+            total_runs=request.plan.run_count,
+            cleanup_confirmed=True,
+            quality_reasons=[reason],
+        )
+
+    try:
+        if cancel_event.is_set():
+            raise WorkloadCancelled()
+        tokenizer = None
+        pool = None
+        tokenizer_id = None
+        template_id = None
+        needs_tokenizer = (
+            request.plan.workload_semantics == 'managed_token_prefix' or request.plan.normalized.warmup.enabled
+        )
+        if needs_tokenizer:
+            tokenizer = HuggingFacePrefixTokenizer(request.tokenizer_path)
+            pool = tokenizer.candidate_ids(request.max_token_pool, cancel_event)
+            tokenizer_id = tokenizer.tokenizer_hash
+            template_id = tokenizer.template_hash
+        return run_perf_plan(
+            request.plan,
+            context,
+            source_text=request.source_text,
+            tokenizer=tokenizer,
+            token_pool=pool,
+            tokenizer_id=tokenizer_id,
+            template_id=template_id,
+            alignment=request.alignment,
+            cancel_event=cancel_event,
+        )
+    except (PlanIdentityError, PlanExecutionConflict):
+        # A stale reservation or a second execution attempt: never rerun, never
+        # silently recompile into a different plan.
+        return stale('stale_plan_identity')
+    except WorkloadCancelled:
+        return PerfPlanOutcome(
+            status='stopped',
+            quality='partial',
+            plan_hash=request.plan.plan_hash,
+            completed_runs=0,
+            total_runs=request.plan.run_count,
+            cleanup_confirmed=True,
+            quality_reasons=['cancelled_before_start'],
+        )
+
+
+def run_perf_plan_in_subprocess(
+    context: ExecutionContext,
+    request: PerfPlanRunRequest,
+    task_meta: Optional[ActiveTaskInfo] = None,
+    finalize: Optional[Callable[[PerfPlanOutcome], None]] = None,
+) -> PerfPlanOutcome:
+    """Run a compiled plan under the same cancellation supervisor as other perf jobs."""
+    result = _run_controlled_subprocess(context, _perf_plan_worker, request, PerfPlanOutcome, task_meta, finalize)
+    assert isinstance(result, PerfPlanOutcome)
+    return result
+
+
 def _run_controlled_subprocess(
     context: ExecutionContext,
     worker: Callable[..., Any],
-    payload: ExternalInvocation | AIPerfArguments | AIPerfSingleRunRequest,
-    result_type: Type[ExecutionOutcome] | Type[CacheExperimentOutcome],
+    payload: ExternalInvocation | AIPerfArguments | AIPerfSingleRunRequest | PerfPlanRunRequest,
+    result_type: Type[ExecutionOutcome] | Type[CacheExperimentOutcome] | Type[PerfPlanOutcome],
     task_meta: Optional[ActiveTaskInfo],
     finalize: Optional[Callable[[Any], None]] = None,
-) -> ExecutionOutcome | CacheExperimentOutcome:
+) -> ExecutionOutcome | CacheExperimentOutcome | PerfPlanOutcome:
     if context.runtime is None:
         raise ValueError('External runtime is required')
     ctx = multiprocessing.get_context('spawn')

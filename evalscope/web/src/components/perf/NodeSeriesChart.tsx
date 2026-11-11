@@ -3,14 +3,16 @@ import type { CacheNodeSeriesResponse, NodeMetricWindow } from '@/api/generated/
 import { getCacheNodeSeries, getPerfNodeSeries } from '@/api/perf'
 import { useLocale } from '@/contexts/LocaleContext'
 
-export type NodeSeriesSource = { kind: 'experiment'; taskId: string; subrunId: string } | { kind: 'archive'; rootPath: string; path: string }
+export type NodeSeriesSource =
+  | { kind: 'experiment'; taskId: string; subrunId: string; rootPath?: string }
+  | { kind: 'archive'; rootPath: string; path: string }
 interface Props { source: NodeSeriesSource; series: NodeMetricWindow; maxGap: number; start?: number; end?: number }
 const labelsKey = (labels: Record<string, string>) => JSON.stringify(Object.entries(labels).sort(([a], [b]) => a.localeCompare(b)))
 
 export default function NodeSeriesChart({ source, series, maxGap, start, end }: Props) {
   const taskId = source.kind === 'experiment' ? source.taskId : undefined
   const subrunId = source.kind === 'experiment' ? source.subrunId : undefined
-  const rootPath = source.kind === 'archive' ? source.rootPath : undefined
+  const rootPath = source.rootPath
   const path = source.kind === 'archive' ? source.path : undefined
   const { locale } = useLocale()
   const zh = locale === 'zh'
@@ -23,7 +25,7 @@ export default function NodeSeriesChart({ source, series, maxGap, start, end }: 
     const filter = { nodeId: series.node_id, metricName: series.metric.name, labels: Object.fromEntries(JSON.parse(selectedLabels) as [string, string][]), start, end, signal: controller.signal }
     const request = rootPath !== undefined && path !== undefined
       ? getPerfNodeSeries(rootPath, path, filter)
-      : getCacheNodeSeries(taskId!, subrunId!, filter)
+      : getCacheNodeSeries(taskId!, subrunId!, filter, rootPath)
     request
       .then((value) => { if (active) { setData(value); setFailed(false) } }).catch(() => { if (active) setFailed(true) })
     return () => { active = false; controller.abort() }

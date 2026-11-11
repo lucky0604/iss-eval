@@ -11,6 +11,7 @@ import {
 import Field from '@/components/ui/Field'
 import { FORM_INPUT_CLASS, inputClass } from '@/components/ui/formStyles'
 import Button from '@/components/ui/Button'
+import PerfPlanImportPanel from '@/components/perf/PerfPlanImportPanel'
 
 interface Props {
   connection: ModelConnection
@@ -20,6 +21,8 @@ interface Props {
   onChange: (draft: AIPerfDraft) => void
   toolbar?: ReactNode
   onValidateConnection: () => FieldErrors
+  /** Called when a portable plan has been accepted and owns a task id. */
+  onPlanSubmitted?: (taskId: string) => void
 }
 
 type TextField = Exclude<keyof AIPerfDraft, 'nodes' | 'required' | 'mode' | 'deploymentMode' | 'runType' | 'prompts'>
@@ -33,7 +36,7 @@ const FIELD_LABELS: Record<TextField, string> = {
 const NODE_LABELS = { nodeId: 'tasks.aiperf.nodeId', url: 'tasks.aiperf.url', labels: 'tasks.aiperf.labels',
   bearerToken: 'tasks.aiperf.token' } as const
 
-export default function CacheExperimentForm({ connection, onSubmit, disabled, draft, onChange, toolbar, onValidateConnection }: Props) {
+export default function CacheExperimentForm({ connection, onSubmit, disabled, draft, onChange, toolbar, onValidateConnection, onPlanSubmitted }: Props) {
   const { t } = useLocale()
   const engines = useAsyncResource((signal) => getPerfEngines(signal), [])
   const capability = engines.data?.engines.find((item) => item.engine === 'aiperf')
@@ -128,6 +131,7 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
       {toolbar}
       <p className="text-sm" role="status">AIPerf 0.13.0: {engines.loading ? t('tasks.aiperf.checking') : capability?.available ? t('tasks.aiperf.available') : t('tasks.aiperf.unavailable')}
         {!capability?.available && (capability?.reason || engines.error) ? ` — ${capability?.reason || engines.error}` : ''}</p>
+      <PerfPlanImportPanel disabled={disabled} onSubmitted={onPlanSubmitted} />
       <fieldset disabled={disabled} className="space-y-4">
         <Field id="aiperf-runType" name="runType" labelKey="tasks.aiperf.runType">
           {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={draft.runType}

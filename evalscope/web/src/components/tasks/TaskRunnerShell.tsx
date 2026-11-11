@@ -13,6 +13,8 @@ interface FormRenderProps {
 export interface TaskSelectionProps {
   selectedTaskId: string | null
   onSelect: (taskId: string) => void
+  /** Called once the service has accepted the task, so the caller can open its detail page. */
+  onAccepted?: (taskId: string) => void
   active?: boolean
 }
 
@@ -48,6 +50,7 @@ export default function TaskRunnerShell({
   getLog,
   selectedTaskId,
   onSelect,
+  onAccepted,
   active = true,
 }: TaskRunnerShellProps) {
   const { t } = useLocale()
@@ -73,8 +76,9 @@ export default function TaskRunnerShell({
     onSelect(id)
     try {
       await submitTask(config, id)
-      // The service accepted the task; the monitor now follows it through
-      // /api/v1/tasks, so no invoke payload is kept here.
+      // The service accepted the task. Creation owns the form; the task's
+      // status, logs and results live on the detail page from here on.
+      onAccepted?.(id)
       setResult((previous) => (previous && previous.task_id !== id ? previous : null))
     } catch (error) {
       const rejected = isDomainError(error) && (error.status === 400 || error.status === 422)

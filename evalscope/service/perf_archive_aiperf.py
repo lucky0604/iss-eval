@@ -106,6 +106,7 @@ def build_summary(rel_path: str, directory: str) -> dict:
         'concurrency': [manifest.concurrency] if manifest.concurrency is not None else None,
         'engine': 'aiperf',
         'executor_version': result.executor_version,
+        'status': manifest.status,
         'quality': _quality(manifest, result),
     }
 

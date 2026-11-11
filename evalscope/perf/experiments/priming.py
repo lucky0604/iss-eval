@@ -24,6 +24,7 @@ class PrimingResult(BaseArgument):
     failed_prefix_id: Optional[int] = None
     reason: Optional[str] = None
     routing_coverage: Literal['unknown'] = 'unknown'
+    timeout_seconds: float = Field(default=30, gt=0, le=3600, allow_inf_nan=False)
 
 
 async def prime_prefixes(
@@ -45,7 +46,7 @@ async def prime_prefixes(
     if not workload.target_ratio and workload.primers:
         raise ValueError('A zero-ratio workload must not contain primers')
     if not workload.primers:
-        return PrimingResult(status='skipped')
+        return PrimingResult(status='skipped', timeout_seconds=timeout_seconds)
     base, endpoint = normalize_chat_url(arguments.url)
     url = base + endpoint
     headers = {}
@@ -56,7 +57,12 @@ async def prime_prefixes(
         for primer in workload.primers:
             parent = multiprocessing.parent_process()
             if (cancel_event is not None and cancel_event.is_set()) or (parent is not None and not parent.is_alive()):
-                return PrimingResult(status='cancelled', completed_prefix_ids=completed, reason='cancelled')
+                return PrimingResult(
+                    status='cancelled',
+                    completed_prefix_ids=completed,
+                    reason='cancelled',
+                    timeout_seconds=timeout_seconds,
+                )
             task = asyncio.create_task(request_stream_completion(session, url, arguments.model, primer.text, 1))
             try:
                 while not task.done():
@@ -65,7 +71,12 @@ async def prime_prefixes(
                     ):
                         task.cancel()
                         await asyncio.gather(task, return_exceptions=True)
-                        return PrimingResult(status='cancelled', completed_prefix_ids=completed, reason='cancelled')
+                        return PrimingResult(
+                            status='cancelled',
+                            completed_prefix_ids=completed,
+                            reason='cancelled',
+                            timeout_seconds=timeout_seconds,
+                        )
                     await asyncio.wait({task}, timeout=0.05)
                 result = task.result()
             finally:
@@ -74,10 +85,16 @@ async def prime_prefixes(
                     await asyncio.gather(task, return_exceptions=True)
             if result != 'completed':
                 return PrimingResult(
-                    status='error', completed_prefix_ids=completed, failed_prefix_id=primer.prefix_id, reason=result
+                    status='error',
+                    completed_prefix_ids=completed,
+                    failed_prefix_id=primer.prefix_id,
+                    reason=result,
+                    timeout_seconds=timeout_seconds,
                 )
             assert primer.prefix_id is not None
             completed.append(primer.prefix_id)
         if cancel_event is not None and cancel_event.is_set():
-            return PrimingResult(status='cancelled', completed_prefix_ids=completed, reason='cancelled')
-    return PrimingResult(status='completed', completed_prefix_ids=completed)
+            return PrimingResult(
+                status='cancelled', completed_prefix_ids=completed, reason='cancelled', timeout_seconds=timeout_seconds
+            )
+    return PrimingResult(status='completed', completed_prefix_ids=completed, timeout_seconds=timeout_seconds)

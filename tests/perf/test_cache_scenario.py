@@ -254,3 +254,58 @@ def test_normalized_prefix_collision_stops_before_any_requests(tmp_path: Path, m
     assert len(warnings) == 1 and 'tokenizer' in warnings[0]
     state = json.loads((tmp_path / 'scenario.json').read_text())
     assert state['status'] == 'error' and state['quality_reasons'] == ['invalid_prefix_workload']
+
+
+def test_primer_timeout_is_the_configured_value(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """F03: the plan's primer timeout reaches the primer and is recorded."""
+    import evalscope.perf.experiments.scenario as module
+    from evalscope.perf.experiments.priming import PrimingResult
+
+    root = tmp_path / 'run'
+    root.mkdir()
+    tokenizer = _Tokenizer()
+    tokenizer.directory = '/resolved/tokenizer'
+    captured: dict = {}
+
+    async def fake_prime(single, workload, cancel_event=None, timeout_seconds=30):
+        captured['timeout'] = timeout_seconds
+        return PrimingResult(status='error', reason='primer_timeout', timeout_seconds=timeout_seconds)
+
+    monkeypatch.setattr(module, 'probe_version', lambda context, cancel: '0.13.0')
+    monkeypatch.setattr(module, 'prime_prefixes', fake_prime)
+    monkeypatch.setattr(module, 'build_prefix_workload', lambda *args, **kwargs: type(
+        'Workload', (), {'requests': [], 'primers': [], 'model_dump': lambda self, **kw: {}}
+    )())
+    arguments = _config('http://127.0.0.1:1/v1')
+    arguments.cache_experiment.target_ratios = [0.8]
+    outcome = run_cache_scenario(
+        arguments,
+        _context(root),
+        CacheScenarioArguments(
+            target_ratio=0.8,
+            namespace='run',
+            tokenizer_id='fixture',
+            template_id='fixture-template',
+            primer_timeout_seconds=5,
+        ),
+        tokenizer,
+        list(range(200)),
+    )
+    assert captured['timeout'] == 5
+    assert outcome.status == 'error' and outcome.reason == 'primer_failed'
+    assert outcome.priming is not None and outcome.priming.timeout_seconds == 5
+    state = json.loads((root / 'scenario.json').read_text())
+    assert state['primer_timeout_seconds'] == 5
+    assert state['priming']['timeout_seconds'] == 5
+
+
+def test_primer_timeout_rejects_boolean_and_out_of_range_values() -> None:
+    with pytest.raises(ValueError):
+        CacheScenarioArguments(
+            target_ratio=0.8, namespace='run', tokenizer_id='t', template_id='x', primer_timeout_seconds=True
+        )
+    for value in (0, -1, 3601):
+        with pytest.raises(ValueError):
+            CacheScenarioArguments(
+                target_ratio=0.8, namespace='run', tokenizer_id='t', template_id='x', primer_timeout_seconds=value
+            )

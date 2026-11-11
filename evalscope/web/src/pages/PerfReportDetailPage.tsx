@@ -10,16 +10,17 @@ import Tabs from '@/components/ui/Tabs'
 import Card from '@/components/ui/Card'
 import Skeleton from '@/components/ui/Skeleton'
 import KpiStrip from '@/components/ui/KpiStrip'
-import LabelledField from '@/components/ui/LabelledField'
 import ErrorAlert from '@/components/ui/ErrorAlert'
 import PerfChartGroup from '@/components/perf/PerfChartGroup'
 import PerfRunsTab from '@/components/perf/PerfRunsTab'
 import NodeWindowPanel from '@/components/perf/NodeWindowPanel'
+import { CapabilityNotice, PerformanceQualityBanner, PerformanceResultHeader } from '@/components/perf/PerformanceResultShell'
+import { capabilityState, isCapabilityAvailable, resultTabLabelKey } from '@/domain/perf/capabilities'
 import { LATENCY_CHARTS, THROUGHPUT_CHARTS, perfRunMode } from '@/domain/perf/charts'
 import { formatTimestamp } from '@/utils/formatUtils'
 import { resolveProvider } from '@/domain/perf/providerResolution'
 import { formatMetric } from '@/domain/metric'
-import { ExternalLink, Lightbulb } from 'lucide-react'
+import { Lightbulb } from 'lucide-react'
 import type { PerfDetailResponse } from '@/api/types'
 
 type TabKey = 'overview' | 'charts' | 'runs' | 'nodes'
@@ -176,11 +177,24 @@ export default function PerfReportDetailPage() {
       ]
     : [
         { key: 'overview', label: t('perf.archive.overview'), panelId: 'perf-overview-panel' },
-        { key: 'charts', label: t('perf.archive.charts'), panelId: 'perf-charts-panel' },
+        ...(isCapabilityAvailable(data.capabilities, 'sweep')
+          ? [{ key: 'charts', label: t('perf.archive.charts'), panelId: 'perf-charts-panel' }]
+          : []),
         { key: 'runs', label: t('perf.archive.runsTab'), panelId: 'perf-runs-panel' },
       ]
 
-  if (data.engine === 'aiperf') tabs.push({ key: 'nodes', label: t('perf.archive.nodeMetrics'), panelId: 'perf-nodes-panel' })
+  // A node tab exists once the archive carries node data, or while collection
+  // is configured/pending so its reason stays reachable. An `unknown`
+  // capability is not enough: legacy archives without node data stay clean.
+  const nodeState = capabilityState(data.capabilities, 'node_metrics')
+  const showNodes = data.engine === 'aiperf' || isCapabilityAvailable(data.capabilities, 'node_metrics')
+    || nodeState.availability === 'pending'
+  if (showNodes) tabs.push({ key: 'nodes', label: t('perf.archive.nodeMetrics'), panelId: 'perf-nodes-panel' })
+
+  const requestsState = capabilityState(data.capabilities, 'requests')
+  const runsPanel = requestsState.availability === 'available' || requestsState.availability === 'pending'
+    ? <PerfRunsTab rootPath={rootPath} path={path} mode={runMode} />
+    : <CapabilityNotice state={requestsState} label={t(resultTabLabelKey('requests'))} />
 
   const overviewPanel = (
     <div className="flex flex-col gap-4">
@@ -252,46 +266,36 @@ export default function PerfReportDetailPage() {
 
   return (
     <div className="page-enter flex flex-col gap-4">
-      <Breadcrumb
-        items={[
+      <PerformanceResultHeader
+        breadcrumbs={[
           { label: t('nav.performance'), href: `/performance?root_path=${encodeURIComponent(rootPath)}` },
           { label: data.alias || data.model },
         ]}
+        testType={data.test_type}
+        title={data.alias || data.model || data.dataset || '—'}
+        meta={[
+          { label: t('eval.modelName'), value: data.model },
+          { label: t('perf.archive.provider'), value: identity.provider },
+          { label: t('perf.archive.protocol'), value: identity.protocol },
+          { label: t('perf.archive.endpoint'), value: endpoint },
+          { label: t('perf.archive.runsTab'), value: `${data.dataset} · ${data.num_runs} ${t(data.num_runs === 1 ? 'perf.archive.runSingular' : 'perf.archive.runs')}` },
+        ]}
+        quality={data.quality}
+        htmlUrl={data.has_html ? htmlUrl : null}
+        detail={(
+          <span className="type-caption-mono text-[var(--text-muted)]">
+            {formatTimestamp(data.generated_at, 'seconds')}
+            {data.engine ? ` · ${data.engine}` : ''}
+            {data.executor_version ? ` ${data.executor_version}` : ''}
+          </span>
+        )}
       />
+
+      <PerformanceQualityBanner status={null} quality={data.quality} reasons={data.quality_reasons} />
 
       {error && (
         <ErrorAlert>{error}</ErrorAlert>
       )}
-
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] p-5">
-        <div className="flex flex-col gap-1.5 min-w-0">
-          {/* Model alias is the primary identity; fall back to dataset, never
-              the raw path/timestamp, when the alias is absent. */}
-          <h1 className="type-title-md text-[var(--text)] break-words">{data.alias || data.model || data.dataset || '—'}</h1>
-          {/* Provider and Protocol as two independent, individually-labelled fields. */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <LabelledField label={t('eval.modelName')} value={data.model} />
-            <LabelledField label={t('perf.archive.provider')} value={identity.provider} />
-            <LabelledField label={t('perf.archive.protocol')} value={identity.protocol} />
-            {endpoint && <LabelledField label={t('perf.archive.endpoint')} value={endpoint} />}
-          </div>
-          <div className="type-caption-mono text-[var(--text-muted)]">
-            {data.dataset} · {data.num_runs}{' '}
-            {t(data.num_runs === 1 ? 'perf.archive.runSingular' : 'perf.archive.runs')} ·{' '}
-            {formatTimestamp(data.generated_at, 'seconds')}
-          </div>
-        </div>
-        <a
-          href={htmlUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] border border-[var(--border-md)] text-sm text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card2)] transition-colors shrink-0"
-        >
-          <ExternalLink size={14} />
-          {t('perf.archive.viewFullHtml')}
-        </a>
-      </div>
 
       <Tabs
         tabs={tabs}
@@ -300,8 +304,8 @@ export default function PerfReportDetailPage() {
         panels={{
           'perf-overview-panel': overviewPanel,
           ...(!singleRun ? { 'perf-charts-panel': chartsPanel } : {}),
-          'perf-runs-panel': <PerfRunsTab rootPath={rootPath} path={path} mode={runMode} />,
-          ...(data.engine === 'aiperf' ? { 'perf-nodes-panel': <div className="space-y-2">
+          'perf-runs-panel': runsPanel,
+          ...(showNodes ? { 'perf-nodes-panel': <div className="space-y-2">
             {data.quality_reasons?.length ? <p>{data.quality_reasons.join(', ')}</p> : null}
             <NodeWindowPanel key={`${rootPath}\0${path}`} analysis={data.node_analysis} archive={{ rootPath, path }} />
           </div> } : {}),

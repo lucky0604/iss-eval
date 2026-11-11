@@ -70,6 +70,10 @@ CONTRACT_REGISTRY = (
     ('PerfDetailResponse', 'evalscope/web/src/api/perf.ts', 'evalscope/service/blueprints/perf.py'),
     ('PerfRunsListResponse', 'evalscope/web/src/api/perf.ts', 'evalscope/service/blueprints/perf.py'),
     ('PerfRequestsResponse', 'evalscope/web/src/api/perf.ts', 'evalscope/service/blueprints/perf.py'),
+    ('PerfEntryListResponse', 'evalscope/web/src/api/perf.ts', 'evalscope/service/blueprints/perf.py'),
+    ('TaskListResponse', 'evalscope/web/src/api/tasks.ts', 'evalscope/service/blueprints/tasks.py'),
+    ('TaskSummaryResponse', 'evalscope/web/src/api/tasks.ts', 'evalscope/service/blueprints/tasks.py'),
+    ('TaskDetailResponse', 'evalscope/web/src/api/tasks.ts', 'evalscope/service/blueprints/tasks.py'),
     ('ListActiveTasksResponse', 'evalscope/web/src/api/tasks.ts', 'evalscope/service/blueprints/tasks.py'),
     ('ActiveTaskInfo', 'evalscope/web/src/api/tasks.ts', 'evalscope/service/blueprints/tasks.py'),
 )

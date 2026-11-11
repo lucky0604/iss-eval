@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from evalscope.perf.executors.arguments import AIPerfArguments
     from evalscope.perf.executors.models import ExternalRuntime
     from evalscope.perf.experiments.planner import CacheSubrunPlan
+    from evalscope.perf.plans.execution import PerfPlanRunRequest
 
     from ..api_models.common import ActiveTaskInfo
 
@@ -259,11 +260,27 @@ def execute_single_aiperf_job(
     return _execute(task_id, lambda: _run_single_aiperf(prepared, arguments, task_id, runtime))
 
 
+def execute_perf_plan_job(
+    task_id: str,
+    runtime: 'ExternalRuntime',
+    request_payload: 'PerfPlanRunRequest',
+    task_meta: 'ActiveTaskInfo',
+) -> Dict[str, Any]:
+    """Run a compiled portable performance plan."""
+    from ..blueprints.perf import _run_perf_plan, _run_perf_safely
+
+    def run() -> Dict[str, Any]:
+        return _run_perf_safely(task_id, lambda: _run_perf_plan(task_id, runtime, request_payload, task_meta))
+
+    return _execute(task_id, run)
+
+
 JOB_ENTRYPOINTS: Dict[str, Callable[..., Dict[str, Any]]] = {
     'eval': execute_eval_job,
     'perf': execute_native_perf_job,
     'cache_experiment': execute_cache_experiment_job,
     'single_aiperf': execute_single_aiperf_job,
+    'perf_plan': execute_perf_plan_job,
 }
 
 

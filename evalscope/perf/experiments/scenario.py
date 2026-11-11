@@ -45,12 +45,20 @@ class CacheScenarioArguments(BaseArgument):
     template_id: str = Field(min_length=1)
     tolerance_tokens: int = Field(default=0, ge=0, strict=True)
     input_tokens: Optional[int] = Field(default=None, gt=0, strict=True)
+    primer_timeout_seconds: float = Field(default=30, gt=0, le=3600, allow_inf_nan=False)
 
     @field_validator('target_ratio', mode='before')
     @classmethod
     def reject_boolean_ratio(cls, value: object) -> object:
         if isinstance(value, bool):
             raise ValueError('Scenario ratio must be numeric')
+        return value
+
+    @field_validator('primer_timeout_seconds', mode='before')
+    @classmethod
+    def reject_boolean_timeout(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError('Primer timeout must be numeric seconds')
         return value
 
 
@@ -116,6 +124,7 @@ def run_cache_scenario(
         'input_tokens': input_tokens,
         'workload_mode': cache_config.mode,
         'namespace': scenario.namespace,
+        'primer_timeout_seconds': scenario.primer_timeout_seconds,
         'routing_coverage': 'unknown',
         'template_match': 'unverified',
         'telemetry_sample_interval_seconds': arguments.telemetry.sample_interval_seconds,
@@ -209,7 +218,14 @@ def run_cache_scenario(
                 file.write(json.dumps({'text': item.text, 'output_length': arguments.load.output_token_limit}) + '\n')
         state['status'] = 'priming'
         publish()
-        priming = asyncio.run(prime_prefixes(single, workload, cancel_event=cancellation))
+        priming = asyncio.run(
+            prime_prefixes(
+                single,
+                workload,
+                cancel_event=cancellation,
+                timeout_seconds=scenario.primer_timeout_seconds,
+            )
+        )
         state['priming'] = priming.model_dump(mode='json')
         if priming.status == 'cancelled' or cancellation.is_set():
             raise WorkloadCancelled()

@@ -57,7 +57,8 @@ export default function PerfTaskPanel({
             <option value="evalscope">EvalScope</option><option value="aiperf">AIPerf</option>
           </select>
         </label>{engine === 'aiperf' ? <CacheExperimentForm connection={connection} onSubmit={onSubmit} disabled={disabled}
-          draft={aiperfDraft} onChange={onAIPerfChange} toolbar={aiperfToolbar} onValidateConnection={onValidateAIPerfConnection} /> : <PerfConfigForm
+          draft={aiperfDraft} onChange={onAIPerfChange} toolbar={aiperfToolbar} onValidateConnection={onValidateAIPerfConnection}
+          onPlanSubmitted={(taskId) => { selection.onSelect(taskId); selection.onAccepted?.(taskId) }} /> : <PerfConfigForm
           onSubmit={onSubmit}
           disabled={disabled}
           draft={draft}

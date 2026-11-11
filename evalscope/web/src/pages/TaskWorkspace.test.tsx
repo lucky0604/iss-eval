@@ -239,7 +239,7 @@ describe('Task workspace', () => {
   it('reports a write failure instead of claiming a configuration was saved', () => {
     mount()
     fillConnection()
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    vi.spyOn(Object.getPrototypeOf(localStorage), 'setItem').mockImplementation(() => {
       throw new Error('Quota')
     })
     save('Server', 'Model connection')

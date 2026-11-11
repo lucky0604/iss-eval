@@ -32,6 +32,8 @@ from evalscope.perf.integrations.aiperf.single_run import (
     probe_version,
     validate_single_run_configuration,
 )
+from evalscope.perf.plans.execution import PerfPlanRunRequest, display_arguments
+from evalscope.perf.plans.provenance import PlanExecutionConflict, PlanIdentityError
 from evalscope.perf.plugin.api.base import ApiPluginBase
 from evalscope.perf.plugin.registry import ApiRegistry, DatasetRegistry
 from evalscope.perf.results.aiperf_import import (
@@ -57,6 +59,7 @@ from evalscope.service.api_models import (
     ActiveTaskInfo,
     CacheExperimentListResponse,
     CacheExperimentResponse,
+    CacheExperimentSummaryResponse,
     CacheNodeMetricsResponse,
     CacheNodeSeriesResponse,
     CacheRepetitionsResponse,
@@ -69,9 +72,15 @@ from evalscope.service.api_models import (
     LogResponse,
     PerfDetailResponse,
     PerfEnginesResponse,
+    PerfEntryListResponse,
     PerfInvokeResponse,
     PerfLiveResponse,
+    PerfPlanArchiveResponse,
+    PerfPlanExportResponse,
+    PerfPlanInvokeResponse,
+    PerfPlanPreviewResponse,
     PerfPlanResponse,
+    PerfPlanSubmitResponse,
     PerfRequestsResponse,
     PerfRunsListResponse,
     PerfSinglePlanResponse,
@@ -84,6 +93,18 @@ from evalscope.utils.uri_utils import sanitize_endpoint, validate_http_endpoint
 
 from .. import perf_archive
 from ..perf_archive import PerfArchiveError
+from ..perf_plans import (
+    MAX_ARCHIVE_RUN_PAGE,
+    PlanRejected,
+    build_export,
+    build_preview,
+    load_archive,
+    mark_enqueue_failed,
+    mark_enqueued,
+    prepare_invoke,
+    reserve_invoke,
+    run_normalized_dir,
+)
 from ..responses import json_response
 from ..utils import (
     OUTPUT_DIR,
@@ -99,6 +120,7 @@ from ..utils import (
     get_log_content,
     get_task_queue,
     list_active_tasks,
+    log,
     read_task_manifest,
     run_in_subprocess,
     run_perf_wrapper,
@@ -108,7 +130,12 @@ from ..utils import (
     validate_task_id,
     write_task_result,
 )
-from ..utils.process import run_cache_experiment_in_subprocess, run_single_aiperf_in_subprocess, task_is_cancelling
+from ..utils.process import (
+    run_cache_experiment_in_subprocess,
+    run_perf_plan_in_subprocess,
+    run_single_aiperf_in_subprocess,
+    task_is_cancelling,
+)
 
 logger = get_logger()
 
@@ -116,6 +143,15 @@ logger = get_logger()
 def _root_path() -> str:
     """Resolve the outputs root: query param > app config > OUTPUT_DIR."""
     return request.args.get('root_path', current_app.config.get('OUTPUTS_ROOT') or OUTPUT_DIR)
+
+
+def _experiment_root() -> str:
+    """Root for read-only experiment archives; defaults to the service outputs dir.
+
+    Unlike execution endpoints, this never resolves a client task id against a
+    different root implicitly: every child request must carry the same root.
+    """
+    return request.args.get('root_path') or log.OUTPUT_DIR
 
 
 def _build_perf_table(result, api_type: str = None) -> str:
@@ -264,7 +300,20 @@ def get_cache_experiment(task_id: str):
     from ..perf_experiments import load_experiment
 
     try:
-        return json_response(CacheExperimentResponse, load_experiment(task_id))
+        return json_response(CacheExperimentResponse, load_experiment(task_id, _experiment_root()))
+    except FileNotFoundError:
+        return jsonify({'error': 'Experiment not found'}), 404
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid experiment data or task ID'}), 400
+
+
+@bp_perf.route('/experiments/<task_id>/summary', methods=['GET'])
+def get_cache_experiment_summary(task_id: str):
+    """Read plan-wide counts that do not depend on matrix pagination."""
+    from ..perf_experiments import load_summary
+
+    try:
+        return json_response(CacheExperimentSummaryResponse, load_summary(task_id, _experiment_root()))
     except FileNotFoundError:
         return jsonify({'error': 'Experiment not found'}), 404
     except (ValueError, OSError):
@@ -277,7 +326,9 @@ def delete_cache_experiment(task_id: str):
     from ..perf_experiments import load_experiment
 
     try:
-        load_experiment(task_id)
+        load_experiment(task_id, log.OUTPUT_DIR)
+        if os.path.realpath(_experiment_root()) != os.path.realpath(log.OUTPUT_DIR):
+            return jsonify({'error': 'External archives are read-only'}), 400
         if task_id in active_task_ids():
             return jsonify({'error': 'Cannot delete an active task'}), 409
         run_dir = task_file_path(task_id, 'perf')
@@ -298,7 +349,8 @@ def get_cache_experiment_report(task_id: str):
     from ..perf_experiments import _load_planned_scenario, _scenario_normalized_path, load_experiment
 
     try:
-        experiment = load_experiment(task_id)
+        root = _experiment_root()
+        experiment = load_experiment(task_id, root)
 
         def rows() -> Iterator[tuple]:
             for item, state in zip(experiment.plan.subruns, experiment.state.subruns):
@@ -306,16 +358,16 @@ def get_cache_experiment_report(task_id: str):
                 request_groups = None
                 if state.scenario:
                     try:
-                        scenario = _load_planned_scenario(task_id, item)
+                        scenario = _load_planned_scenario(root, task_id, item)
                         if scenario.cache and scenario.cache.availability == 'available':
-                            request_groups = request_cache_groups(_scenario_normalized_path(task_id, item))
+                            request_groups = request_cache_groups(_scenario_normalized_path(root, task_id, item))
                     except (OSError, ValueError, sqlite3.Error):
                         pass
 
                 def request_rows(run: CacheSubrunPlan) -> Iterator[Optional[PerfRequestRecord]]:
                     offset = 0
                     try:
-                        path = _scenario_normalized_path(task_id, run)
+                        path = _scenario_normalized_path(root, task_id, run)
                         while True:
                             total, records = query_aiperf_requests(path, offset=offset, limit=500)
                             yield from records
@@ -428,7 +480,10 @@ def get_cache_repetitions(task_id: str, subrun_id: str):
         offset = int(request.args.get('offset', '0'))
         limit = int(request.args.get('limit', '100'))
         metric = request.args.get('metric', 'time_to_first_token')
-        return json_response(CacheRepetitionsResponse, load_repetition_page(task_id, subrun_id, metric, offset, limit))
+        return json_response(
+            CacheRepetitionsResponse,
+            load_repetition_page(task_id, subrun_id, metric, offset, limit, _experiment_root()),
+        )
     except FileNotFoundError:
         return jsonify({'error': 'Experiment not found'}), 404
     except (ValueError, OSError):
@@ -441,7 +496,7 @@ def get_cache_scenario(task_id: str, subrun_id: str):
     from ..perf_experiments import load_scenario
 
     try:
-        return json_response(CacheScenarioResponse, load_scenario(task_id, subrun_id))
+        return json_response(CacheScenarioResponse, load_scenario(task_id, subrun_id, _experiment_root()))
     except FileNotFoundError:
         return jsonify({'error': 'Scenario not found'}), 404
     except (ValueError, OSError, sqlite3.Error):
@@ -454,7 +509,7 @@ def get_cache_scenario_requests(task_id: str, subrun_id: str):
     from ..perf_experiments import scenario_path
 
     try:
-        _, path = scenario_path(task_id, subrun_id)
+        _, path = scenario_path(task_id, subrun_id, _experiment_root())
         offset = int(request.args.get('offset', '0'))
         limit = int(request.args.get('limit', '100'))
         total, rows = query_aiperf_requests(path, offset=offset, limit=limit, phase=request.args.get('phase'))
@@ -473,7 +528,7 @@ def get_cache_scenario_request_groups(task_id: str, subrun_id: str):
     from ..perf_experiments import scenario_path
 
     try:
-        _, path = scenario_path(task_id, subrun_id)
+        _, path = scenario_path(task_id, subrun_id, _experiment_root())
         return json_response(CacheRequestGroupsResponse, request_cache_groups(path).model_dump(mode='json'))
     except FileNotFoundError:
         return jsonify({'error': 'Scenario results not found'}), 404
@@ -536,7 +591,7 @@ def get_cache_node_series(task_id: str, subrun_id: str):
     from ..perf_experiments import scenario_path
 
     try:
-        _, path = scenario_path(task_id, subrun_id)
+        _, path = scenario_path(task_id, subrun_id, _experiment_root())
         return _node_series(path)
     except FileNotFoundError:
         return jsonify({'error': 'Scenario results not found'}), 404
@@ -554,7 +609,7 @@ def get_cache_scenario_metrics(task_id: str, subrun_id: str):
     from ..perf_experiments import scenario_path
 
     try:
-        _, path = scenario_path(task_id, subrun_id)
+        _, path = scenario_path(task_id, subrun_id, _experiment_root())
         return _node_metrics_page(path)
     except FileNotFoundError:
         return jsonify({'error': 'Scenario results not found'}), 404
@@ -800,6 +855,412 @@ def validate_single_aiperf():
             'warnings': warnings,
         },
     )
+
+
+def _plan_submission() -> tuple[str, dict]:
+    """Read the raw plan text and its acknowledgement list from one JSON body."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise PlanRejected(400, 'Request body must be a JSON object')
+    content = body.get('content')
+    if not isinstance(content, str):
+        raise PlanRejected(400, 'content must carry the original JSON text of the plan')
+    acknowledged = body.get('acknowledged') or []
+    if not isinstance(acknowledged, list) or any(not isinstance(item, str) for item in acknowledged):
+        raise PlanRejected(400, 'acknowledged must be a list of diagnostic codes')
+    return content, body
+
+
+@bp_perf.route('/plans/preview', methods=['POST'])
+def preview_perf_plan():
+    """Compile and preflight a portable plan without sending inference requests."""
+    try:
+        content, body = _plan_submission()
+        offset = int(request.args.get('offset', '0'))
+        limit = int(request.args.get('limit', '100'))
+        preview = build_preview(
+            content,
+            engine_available=_aiperf_runtime() is not None,
+            offset=offset,
+            limit=limit,
+            acknowledged=body.get('acknowledged') or [],
+        )
+    except PlanRejected as error:
+        return jsonify(error.payload()), error.status
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid plan preview request'}), 400
+    return json_response(PerfPlanPreviewResponse, preview)
+
+
+@bp_perf.route('/plans/export', methods=['POST'])
+def export_perf_plan():
+    """Return a deterministic, credential-free serialization of the normalized plan."""
+    try:
+        content, _ = _plan_submission()
+        exported = build_export(content, engine_available=_aiperf_runtime() is not None)
+    except PlanRejected as error:
+        return jsonify(error.payload()), error.status
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid plan export request'}), 400
+    return json_response(PerfPlanExportResponse, exported)
+
+
+def _run_perf_plan(
+    task_id: str,
+    runtime: ExternalRuntime,
+    request_payload: PerfPlanRunRequest,
+    task_meta: ActiveTaskInfo,
+) -> dict:
+    """Execute a compiled plan and persist its terminal payload."""
+    output_dir = task_file_path(task_id, 'perf')
+    context = ExecutionContext(
+        task_id=task_id,
+        output_dir=output_dir,
+        runtime=runtime,
+        expected_plan_hash=request_payload.plan.plan_hash,
+    )
+    outcome = run_perf_plan_in_subprocess(
+        context,
+        request_payload,
+        task_meta=task_meta,
+        finalize=lambda result: finish_task(task_id, result.status),
+    )
+    payload = {'status': outcome.status, 'task_id': task_id, 'result': outcome.model_dump(mode='json')}
+    return _persist_perf_payload(task_id, payload)
+
+
+def _queue_snapshot(task_id: str) -> Optional[dict]:
+    """Return the queue's own view of one task, or ``None`` when it cannot answer."""
+    try:
+        return get_task_queue().get(task_id)
+    except QueueUnavailableError:
+        return None
+
+
+def _plan_meta(task_id: str, prepared) -> tuple[ActiveTaskInfo, PerfPlanRunRequest]:
+    arguments = display_arguments(prepared.plan)
+    meta = build_task_info(task_id, 'perf', arguments, prepared.plan.normalized.name, engine='aiperf')
+    payload = PerfPlanRunRequest(
+        plan=prepared.plan,
+        source_text=prepared.source_text,
+        tokenizer_path=prepared.plan.normalized.connection.tokenizer_path,
+        alignment=prepared.alignment,
+    )
+    return meta, payload
+
+
+def _duplicate_response(task_id: str, state: str, reason: Optional[str]) -> Any:
+    """Answer a repeated submission with the state the task really owns."""
+    return json_response(
+        PerfPlanSubmitResponse,
+        {
+            'task_id': task_id,
+            'state': state,
+            'duplicate': True,
+            'message': reason or 'This task ID already owns the submitted plan',
+        },
+        status=202,
+    )
+
+
+def _enqueue_plan(
+    prepared,
+    submission,
+    task_id: str,
+    meta: ActiveTaskInfo,
+    request_payload: PerfPlanRunRequest,
+    runtime: ExternalRuntime,
+) -> Any:
+    """Hand the reserved plan to the queue and record a definite failure.
+
+    A failed enqueue keeps the reservation with ``state=failed`` so the same
+    task ID can be retried with the same plan identity. An unknown queue answer
+    is never turned into a silent re-submit.
+    """
+    job = TaskJob('perf_plan', (task_id, runtime, request_payload, meta))
+    try:
+        info = get_task_queue().submit(task_id, 'perf', meta, job)
+    except ValueError:
+        existing = _queue_snapshot(task_id)
+        if existing is not None:
+            mark_enqueued(prepared, log.OUTPUT_DIR, submission)
+            return _duplicate_response(task_id, 'queued', 'Task is already queued or running')
+        mark_enqueue_failed(prepared, log.OUTPUT_DIR, submission, 'queue_conflict')
+        return jsonify({'error': 'Task is already queued or running', 'state': 'error', 'retryable': True}), 409
+    except QueueFullError:
+        mark_enqueue_failed(prepared, log.OUTPUT_DIR, submission, 'queue_full')
+        return jsonify({'error': 'Task queue is full; retry later', 'state': 'error', 'retryable': True}), 429
+    except QueueUnavailableError as error:
+        logger.error(f'[{task_id}] Task queue unavailable: {error}')
+        mark_enqueue_failed(prepared, log.OUTPUT_DIR, submission, 'queue_unavailable')
+        return jsonify({'error': 'Task queue is unavailable', 'state': 'error', 'retryable': True}), 503
+    mark_enqueued(prepared, log.OUTPUT_DIR, submission)
+    return json_response(
+        PerfPlanSubmitResponse,
+        {
+            'task_id': task_id,
+            'state': 'queued',
+            'duplicate': False,
+            'enqueued_at': info.get('enqueued_at'),
+            'queue_position': info.get('queue_position'),
+        },
+        status=202,
+    )
+
+
+@bp_perf.route('/plans/invoke', methods=['POST'])
+def invoke_perf_plan():
+    """Submit a portable plan; the server recompiles it and never trusts client validation."""
+    task_id = request.headers.get('EvalScope-Task-Id')
+    runtime = _aiperf_runtime()
+    try:
+        validate_task_id(task_id)
+        content, body = _plan_submission()
+        prepared = prepare_invoke(
+            content,
+            task_id=task_id,
+            outputs_root=log.OUTPUT_DIR,
+            engine_available=runtime is not None,
+            acknowledged=body.get('acknowledged') or [],
+            expected_plan_hash=body.get('expected_plan_hash') or request.headers.get('EvalScope-Plan-Hash'),
+            queued=_queue_snapshot(task_id) is not None,
+        )
+    except PlanRejected as error:
+        return jsonify(error.payload()), error.status
+    except ValueError:
+        return jsonify({'error': 'Invalid plan submission'}), 400
+
+    if prepared.duplicate:
+        return _duplicate_response(task_id, prepared.state, prepared.state_reason)
+
+    if not prepared.retry:
+        try:
+            os.makedirs(log.OUTPUT_DIR, exist_ok=True)
+            os.mkdir(os.path.join(log.OUTPUT_DIR, task_id))
+        except FileExistsError:
+            # Another request created this ID first: report its real state
+            # instead of starting a second execution.
+            try:
+                prepared = prepare_invoke(
+                    content,
+                    task_id=task_id,
+                    outputs_root=log.OUTPUT_DIR,
+                    engine_available=runtime is not None,
+                    acknowledged=body.get('acknowledged') or [],
+                    expected_plan_hash=body.get('expected_plan_hash') or request.headers.get('EvalScope-Plan-Hash'),
+                    queued=_queue_snapshot(task_id) is not None,
+                )
+            except PlanRejected as error:
+                return jsonify(error.payload()), error.status
+            return _duplicate_response(task_id, prepared.state, prepared.state_reason)
+        except OSError:
+            return jsonify({'error': 'Failed to create the task directory'}), 500
+
+    try:
+        submission = reserve_invoke(prepared, log.OUTPUT_DIR)
+    except (PlanIdentityError, PlanExecutionConflict):
+        return jsonify({'error': 'Task ID already exists'}), 409
+    except (OSError, ValueError):
+        logger.exception(f'[{task_id}] Failed to persist the plan identity')
+        return jsonify({'error': 'Failed to persist the plan identity'}), 500
+
+    create_log_file(task_id, os.path.join('perf', 'benchmark.log'))
+    meta, request_payload = _plan_meta(task_id, prepared)
+    if not _async_requested():
+        try:
+            payload = _run_perf_plan(task_id, runtime, request_payload, meta)
+        except Exception as error:
+            return jsonify(_perf_crash_payload(task_id, error)), 500
+        return json_response(PerfPlanInvokeResponse, payload)
+    return _enqueue_plan(prepared, submission, task_id, meta, request_payload, runtime)
+
+
+def _plan_location_args() -> dict:
+    """Read the optional path form of a plan request.
+
+    ``root_path`` + ``path`` lets any outputs root list and open its own plans.
+    Without them the route's task id resolves under the service root.
+    """
+    return {'root_path': request.args.get('root_path') or None, 'rel_path': request.args.get('path') or None}
+
+
+def _render_plan_archive(task_id: Optional[str]) -> Any:
+    try:
+        offset = int(request.args.get('offset', '0'))
+        limit = int(request.args.get('limit', '100'))
+        archive = load_archive(
+            task_id,
+            log.OUTPUT_DIR,
+            offset=offset,
+            limit=limit,
+            queued=_queue_snapshot(task_id) is not None if task_id else None,
+            **_plan_location_args(),
+        )
+    except FileNotFoundError:
+        return jsonify({'error': 'Plan archive not found'}), 404
+    except PlanRejected as error:
+        return jsonify(error.payload()), error.status
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid plan archive or task ID'}), 400
+    return json_response(PerfPlanArchiveResponse, archive)
+
+
+def _render_run_requests(task_id: Optional[str], run_id: Optional[str]) -> Any:
+    try:
+        resolved_run = run_id or request.args.get('run_id') or ''
+        normalized = run_normalized_dir(log.OUTPUT_DIR, task_id, resolved_run, **_plan_location_args())
+        offset = int(request.args.get('offset', '0'))
+        limit = int(request.args.get('limit', '100'))
+        total, rows = query_aiperf_requests(
+            str(normalized), offset=offset, limit=limit, phase=request.args.get('phase')
+        )
+    except FileNotFoundError:
+        return jsonify({'error': 'Run results not found'}), 404
+    except (ValueError, OSError, sqlite3.Error):
+        return jsonify({'error': 'Invalid request page or run identity'}), 400
+    return json_response(CacheRequestsResponse, {'total': total, 'offset': offset, 'limit': limit, 'requests': rows})
+
+
+def _plan_report_rows(archive) -> Iterator[tuple]:
+    """Yield one bounded request sample per readable run, never the whole archive."""
+    for run in archive.runs:
+        requests: list = []
+        if run.requests_available:
+            try:
+                normalized = run_normalized_dir(log.OUTPUT_DIR, archive.task_id, run.run_id)
+                _, requests = query_aiperf_requests(str(normalized), offset=0, limit=100)
+            except (OSError, ValueError, sqlite3.Error):
+                requests = []
+        yield run, requests
+
+
+def _render_plan_report(task_id: Optional[str]) -> Any:
+    try:
+        archive = load_archive(
+            task_id,
+            log.OUTPUT_DIR,
+            offset=0,
+            limit=MAX_ARCHIVE_RUN_PAGE,
+            queued=_queue_snapshot(task_id) is not None if task_id else None,
+            **_plan_location_args(),
+        )
+    except FileNotFoundError:
+        return jsonify({'error': 'Plan archive not found'}), 404
+    except PlanRejected as error:
+        return jsonify(error.payload()), error.status
+    except (ValueError, OSError):
+        return jsonify({'error': 'Invalid plan archive or task ID'}), 400
+    html = stream_template_string(
+        """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Performance plan</title></head><body>
+<h1>Performance plan: {{ archive.task_id }}</h1>
+<p>State: {{ archive.state }}{% if archive.state_reason %} ({{ archive.state_reason }}){% endif %};
+lifecycle: {{ archive.status or 'not started' }}; data quality: {{ archive.quality or 'unavailable' }};
+completed runs: {{ archive.completed_runs }}/{{ archive.total_runs }};
+phase: {{ archive.phase or 'idle' }}{% if archive.current_run %}, current run {{ archive.current_run }}{% endif %}.</p>
+<p>Plan hash: {{ archive.plan_hash }}; compiler: {{ archive.compiler_version }};
+contract: {{ archive.contract_version }}; workload: {{ archive.workload_semantics or 'unavailable' }}.</p>
+<p>Requested parameters are the normalized plan; effective parameters come from the archive. Declared
+deployment facts are not measured facts, a target reuse ratio is not an observed cache hit, and percentiles
+are never averaged across runs.</p>
+{% if archive.quality_reasons %}<p>Quality reasons: {{ archive.quality_reasons|join(', ') }}</p>{% endif %}
+{% if archive.effective %}<p>Effective identity: tokenizer content
+{{ archive.effective.tokenizer.content_hash or 'unknown' }}, template {{ archive.effective.tokenizer.template_hash or 'unknown' }},
+AIPerf {{ archive.effective.aiperf_version or 'unknown' }}, identity version {{ archive.effective.identity_version }},
+deployment evidence {{ archive.effective.deployment_evidence }}.</p>{% else %}
+<p>Effective identity: unavailable (the plan never started).</p>{% endif %}
+{% if archive.warmup %}<p>Warmup: {{ archive.warmup.status }}; requests {{ archive.warmup.completed_requests }}/{{ archive.warmup.request_count }};
+concurrency {{ archive.warmup.concurrency }}; input tokens {{ archive.warmup.total_input_tokens }};
+output limit {{ archive.warmup.output_token_limit }}{% if archive.warmup.reason %}; reason {{ archive.warmup.reason }}{% endif %}.</p>{% endif %}
+<p>Reuse check: <em>declared</em> is the ratio the plan sent, <em>observed</em> comes from server usage. A
+<em>verified</em> run only means this run's observation fell inside the tolerance; it does not prove every replica
+is warm or that the environment is comparable. A run without this record predates the check and stays
+not recorded.</p>
+<table border="1"><thead><tr><th>Order</th><th>Run</th><th>ISL / shared / unique</th><th>OSL</th><th>Concurrency</th>
+<th>Requests</th><th>Primer</th><th>Repetition</th><th>Status</th><th>Quality</th><th>Reuse check</th>
+<th>Declared reuse</th><th>Observed reuse</th><th>Delta</th><th>Tolerance</th><th>Observation required</th>
+<th>Reason</th></tr></thead><tbody>
+{% for run in archive.runs %}{% set cache = run.cache_verification %}<tr><td>{{ run.order }}</td><td>{{ run.run_id }}</td>
+<td>{{ run.input_tokens if run.input_tokens is not none else 'unavailable' }} /
+{{ run.shared_system_tokens if run.shared_system_tokens is not none else 'unavailable' }} /
+{{ run.unique_user_tokens if run.unique_user_tokens is not none else 'unavailable' }}</td>
+<td>{{ run.output_token_limit }}</td><td>{{ run.concurrency }}</td><td>{{ run.formal_requests }}</td>
+<td>{{ run.primer_requests }}</td><td>{{ run.repetition }}</td><td>{{ run.status }}</td>
+<td>{{ run.quality or 'unavailable' }}</td>
+<td>{% if cache %}{{ cache.status }}{% else %}not recorded{% endif %}</td>
+<td>{% if cache and cache.declared_ratio is not none %}{{ '%.1f%%'|format(cache.declared_ratio * 100) }}{% elif cache %}unavailable{% else %}not recorded{% endif %}</td>
+<td>{% if cache and cache.observed_ratio is not none %}{{ '%.1f%%'|format(cache.observed_ratio * 100) }}{% elif cache %}unavailable{% else %}not recorded{% endif %}</td>
+<td>{% if cache and cache.delta is not none %}{{ '%+.1f pp'|format(cache.delta * 100) }}{% elif cache %}unavailable{% else %}not recorded{% endif %}</td>
+<td>{% if cache %}{{ '%.1f pp'|format(cache.tolerance * 100) }}{% else %}not recorded{% endif %}</td>
+<td>{% if cache %}{{ 'yes' if cache.required else 'no' }}{% else %}not recorded{% endif %}</td>
+<td>{{ run.reason or 'none' }}</td></tr>{% endfor %}
+</tbody></table>
+{% if archive.total_runs > archive.runs|length %}<p>Showing {{ archive.runs|length }} of {{ archive.total_runs }} planned runs;
+use the paginated archive API for the rest.</p>{% endif %}
+{% for run, requests in rows %}{% if requests %}<details><summary>Run {{ run.run_id }} requests (first {{ requests|length }})</summary>
+<table border="1"><thead><tr><th>Index</th><th>Phase</th><th>Status</th><th>Latency</th><th>TTFT</th>
+<th>Input tokens</th><th>Output tokens</th><th>Cached tokens</th></tr></thead><tbody>
+{% for record in requests %}<tr><td>{{ record.index }}</td><td>{{ record.phase }}</td><td>{{ record.status }}</td>
+<td>{{ record.latency_seconds if record.latency_seconds is not none else 'unavailable' }}</td>
+<td>{{ record.ttft_seconds if record.ttft_seconds is not none else 'unavailable' }}</td>
+<td>{{ record.prompt_tokens if record.prompt_tokens is not none else 'unavailable' }} ({{ record.prompt_tokens_source or 'unavailable' }})</td>
+<td>{{ record.output_tokens if record.output_tokens is not none else 'unavailable' }} ({{ record.output_tokens_source or 'unavailable' }})</td>
+<td>{{ record.cached_tokens if record.cached_tokens is not none else 'unavailable' }}</td></tr>{% endfor %}
+</tbody></table></details>{% endif %}{% endfor %}
+</body></html>""",
+        archive=archive,
+        rows=_plan_report_rows(archive),
+    )
+    response = make_response(html)
+    response.headers['Content-Security-Policy'] = "default-src 'none'"
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+@bp_perf.route('/plans/archive', methods=['GET'])
+def get_perf_plan_archive_by_path():
+    """Path-based archive read for any outputs root (``root_path`` + ``path``)."""
+    return _render_plan_archive(None)
+
+
+@bp_perf.route('/plans/<task_id>', methods=['GET'])
+def get_perf_plan_archive(task_id: str):
+    """Read the archived plan, a bounded run page and the effective identity.
+
+    Query params:
+        offset (int): first planned run to return (default 0)
+        limit  (int): page size (default 100, max 200)
+    """
+    return _render_plan_archive(task_id)
+
+
+@bp_perf.route('/plans/requests', methods=['GET'])
+def get_perf_plan_requests_by_path():
+    """Path-based request page for one run of a plan."""
+    return _render_run_requests(None, None)
+
+
+@bp_perf.route('/plans/<task_id>/runs/<run_id>/requests', methods=['GET'])
+def get_perf_plan_run_requests(task_id: str, run_id: str):
+    """Page normalized request records of one planned run."""
+    return _render_run_requests(task_id, run_id)
+
+
+@bp_perf.route('/plans/report', methods=['GET'])
+def get_perf_plan_report_by_path():
+    """Path-based standalone plan report for any outputs root."""
+    return _render_plan_report(None)
+
+
+@bp_perf.route('/plans/<task_id>/report', methods=['GET'])
+def get_perf_plan_report(task_id: str):
+    """Stream a standalone report for a completed, stopped or failed plan.
+
+    The report reads only the plan archive and each run's normalized store, so
+    a partial matrix shows the points that finished and leaves the rest marked
+    ``not_started`` instead of hiding them.
+    """
+    return _render_plan_report(task_id)
 
 
 def _send_safe_perf_report(report_file: str):
@@ -1379,6 +1840,43 @@ def get_performance_progress():
 # ------------------------------------------------------------------
 
 
+@bp_perf.route('/entries', methods=['GET'])
+def list_perf_entries():
+    """List every archived performance result under one root through one contract.
+
+    Native single runs/sweeps, AIPerf single runs and cache experiments share the
+    same entry shape. The root defaults to the service outputs directory; an
+    explicit ``root_path`` is read-only and never controls a service task.
+
+    Query params:
+        root_path (str): outputs root directory (optional)
+        test_type (str): single | sweep | cache_experiment | unknown
+        engine    (str): evalscope | aiperf
+        q         (str): keyword over title/model/alias/endpoint/task id/path
+        sort      (str): time (default) | rps | latency
+        offset    (int): page offset (default 0)
+        limit     (int): page size (default 25, max 100)
+    """
+    from ..perf_entries import list_entries
+
+    try:
+        payload = list_entries(
+            request.args.get('root_path'),
+            request.args.get('test_type'),
+            request.args.get('engine'),
+            request.args.get('q', ''),
+            request.args.get('sort', 'time'),
+            request.args.get('offset', 0, type=int),
+            request.args.get('limit', 25, type=int),
+        )
+        return json_response(PerfEntryListResponse, payload)
+    except PerfArchiveError as error:
+        return jsonify({'error': error.message}), error.status
+    except Exception as error:  # noqa: BLE001 - report a bounded failure for the whole scan
+        logger.error(f'Failed to build unified perf entries: {type(error).__name__}')
+        return jsonify({'error': 'Failed to read performance results'}), 500
+
+
 @bp_perf.route('/list', methods=['GET'])
 def list_perf_runs():
     """List historical performance-benchmark runs discovered under the output root.
@@ -1420,7 +1918,11 @@ def get_perf_detail():
     if not rel_path:
         return jsonify({'error': 'path is required'}), 400
     try:
-        return json_response(PerfDetailResponse, perf_archive.build_run_detail(_root_path(), rel_path))
+        payload = perf_archive.build_run_detail(_root_path(), rel_path)
+        from ..perf_entries import run_capabilities
+
+        payload.update(run_capabilities(_root_path(), rel_path, payload))
+        return json_response(PerfDetailResponse, payload)
     except PerfArchiveError as e:
         return jsonify({'error': e.message}), e.status
     except Exception as e:
@@ -1571,6 +2073,11 @@ def delete_perf_run():
     rel_path = request.args.get('path')
     if not rel_path:
         return jsonify({'error': 'path is required'}), 400
+
+    # An explicit external root is a read-only archive view: only the service's
+    # own output root may delete files.
+    if os.path.realpath(_root_path()) != os.path.realpath(OUTPUT_DIR):
+        return jsonify({'error': 'External archives are read-only'}), 400
 
     # Running-task protection: in the service layout the run path is
     # ``<task_id>/perf``, so refuse deletion while that task is still active.

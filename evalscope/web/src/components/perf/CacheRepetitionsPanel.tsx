@@ -5,11 +5,11 @@ import { comparableMetric } from '@/domain/perf/cacheComparison'
 import { useLocale } from '@/contexts/LocaleContext'
 import { PANEL_BUTTON, PANEL_SELECT } from './panelControls'
 
-interface Props { taskId: string; planHash: string; rows: CacheSubrunPlan[] }
+interface Props { taskId: string; planHash: string; rows: CacheSubrunPlan[]; rootPath?: string }
 const groupKey = (row: CacheSubrunPlan) => JSON.stringify([row.target_ratio, row.load_mode, row.load_point.concurrency,
   row.load_point.rate, row.seed, row.request_count, row.output_token_limit])
 
-export default function CacheRepetitionsPanel({ taskId, planHash, rows }: Props) {
+export default function CacheRepetitionsPanel({ taskId, planHash, rows, rootPath }: Props) {
   const { locale } = useLocale()
   const zh = locale === 'zh'
   const [group, setGroup] = useState('')
@@ -25,11 +25,13 @@ export default function CacheRepetitionsPanel({ taskId, planHash, rows }: Props)
     {active && <label>{zh ? '目标比例 / 负载' : 'Target ratio / load'} <select className={PANEL_SELECT} value={active[0]} onChange={(event) => setGroup(event.target.value)}>{groups.map(([key, row]) => <option key={key} value={key}>{row.target_ratio * 100}% / {row.load_mode} / {row.load_point.concurrency ?? row.load_point.rate ?? '—'}</option>)}</select></label>}{' '}
     <label>{zh ? '指标' : 'Metric'} <select className={PANEL_SELECT} value={metricKey} onChange={(event) => setMetricKey(event.target.value)}><option value="time_to_first_token">TTFT</option><option value="request_throughput">{zh ? '请求吞吐' : 'Request throughput'}</option></select></label>
     {active && <button className={PANEL_BUTTON} onClick={() => { setRequested(scanKey); setAttempt((value) => value + 1) }}>{zh ? '读取全部重复轮次' : 'Load all repetitions'}</button>}
-    {active && requested === scanKey && <RepetitionData key={`${scanKey}:${attempt}`} taskId={taskId} planHash={planHash} reference={active[1].subrun_id} metricKey={metricKey} />}
+    {active && requested === scanKey && <RepetitionData key={`${scanKey}:${attempt}`} taskId={taskId} planHash={planHash} reference={active[1].subrun_id} metricKey={metricKey} rootPath={rootPath} />}
   </section>
 }
 
-function RepetitionData({ taskId, planHash, reference, metricKey }: { taskId: string; planHash: string; reference: string; metricKey: string }) {
+function RepetitionData({ taskId, planHash, reference, metricKey, rootPath }: {
+  taskId: string; planHash: string; reference: string; metricKey: string; rootPath?: string
+}) {
   const { locale } = useLocale()
   const zh = locale === 'zh'
   const [state, setState] = useState<{ rows: CacheRepetitionItem[]; total?: number; done: boolean; error?: string }>({ rows: [], done: false })
@@ -42,7 +44,7 @@ function RepetitionData({ taskId, planHash, reference, metricKey }: { taskId: st
       const rows: CacheRepetitionItem[] = []
       try {
         while (total == null || offset < total) {
-          const result = await getCacheRepetitions(taskId, reference, metricKey, offset, controller.signal)
+          const result = await getCacheRepetitions(taskId, reference, metricKey, offset, controller.signal, rootPath)
           if (controller.signal.aborted) return
           if (result.plan_hash !== planHash || result.offset !== offset || result.total < 0 || result.total > 10000 ||
               result.limit < 1 || result.limit > 100 || offset + result.repetitions.length > result.total ||
@@ -59,7 +61,7 @@ function RepetitionData({ taskId, planHash, reference, metricKey }: { taskId: st
     }
     void load()
     return () => controller.abort()
-  }, [taskId, reference, metricKey, planHash])
+  }, [taskId, reference, metricKey, planHash, rootPath])
   const referenceRow = state.rows.find((row) => row.quality !== 'invalid' && row.metric?.value != null &&
     row.metric.availability !== 'unavailable' && Number.isFinite(row.metric.value))
   const valid = state.rows.filter((row) => referenceRow && row.quality !== 'invalid' && row.engine === referenceRow.engine &&
