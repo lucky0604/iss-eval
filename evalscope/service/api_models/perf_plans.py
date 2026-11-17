@@ -6,7 +6,7 @@ from pydantic import Field
 
 from evalscope.perf.plans.alignment import PlanAlignment
 from evalscope.perf.plans.compiler import PlanBudgets, PlanRuntimeIdentity
-from evalscope.perf.plans.documents import PerfPlanDocument
+from evalscope.perf.plans.documents import PlanDocument
 from evalscope.perf.plans.execution import (
     CacheRatioVerification,
     PerfPlanOutcome,
@@ -48,7 +48,9 @@ class PlanRunSummary(ApiResponseModel):
     declared_total_input_tokens: Optional[int] = None
     shared_system_tokens: Optional[int] = None
     unique_user_tokens: Optional[int] = None
-    concurrency: int
+    load_mode: Literal['closed_loop', 'open_loop'] = 'closed_loop'
+    concurrency: Optional[int] = None
+    rate: Optional[float] = None
     request_count: int
     output_token_limit: int
     repetition: int
@@ -58,7 +60,7 @@ class PlanRunSummary(ApiResponseModel):
 class PerfPlanPreviewResponse(ApiResponseModel):
     """A side-effect-free preview: normalized plan, matrix, budgets, diagnostics and alignment."""
 
-    schema_version: Literal['1.0'] = '1.0'
+    schema_version: Literal['1.0', '1.1'] = '1.1'
     contract_version: str
     compiler_version: str
     workload_semantics: Literal['managed_token_prefix', 'aiperf_synthetic_compat']
@@ -67,7 +69,9 @@ class PerfPlanPreviewResponse(ApiResponseModel):
     normalized_hash: str
     source_hash: str
     semantic_fingerprint: str
-    normalized: PerfPlanDocument
+    normalized: PlanDocument
+    load_mode: Literal['closed_loop', 'open_loop'] = 'closed_loop'
+    output_token_limits: List[int] = Field(default_factory=list)
     runs: List[PlanRunSummary]
     total_runs: int = Field(ge=0)
     offset: int = Field(ge=0)
@@ -112,7 +116,9 @@ class PerfPlanRunView(ApiResponseModel):
     declared_total_input_tokens: Optional[int] = None
     shared_system_tokens: Optional[int] = None
     unique_user_tokens: Optional[int] = None
-    concurrency: int
+    load_mode: Literal['closed_loop', 'open_loop'] = 'closed_loop'
+    concurrency: Optional[int] = None
+    rate: Optional[float] = None
     formal_requests: int
     primer_requests: int = 0
     output_token_limit: int
@@ -140,7 +146,9 @@ class PerfPlanRunView(ApiResponseModel):
             declared_total_input_tokens=run.declared_total_input_tokens,
             shared_system_tokens=run.shared_system_tokens,
             unique_user_tokens=run.unique_user_tokens,
+            load_mode=run.load_mode,
             concurrency=run.concurrency,
+            rate=run.rate,
             formal_requests=run.request_count,
             primer_requests=run.primer_requests,
             output_token_limit=run.output_token_limit,

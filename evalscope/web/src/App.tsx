@@ -16,6 +16,7 @@ const TaskCenterPage = lazy(() => import('@/pages/TaskCenterPage'))
 const TaskDetailPage = lazy(() => import('@/pages/TaskDetailPage'))
 const PerfReportsPage = lazy(() => import('@/pages/PerfReportsPage'))
 const PerfReportDetailPage = lazy(() => import('@/pages/PerfReportDetailPage'))
+const NumericReportPage = lazy(() => import('@/pages/NumericReportPage'))
 const PerfComparePage = lazy(() => import('@/pages/PerfComparePage'))
 const PerfPlanPage = lazy(() => import('@/pages/PerfPlanPage'))
 const CacheExperimentPage = lazy(() => import('@/pages/CacheExperimentPage'))
@@ -33,6 +34,7 @@ function AppRoutes() {
           <Route path="/compare" element={<ComparePage />} />
           <Route path="/performance" element={<PerfReportsPage />} />
           <Route path="/perf-report" element={<PerfReportDetailPage />} />
+          <Route path="/perf-report/numeric" element={<NumericReportPage />} />
           <Route path="/perf-compare" element={<PerfComparePage />} />
           <Route path="/perf-plan" element={<PerfPlanPage />} />
           <Route path="/perf-plan/:taskId" element={<PerfPlanPage />} />

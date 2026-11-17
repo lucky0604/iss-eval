@@ -175,6 +175,18 @@ it('shows declared and observed reuse per run and keeps history explicit', async
   expect(screen.getByText(/not that every replica is warm/)).toBeDefined()
 })
 
+it('keeps the browsed outputs root in the numeric report link', async () => {
+  vi.mocked(getPerfPlanArchiveAt).mockResolvedValue(archive)
+  await renderPage('/perf-plan?root_path=%2Ftmp%2Foutputs&path=plan-task%2Fperf')
+
+  const numeric = screen.getByRole('link', { name: 'Numeric report' })
+  const url = new URL(numeric.getAttribute('href') ?? '', 'http://localhost')
+  expect(url.pathname).toBe('/perf-report/numeric')
+  expect(url.searchParams.get('root_path')).toBe('/tmp/outputs')
+  expect(url.searchParams.get('path')).toBe('plan-task/perf')
+  expect(url.searchParams.has('task_id')).toBe(false)
+})
+
 it('separates requested, effective and declared facts', async () => {
   vi.mocked(getPerfPlanArchiveAt).mockResolvedValue(archive)
   await renderPage('/perf-plan?root_path=%2Ftmp%2Foutputs&path=plan-task%2Fperf')

@@ -1,5 +1,107 @@
 {
   "$defs": {
+    "ActivePlanRunInfo": {
+      "additionalProperties": false,
+      "description": "Dimensions of the matrix tier a portable plan is executing right now.\n\nThe task list needs to name the tier without loading the whole plan\narchive; every value comes from the compiled run, not from the document's\nfirst item.",
+      "properties": {
+        "concurrency": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "load_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "closed_loop",
+                "open_loop"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "order": {
+          "type": "integer"
+        },
+        "output_token_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "repetition": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "target_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workload_kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "order",
+        "workload_kind"
+      ],
+      "type": "object"
+    },
     "ActiveTaskInfo": {
       "additionalProperties": false,
       "description": "Display identity of a task that is queued, running, or recently finished.",
@@ -30,6 +132,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/TaskConfigSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "current_run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActivePlanRunInfo"
             },
             {
               "type": "null"
@@ -1629,6 +1742,43 @@
       ],
       "type": "object"
     },
+    "CachePairing": {
+      "additionalProperties": false,
+      "description": "How many successful requests carry a verified prompt/cache token pair.",
+      "properties": {
+        "availability": {
+          "default": "unknown",
+          "enum": [
+            "available",
+            "partial",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "paired_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "successful_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "CachePlanConfiguration": {
       "additionalProperties": false,
       "description": "Reproducible configuration without inference or telemetry credentials.",
@@ -2699,6 +2849,17 @@
           ],
           "default": null
         },
+        "output_token_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "overhead": {
           "default": "unknown",
           "enum": [
@@ -3009,6 +3170,159 @@
           "default": null
         }
       },
+      "type": "object"
+    },
+    "Distribution": {
+      "additionalProperties": false,
+      "description": "Exact percentiles plus their population, source and availability.\n\nEvery numeric field is ``None`` when the value is genuinely missing; a\nmeasured zero stays ``0``. ``percentile_method`` distinguishes a\nrecomputed nearest-rank value from a percentile the native summary\nreported in its own table.",
+      "properties": {
+        "availability": {
+          "default": "available",
+          "enum": [
+            "available",
+            "partial",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        "count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mean": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p50": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p90": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p95": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p99": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "percentile_method": {
+          "enum": [
+            "nearest_rank",
+            "reported"
+          ],
+          "type": "string"
+        },
+        "population": {
+          "enum": [
+            "successful_profiling_requests",
+            "run_summary",
+            "server_usage"
+          ],
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "type": "string"
+        },
+        "sources": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "std": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "count",
+        "unit",
+        "source",
+        "population",
+        "percentile_method"
+      ],
       "type": "object"
     },
     "EffectiveIdentity": {
@@ -3795,7 +4109,7 @@
         },
         "reports": {
           "items": {
-            "$ref": "#/$defs/ReportGroup"
+            "$ref": "#/$defs/evalscope__service__api_models__reports__ReportGroup"
           },
           "type": "array"
         },
@@ -5114,6 +5428,56 @@
       ],
       "type": "object"
     },
+    "ObservationWindow": {
+      "additionalProperties": false,
+      "description": "Observed request time extent, distinct from an authoritative phase window.",
+      "properties": {
+        "end_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timed_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "PercentileStats": {
       "additionalProperties": false,
       "properties": {
@@ -5475,6 +5839,383 @@
         "limit",
         "observed_at",
         "root_path"
+      ],
+      "type": "object"
+    },
+    "PerfExportArtifact": {
+      "additionalProperties": false,
+      "description": "One downloaded file; ``url`` is relative to the service origin.",
+      "properties": {
+        "filename": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "filename",
+        "media_type",
+        "size",
+        "sha256",
+        "url"
+      ],
+      "type": "object"
+    },
+    "PerfExportCapabilitiesResponse": {
+      "additionalProperties": false,
+      "description": "Which artifact kinds this host can produce right now.",
+      "properties": {
+        "kinds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pdf_available": {
+          "type": "boolean"
+        },
+        "pdf_message": {
+          "default": "",
+          "type": "string"
+        },
+        "pdf_renderer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "pdf_available",
+        "kinds"
+      ],
+      "type": "object"
+    },
+    "PerfExportResponse": {
+      "additionalProperties": false,
+      "description": "A newly queued export, or the equivalent one that already existed.",
+      "properties": {
+        "created": {
+          "type": "boolean"
+        },
+        "export": {
+          "$ref": "#/$defs/PerfExportView"
+        }
+      },
+      "required": [
+        "export",
+        "created"
+      ],
+      "type": "object"
+    },
+    "PerfExportSpec": {
+      "additionalProperties": false,
+      "description": "What to export: one archive, one group/locale and one artifact kind.\n\nIt is also echoed in every status response so a client can retry exactly\nthe same export without keeping its own copy.",
+      "properties": {
+        "group": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "default": "html",
+          "enum": [
+            "html",
+            "pdf",
+            "csv",
+            "requests",
+            "bundle"
+          ],
+          "type": "string"
+        },
+        "locale": {
+          "default": "en",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "phase": {
+          "default": "profiling",
+          "enum": [
+            "warmup",
+            "profiling",
+            "all"
+          ],
+          "type": "string"
+        },
+        "preset": {
+          "default": "core",
+          "enum": [
+            "core",
+            "all"
+          ],
+          "type": "string"
+        },
+        "pretty": {
+          "default": false,
+          "type": "boolean"
+        },
+        "root_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "search": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "success",
+                "failed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "PerfExportStatusResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "export": {
+          "$ref": "#/$defs/PerfExportView"
+        }
+      },
+      "required": [
+        "export"
+      ],
+      "type": "object"
+    },
+    "PerfExportView": {
+      "additionalProperties": false,
+      "description": "The independently persisted state of one export.",
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/PerfExportArtifact"
+          },
+          "type": "array"
+        },
+        "attempts": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "export_id": {
+          "type": "string"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "request_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "snapshot_created_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "snapshot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "$ref": "#/$defs/PerfExportSpec"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted"
+          ],
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "export_id",
+        "status",
+        "created_at",
+        "attempts",
+        "spec"
       ],
       "type": "object"
     },
@@ -5980,7 +6721,7 @@
     },
     "PerfPlanDocument": {
       "additionalProperties": false,
-      "description": "A portable, versioned and credential-free performance plan.",
+      "description": "Frozen schema 1.0 plan: closed loop and one scalar output limit.\n\nDo not add axes here. Existing archives and their compiled run IDs are read\nand recompiled with this exact shape, so a new field would silently change\nthe identity of every accepted 1.0 plan.",
       "properties": {
         "connection": {
           "$ref": "#/$defs/PlanConnection"
@@ -6025,6 +6766,86 @@
         "schema_version": {
           "const": "1.0",
           "default": "1.0",
+          "type": "string"
+        },
+        "telemetry": {
+          "$ref": "#/$defs/PlanTelemetry"
+        },
+        "warmup": {
+          "$ref": "#/$defs/PlanWarmup"
+        },
+        "workload": {
+          "discriminator": {
+            "mapping": {
+              "aiperf_synthetic": "#/$defs/SyntheticWorkload",
+              "token_prefix": "#/$defs/TokenPrefixWorkload"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TokenPrefixWorkload"
+            },
+            {
+              "$ref": "#/$defs/SyntheticWorkload"
+            }
+          ]
+        }
+      },
+      "required": [
+        "connection",
+        "workload",
+        "load"
+      ],
+      "type": "object"
+    },
+    "PerfPlanDocumentV11": {
+      "additionalProperties": false,
+      "description": "Current schema 1.1 plan: output-limit axis and explicit closed/open load.",
+      "properties": {
+        "connection": {
+          "$ref": "#/$defs/PlanConnection"
+        },
+        "deployment": {
+          "$ref": "#/$defs/DeploymentFacts"
+        },
+        "execution": {
+          "$ref": "#/$defs/PlanExecution"
+        },
+        "intent": {
+          "default": "benchmark",
+          "enum": [
+            "diagnostic",
+            "benchmark"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "const": "iss-eval.perf-plan",
+          "default": "iss-eval.perf-plan",
+          "type": "string"
+        },
+        "load": {
+          "$ref": "#/$defs/PlanLoadV11"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "priming": {
+          "$ref": "#/$defs/PlanPriming"
+        },
+        "schema_version": {
+          "const": "1.1",
+          "default": "1.1",
           "type": "string"
         },
         "telemetry": {
@@ -6224,8 +7045,23 @@
           "maximum": 500,
           "type": "integer"
         },
+        "load_mode": {
+          "default": "closed_loop",
+          "enum": [
+            "closed_loop",
+            "open_loop"
+          ],
+          "type": "string"
+        },
         "normalized": {
-          "$ref": "#/$defs/PerfPlanDocument"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PerfPlanDocument"
+            },
+            {
+              "$ref": "#/$defs/PerfPlanDocumentV11"
+            }
+          ]
         },
         "normalized_hash": {
           "type": "string"
@@ -6233,6 +7069,12 @@
         "offset": {
           "minimum": 0,
           "type": "integer"
+        },
+        "output_token_limits": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
         },
         "plan_hash": {
           "type": "string"
@@ -6253,8 +7095,11 @@
           "$ref": "#/$defs/PlanRuntimeIdentity"
         },
         "schema_version": {
-          "const": "1.0",
-          "default": "1.0",
+          "default": "1.1",
+          "enum": [
+            "1.0",
+            "1.1"
+          ],
           "type": "string"
         },
         "semantic_fingerprint": {
@@ -6363,7 +7208,15 @@
           "default": null
         },
         "concurrency": {
-          "type": "integer"
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "declared_total_input_tokens": {
           "anyOf": [
@@ -6400,6 +7253,14 @@
             }
           ],
           "default": null
+        },
+        "load_mode": {
+          "default": "closed_loop",
+          "enum": [
+            "closed_loop",
+            "open_loop"
+          ],
+          "type": "string"
         },
         "message_structure": {
           "enum": [
@@ -6438,6 +7299,17 @@
                 "invalid"
               ],
               "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "type": "number"
             },
             {
               "type": "null"
@@ -6534,7 +7406,6 @@
         "order",
         "workload_kind",
         "message_structure",
-        "concurrency",
         "formal_requests",
         "output_token_limit",
         "repetition"
@@ -6604,10 +7475,224 @@
       ],
       "type": "object"
     },
+    "PerfReportChartsResponse": {
+      "additionalProperties": false,
+      "description": "Chart data computed from the whole snapshot, not the current table page.",
+      "properties": {
+        "metric": {
+          "type": "string"
+        },
+        "series": {
+          "items": {
+            "$ref": "#/$defs/ReportChartSeries"
+          },
+          "type": "array"
+        },
+        "snapshot_id": {
+          "type": "string"
+        },
+        "statistic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot_id",
+        "metric",
+        "statistic",
+        "series"
+      ],
+      "type": "object"
+    },
+    "PerfReportRequestsResponse": {
+      "additionalProperties": false,
+      "description": "One page of a run's request details, filtered and sorted server-side.",
+      "properties": {
+        "limit": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "order": {
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "requests": {
+          "items": {
+            "$ref": "#/$defs/ReportRequestRow"
+          },
+          "type": "array"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "run_key": {
+          "type": "string"
+        },
+        "search": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "snapshot_id": {
+          "type": "string"
+        },
+        "sort": {
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "total": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "snapshot_id",
+        "run_key",
+        "run_id",
+        "total",
+        "offset",
+        "limit",
+        "sort",
+        "order",
+        "requests"
+      ],
+      "type": "object"
+    },
+    "PerfReportRunsResponse": {
+      "additionalProperties": false,
+      "description": "One page of the full main table; ``total`` is the filtered row count.",
+      "properties": {
+        "group": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "order": {
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "type": "string"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/ReportRun"
+          },
+          "type": "array"
+        },
+        "snapshot_id": {
+          "type": "string"
+        },
+        "sort": {
+          "type": "string"
+        },
+        "total": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "snapshot_id",
+        "rows",
+        "total",
+        "offset",
+        "limit",
+        "sort",
+        "order"
+      ],
+      "type": "object"
+    },
+    "PerfReportSummaryResponse": {
+      "additionalProperties": false,
+      "description": "Snapshot identity, plan-wide counts and groups without the run rows.",
+      "properties": {
+        "report": {
+          "$ref": "#/$defs/ReportHeader"
+        },
+        "total_runs": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "report",
+        "total_runs"
+      ],
+      "type": "object"
+    },
     "PerfRequestRecord": {
       "additionalProperties": false,
       "description": "A request record without inferred server cache data.",
       "properties": {
+        "aiperf_input_sequence_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "aiperf_output_sequence_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "cached_tokens": {
           "anyOf": [
             {
@@ -6624,6 +7709,17 @@
             {
               "const": "server_usage",
               "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "decode_duration_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
             },
             {
               "type": "null"
@@ -6653,9 +7749,68 @@
           ],
           "default": null
         },
+        "http_duration_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "http_total_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "index": {
           "minimum": 0,
           "type": "integer"
+        },
+        "itl_method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "itl_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "itl_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "aiperf_raw",
+                "derived"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "latency_seconds": {
           "anyOf": [
@@ -6734,6 +7889,17 @@
           ],
           "default": null
         },
+        "request_record_elapsed_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "session_id": {
           "anyOf": [
             {
@@ -6788,6 +7954,50 @@
           "default": null
         },
         "turn_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "usage_completion_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "usage_prompt_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "usage_reasoning_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "usage_total_tokens": {
           "anyOf": [
             {
               "type": "integer"
@@ -7887,6 +9097,17 @@
           "default": "perf",
           "type": "string"
         },
+        "load_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "model": {
           "default": "",
           "type": "string"
@@ -7924,6 +9145,12 @@
           ],
           "default": null
         },
+        "output_token_limits": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
         "plan_hash": {
           "anyOf": [
             {
@@ -7945,6 +9172,12 @@
             }
           ],
           "default": null
+        },
+        "rates": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
         },
         "repetitions": {
           "anyOf": [
@@ -8204,7 +9437,7 @@
     },
     "PlanLoad": {
       "additionalProperties": false,
-      "description": "Load axis, request count and output budget shared by every run.",
+      "description": "Schema 1.0 load axis: closed loop only and one output limit for every run.",
       "properties": {
         "mode": {
           "const": "closed_loop",
@@ -8242,7 +9475,7 @@
     },
     "PlanLoadPoint": {
       "additionalProperties": false,
-      "description": "One closed-loop concurrency point.",
+      "description": "One closed-loop concurrency point of a schema 1.0 plan.",
       "properties": {
         "concurrency": {
           "exclusiveMinimum": 0,
@@ -8251,6 +9484,82 @@
       },
       "required": [
         "concurrency"
+      ],
+      "type": "object"
+    },
+    "PlanLoadPointV11": {
+      "additionalProperties": false,
+      "description": "One load point of a schema 1.1 plan.\n\nExactly one field is set, mirroring ``LoadConfiguration``: ``concurrency``\nfor a closed loop, ``rate`` (requests per second) for an open loop. The\nload-level validator enforces that the field matches ``PlanLoadV11.mode``.",
+      "properties": {
+        "concurrency": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "PlanLoadV11": {
+      "additionalProperties": false,
+      "description": "Schema 1.1 load axis: an output-limit axis and an explicit load mode.",
+      "properties": {
+        "mode": {
+          "default": "closed_loop",
+          "enum": [
+            "closed_loop",
+            "open_loop"
+          ],
+          "type": "string"
+        },
+        "output_token_limits": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/PlanLoadPointV11"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array"
+        },
+        "repetitions": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "request_count": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "points",
+        "request_count",
+        "output_token_limits"
       ],
       "type": "object"
     },
@@ -8291,7 +9600,15 @@
           "default": null
         },
         "concurrency": {
-          "type": "integer"
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "declared_total_input_tokens": {
           "anyOf": [
@@ -8315,6 +9632,14 @@
           ],
           "default": null
         },
+        "load_mode": {
+          "default": "closed_loop",
+          "enum": [
+            "closed_loop",
+            "open_loop"
+          ],
+          "type": "string"
+        },
         "message_structure": {
           "enum": [
             "user_only",
@@ -8330,6 +9655,17 @@
         },
         "primer_requests": {
           "type": "integer"
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "repetition": {
           "type": "integer"
@@ -8386,7 +9722,6 @@
         "order",
         "workload_kind",
         "message_structure",
-        "concurrency",
         "request_count",
         "output_token_limit",
         "repetition",
@@ -9118,6 +10453,190 @@
       ],
       "type": "object"
     },
+    "RateMetrics": {
+      "additionalProperties": false,
+      "description": "Client-measured rates; a configured target rate is never reported here.",
+      "properties": {
+        "availability": {
+          "default": "available",
+          "enum": [
+            "available",
+            "partial",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        "cache": {
+          "$ref": "#/$defs/CachePairing"
+        },
+        "input": {
+          "$ref": "#/$defs/TokenRate"
+        },
+        "input_tokens_per_second": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output": {
+          "$ref": "#/$defs/TokenRate"
+        },
+        "output_tokens_per_second": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "requests_per_minute": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "requests_per_second": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "default": "measured_records",
+          "enum": [
+            "measured_records",
+            "run_summary"
+          ],
+          "type": "string"
+        },
+        "window_authoritative": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "window_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "window_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "aiperf_phase",
+                "observed_request_bounds",
+                "run_summary"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "ReportCapabilities": {
+      "additionalProperties": false,
+      "description": "What this snapshot can and cannot answer, per data family.",
+      "properties": {
+        "cache": {
+          "$ref": "#/$defs/ReportCapability"
+        },
+        "client_metrics": {
+          "$ref": "#/$defs/ReportCapability"
+        },
+        "node_metrics": {
+          "$ref": "#/$defs/ReportCapability"
+        },
+        "requests": {
+          "$ref": "#/$defs/ReportCapability"
+        },
+        "token_usage": {
+          "$ref": "#/$defs/ReportCapability"
+        }
+      },
+      "required": [
+        "client_metrics",
+        "token_usage",
+        "cache",
+        "node_metrics",
+        "requests"
+      ],
+      "type": "object"
+    },
+    "ReportCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "partial",
+            "unavailable",
+            "unsupported"
+          ],
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "type": "object"
+    },
     "ReportCategory": {
       "additionalProperties": false,
       "properties": {
@@ -9161,6 +10680,158 @@
         "score",
         "subsets"
       ],
+      "type": "object"
+    },
+    "ReportChartPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "default": "available",
+          "enum": [
+            "available",
+            "partial",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        "dimensions": {
+          "$ref": "#/$defs/ReportRunDimensions"
+        },
+        "order": {
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "run_key": {
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "run_key",
+        "run_id",
+        "order",
+        "dimensions"
+      ],
+      "type": "object"
+    },
+    "ReportChartSeries": {
+      "additionalProperties": false,
+      "description": "One facet value, load mode and repetition; the chart never mixes output\nlimits and never joins two independent repetition efforts into one line.",
+      "properties": {
+        "facet": {
+          "type": "string"
+        },
+        "facet_dimensions": {
+          "$ref": "#/$defs/ReportRunDimensions"
+        },
+        "load_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/ReportChartPoint"
+          },
+          "type": "array"
+        },
+        "repetition": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "facet",
+        "facet_dimensions"
+      ],
+      "type": "object"
+    },
+    "ReportCounts": {
+      "additionalProperties": false,
+      "description": "Plan-wide counts that never shrink to the currently paged window.",
+      "properties": {
+        "cancelled_runs": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "completed_runs": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed_runs": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "not_started_runs": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "observed_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "planned_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "planned_runs": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "running_runs": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "successful_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "ReportData": {
@@ -9289,50 +10960,226 @@
       ],
       "type": "object"
     },
-    "ReportGroup": {
+    "ReportHeader": {
       "additionalProperties": false,
-      "description": "One row per model in a `group_by=model` listing - display-only rollup, never a merged report.",
+      "description": "Snapshot identity and plan-wide description without the run rows.",
       "properties": {
-        "children": {
+        "capabilities": {
+          "$ref": "#/$defs/ReportCapabilities"
+        },
+        "compiler_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "contract_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "counts": {
+          "$ref": "#/$defs/ReportCounts"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "declared_max_model_len": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "deployment_evidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "deployment_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "groups": {
           "items": {
-            "$ref": "#/$defs/ReportSummary"
+            "$ref": "#/$defs/evalscope__perf__results__report__ReportGroup"
           },
           "type": "array"
         },
-        "dataset_count": {
-          "type": "integer"
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
-        "dataset_name": {
-          "type": "string"
+        "normalized_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
-        "model_name": {
-          "type": "string"
+        "partial": {
+          "default": false,
+          "type": "boolean"
         },
-        "num_samples": {
-          "type": "integer"
+        "partial_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
-        "refs": {
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plan_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality_reasons": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "report_count": {
-          "type": "integer"
-        },
-        "timestamp": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
           "type": "string"
+        },
+        "snapshot_id": {
+          "type": "string"
+        },
+        "source_identity": {
+          "type": "string"
+        },
+        "source_kind": {
+          "enum": [
+            "plan",
+            "cache_experiment",
+            "single",
+            "native"
+          ],
+          "type": "string"
+        },
+        "statistics_version": {
+          "default": "1",
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workload_semantics": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
-        "model_name",
-        "dataset_name",
-        "timestamp",
-        "report_count",
-        "dataset_count",
-        "num_samples",
-        "refs",
-        "children"
+        "snapshot_id",
+        "created_at",
+        "source_kind",
+        "source_identity",
+        "counts",
+        "capabilities"
       ],
       "type": "object"
     },
@@ -9390,6 +11237,1153 @@
         "score",
         "categories",
         "semantics"
+      ],
+      "type": "object"
+    },
+    "ReportNodeCacheRatio": {
+      "additionalProperties": false,
+      "description": "vLLM prefix lookup-token ratio, distinct from response cache usage.",
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "partial",
+            "missing",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "hit_tokens": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lookup_tokens": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "role": {
+          "enum": [
+            "prefill",
+            "decode"
+          ],
+          "type": "string"
+        },
+        "semantics": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "node_id",
+        "role",
+        "availability"
+      ],
+      "type": "object"
+    },
+    "ReportNodeHistogram": {
+      "additionalProperties": false,
+      "description": "A histogram-family node metric summarized over the same window.",
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "partial",
+            "missing",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "boundary": {
+          "anyOf": [
+            {
+              "enum": [
+                "exact",
+                "bracketed",
+                "step",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mean": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metric_key": {
+          "type": "string"
+        },
+        "p50": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p95": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p99": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "availability",
+        "metric_key"
+      ],
+      "type": "object"
+    },
+    "ReportNodeMetric": {
+      "additionalProperties": false,
+      "description": "One node/label/engine series, never merged with another node's values.",
+      "properties": {
+        "engine": {
+          "type": "string"
+        },
+        "histogram": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReportNodeHistogram"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "metric_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metric_name": {
+          "type": "string"
+        },
+        "metric_unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "role": {
+          "enum": [
+            "prefill",
+            "decode"
+          ],
+          "type": "string"
+        },
+        "statistic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReportNodeStatistic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "window_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "node_id",
+        "role",
+        "engine",
+        "metric_name"
+      ],
+      "type": "object"
+    },
+    "ReportNodeStatistic": {
+      "additionalProperties": false,
+      "description": "One measured node-metric window value with its provenance boundary.",
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "partial",
+            "missing",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "boundary": {
+          "anyOf": [
+            {
+              "enum": [
+                "exact",
+                "bracketed",
+                "step",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "coverage": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sample_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sample_peak": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "type": "object"
+    },
+    "ReportRequestRow": {
+      "additionalProperties": false,
+      "description": "A request with every measured boundary kept apart.",
+      "properties": {
+        "aiperf_input_sequence_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "aiperf_output_sequence_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cached_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cached_tokens_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "decode_duration_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "end_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "http_duration_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "http_total_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "index": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "latency_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_tokens_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "phase": {
+          "type": "string"
+        },
+        "prompt_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prompt_tokens_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "request_record_elapsed_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "success",
+            "error",
+            "cancelled",
+            "incomplete"
+          ],
+          "type": "string"
+        },
+        "status_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tpot_method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tpot_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tpot_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ttft_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "turn_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "usage_completion_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "usage_prompt_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "usage_reasoning_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "usage_total_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "index",
+        "phase",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ReportRun": {
+      "additionalProperties": false,
+      "description": "One stable report row, whether or not its data could be read.",
+      "properties": {
+        "archive_identity": {
+          "type": "string"
+        },
+        "availability": {
+          "default": "available",
+          "enum": [
+            "available",
+            "partial",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        "counts": {
+          "$ref": "#/$defs/ReportRunCounts"
+        },
+        "dimensions": {
+          "$ref": "#/$defs/ReportRunDimensions"
+        },
+        "e2e": {
+          "$ref": "#/$defs/Distribution"
+        },
+        "lifecycle": {
+          "enum": [
+            "not_started",
+            "running",
+            "completed",
+            "cancelled",
+            "error",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "nodes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReportRunNodes"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "observation": {
+          "$ref": "#/$defs/ObservationWindow"
+        },
+        "observed_concurrency": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "observed_concurrency_peak": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "order": {
+          "type": "integer"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "invalid"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quality_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rates": {
+          "$ref": "#/$defs/RateMetrics"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "run_key": {
+          "type": "string"
+        },
+        "tokens": {
+          "$ref": "#/$defs/TokenSummary"
+        },
+        "tpot": {
+          "$ref": "#/$defs/Distribution"
+        },
+        "ttft": {
+          "$ref": "#/$defs/Distribution"
+        }
+      },
+      "required": [
+        "run_key",
+        "run_id",
+        "order",
+        "archive_identity",
+        "dimensions",
+        "lifecycle",
+        "counts",
+        "ttft",
+        "tpot",
+        "e2e",
+        "tokens",
+        "rates",
+        "observation"
+      ],
+      "type": "object"
+    },
+    "ReportRunCounts": {
+      "additionalProperties": false,
+      "description": "Planned versus observed request counts for one run.",
+      "properties": {
+        "cancelled": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "incomplete": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "planned_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "primer_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "success": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ReportRunDimensions": {
+      "additionalProperties": false,
+      "description": "The matrix cell a run belongs to; repetitions share every value.",
+      "properties": {
+        "case_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "concurrency": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "deployment_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "load_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "message_structure": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_token_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "repetition": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "target_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workload": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "ReportRunNodes": {
+      "additionalProperties": false,
+      "description": "The node observation that already exists for this run, if any.",
+      "properties": {
+        "availability": {
+          "enum": [
+            "available",
+            "partial",
+            "missing",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "cache_ratios": {
+          "items": {
+            "$ref": "#/$defs/ReportNodeCacheRatio"
+          },
+          "type": "array"
+        },
+        "end_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_gap_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/ReportNodeMetric"
+          },
+          "type": "array"
+        },
+        "quality_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timed_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window_source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "availability"
       ],
       "type": "object"
     },
@@ -9525,6 +12519,17 @@
           "default": null
         },
         "p50": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p90": {
           "anyOf": [
             {
               "type": "number"
@@ -10839,6 +13844,197 @@
       ],
       "type": "object"
     },
+    "TokenRate": {
+      "additionalProperties": false,
+      "description": "One direction's token throughput with the coverage it was computed from.\n\n``tokens_per_second`` is only set when the direction is fully covered by the\nsuccessful requests and a statistics window exists. A fully covered zero is\na measured ``0.0``; a partial or absent direction stays ``None`` with the\nreason, so a rate is never extrapolated from a subset of the requests.",
+      "properties": {
+        "availability": {
+          "default": "unavailable",
+          "enum": [
+            "available",
+            "partial",
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        "coverage": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "covered_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "anyOf": [
+            {
+              "enum": [
+                "server_usage",
+                "aiperf_estimate",
+                "mixed",
+                "run_summary"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "successful_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tokens_per_second": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "TokenSummary": {
+      "additionalProperties": false,
+      "description": "Request token totals with their real coverage, never an implied zero.",
+      "properties": {
+        "cached_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cached_source": {
+          "anyOf": [
+            {
+              "const": "server_usage",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cached_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "input_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "server_usage",
+                "aiperf_estimate",
+                "mixed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "server_usage",
+                "aiperf_estimate",
+                "mixed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "successful_requests": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "TokenizerIdentity": {
       "additionalProperties": false,
       "description": "What was actually resolved, never what a path suggests.",
@@ -11161,6 +14357,97 @@
         "sample_count"
       ],
       "type": "object"
+    },
+    "evalscope__perf__results__report__ReportGroup": {
+      "additionalProperties": false,
+      "description": "A stable group description; member rows keep their own percentiles.",
+      "properties": {
+        "dimensions": {
+          "$ref": "#/$defs/ReportRunDimensions"
+        },
+        "group_key": {
+          "type": "string"
+        },
+        "observed_requests": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "planned_requests": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run_count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run_keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "successful_requests": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "group_key",
+        "dimensions",
+        "run_keys",
+        "run_count",
+        "planned_requests",
+        "observed_requests",
+        "successful_requests"
+      ],
+      "type": "object"
+    },
+    "evalscope__service__api_models__reports__ReportGroup": {
+      "additionalProperties": false,
+      "description": "One row per model in a `group_by=model` listing - display-only rollup, never a merged report.",
+      "properties": {
+        "children": {
+          "items": {
+            "$ref": "#/$defs/ReportSummary"
+          },
+          "type": "array"
+        },
+        "dataset_count": {
+          "type": "integer"
+        },
+        "dataset_name": {
+          "type": "string"
+        },
+        "model_name": {
+          "type": "string"
+        },
+        "num_samples": {
+          "type": "integer"
+        },
+        "refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "report_count": {
+          "type": "integer"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_name",
+        "dataset_name",
+        "timestamp",
+        "report_count",
+        "dataset_count",
+        "num_samples",
+        "refs",
+        "children"
+      ],
+      "type": "object"
     }
   },
   "description": "Schema-only root that keeps every public Web API type reachable for code generation.",
@@ -11294,6 +14581,24 @@
     "perf_entry_list_response": {
       "$ref": "#/$defs/PerfEntryListResponse"
     },
+    "perf_export_artifact": {
+      "$ref": "#/$defs/PerfExportArtifact"
+    },
+    "perf_export_capabilities_response": {
+      "$ref": "#/$defs/PerfExportCapabilitiesResponse"
+    },
+    "perf_export_response": {
+      "$ref": "#/$defs/PerfExportResponse"
+    },
+    "perf_export_spec": {
+      "$ref": "#/$defs/PerfExportSpec"
+    },
+    "perf_export_status_response": {
+      "$ref": "#/$defs/PerfExportStatusResponse"
+    },
+    "perf_export_view": {
+      "$ref": "#/$defs/PerfExportView"
+    },
     "perf_invoke_response": {
       "$ref": "#/$defs/PerfInvokeResponse"
     },
@@ -11323,6 +14628,18 @@
     },
     "perf_plan_submit_response": {
       "$ref": "#/$defs/PerfPlanSubmitResponse"
+    },
+    "perf_report_charts_response": {
+      "$ref": "#/$defs/PerfReportChartsResponse"
+    },
+    "perf_report_requests_response": {
+      "$ref": "#/$defs/PerfReportRequestsResponse"
+    },
+    "perf_report_runs_response": {
+      "$ref": "#/$defs/PerfReportRunsResponse"
+    },
+    "perf_report_summary_response": {
+      "$ref": "#/$defs/PerfReportSummaryResponse"
     },
     "perf_requests_response": {
       "$ref": "#/$defs/PerfRequestsResponse"
@@ -11367,7 +14684,7 @@
       "$ref": "#/$defs/ReportData"
     },
     "report_group": {
-      "$ref": "#/$defs/ReportGroup"
+      "$ref": "#/$defs/evalscope__service__api_models__reports__ReportGroup"
     },
     "report_metric": {
       "$ref": "#/$defs/ReportMetric"
@@ -11486,7 +14803,17 @@
     "plan_run_summary",
     "perf_plan_invoke_response",
     "perf_plan_run_view",
-    "perf_plan_submit_response"
+    "perf_plan_submit_response",
+    "perf_report_summary_response",
+    "perf_report_runs_response",
+    "perf_report_requests_response",
+    "perf_report_charts_response",
+    "perf_export_spec",
+    "perf_export_artifact",
+    "perf_export_view",
+    "perf_export_response",
+    "perf_export_status_response",
+    "perf_export_capabilities_response"
   ],
   "title": "WebApiContracts",
   "type": "object"

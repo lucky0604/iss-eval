@@ -5,6 +5,7 @@ from evalscope.api.metric.semantics import MetricDisplayKind
 from evalscope.report.report import ExecutionSummary
 
 from .common import (
+    ActivePlanRunInfo,
     ActiveTaskInfo,
     ApiResponseModel,
     ConfigResponse,
@@ -45,6 +46,14 @@ from .perf import (
     PerfSinglePlanResponse,
 )
 from .perf_entries import PerfEntryListResponse, PerformanceResultEntry
+from .perf_exports import (
+    PerfExportArtifact,
+    PerfExportCapabilitiesResponse,
+    PerfExportResponse,
+    PerfExportSpec,
+    PerfExportStatusResponse,
+    PerfExportView,
+)
 from .perf_plans import (
     PerfPlanArchiveResponse,
     PerfPlanExportResponse,
@@ -54,6 +63,12 @@ from .perf_plans import (
     PerfPlanSubmitResponse,
     PlanDiagnosticView,
     PlanRunSummary,
+)
+from .perf_reports import (
+    PerfReportChartsResponse,
+    PerfReportRequestsResponse,
+    PerfReportRunsResponse,
+    PerfReportSummaryResponse,
 )
 from .reports import (
     AnalysisResponse,
@@ -179,6 +194,16 @@ class WebApiContracts(BaseModel):
     perf_plan_invoke_response: PerfPlanInvokeResponse
     perf_plan_run_view: PerfPlanRunView
     perf_plan_submit_response: PerfPlanSubmitResponse
+    perf_report_summary_response: PerfReportSummaryResponse
+    perf_report_runs_response: PerfReportRunsResponse
+    perf_report_requests_response: PerfReportRequestsResponse
+    perf_report_charts_response: PerfReportChartsResponse
+    perf_export_spec: PerfExportSpec
+    perf_export_artifact: PerfExportArtifact
+    perf_export_view: PerfExportView
+    perf_export_response: PerfExportResponse
+    perf_export_status_response: PerfExportStatusResponse
+    perf_export_capabilities_response: PerfExportCapabilitiesResponse
 
 
 __all__ = [
@@ -227,6 +252,12 @@ __all__ = [
     'LogResponse',
     'PerfDetailResponse',
     'PerfEnginesResponse',
+    'PerfExportArtifact',
+    'PerfExportCapabilitiesResponse',
+    'PerfExportResponse',
+    'PerfExportSpec',
+    'PerfExportStatusResponse',
+    'PerfExportView',
     'PerfInvokeResponse',
     'PerfLiveResponse',
     'PerfPlanArchiveResponse',
@@ -236,6 +267,10 @@ __all__ = [
     'PerfPlanResponse',
     'PerfPlanRunView',
     'PerfPlanSubmitResponse',
+    'PerfReportChartsResponse',
+    'PerfReportRequestsResponse',
+    'PerfReportRunsResponse',
+    'PerfReportSummaryResponse',
     'PerfSinglePlanResponse',
     'PerfRequestsResponse',
     'PerfRunsListResponse',

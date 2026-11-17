@@ -56,10 +56,17 @@ def test_mixed_list_detail_requests_and_partial_links(archive) -> None:
     assert detail.json['summary_rows'][0]['values']['avg_latency'] == pytest.approx(0.0006758125)
     items = client.get('/api/v1/perf/runs', query_string=params)
     assert items.status_code == 200 and items.json['runs'][0]['dir_name'] == 'single'
+    percentile_columns = items.json['runs'][0]['percentile_columns']
+    assert percentile_columns == ['Metric', 'P50', 'P90', 'P95', 'P99', 'Unit', 'Count']
+    ttft_row = next(row for row in items.json['runs'][0]['percentile_rows'] if row[0] == 'time_to_first_token')
+    assert ttft_row[2] == pytest.approx(0.0007203289) and ttft_row[3] == pytest.approx(0.00072589345)
     response = client.get('/api/v1/perf/requests', query_string={**params, 'run': 'single', 'page_size': 1})
     assert response.status_code == 200 and response.json['total'] == 2
     assert len(response.json['rows']) == 1 and response.json['rows'][0]['Cached'] is None
     assert response.json['rows'][0]['Input source'] == 'server_usage'
+    assert response.json['rows'][0]['TPOT(ms)'] == 0
+    assert response.json['rows'][0]['TPOT source'] == 'aiperf_raw'
+    assert 'HTTP total(s)' in response.json['columns']
     task = client.get('/api/v1/tasks/task')
     assert task.status_code == 200 and task.json['status'] == 'error'
     assert task.json['report_url'].startswith('/perf-report?')

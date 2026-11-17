@@ -566,6 +566,14 @@ function CacheExperimentReport({ taskId, rootPath, tab, subrun, baselineId, cand
       status={experiment?.state.status}
       quality={experiment ? experiment.state.quality : undefined}
       htmlUrl={getCacheExperimentReportUrl(taskId, rootPath)}
+      actions={
+        <a
+          className="rounded-[var(--radius-sm)] border border-[var(--border-md)] px-3 py-1.5 text-xs text-[var(--text)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+          href={`/perf-report/numeric?task_id=${encodeURIComponent(taskId)}${rootPath ? `&root_path=${encodeURIComponent(rootPath)}` : ''}`}
+        >
+          {zh ? '数值报告' : 'Numeric report'}
+        </a>
+      }
     />
     <PerformanceQualityBanner
       status={experiment?.state.status}

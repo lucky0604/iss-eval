@@ -67,6 +67,29 @@ def test_flags_reproduce_the_shared_system_split() -> None:
     assert flags['--output-artifact-dir'] == '/tmp/artifacts'
 
 
+def test_open_loop_flags_carry_rate_and_never_concurrency() -> None:
+    arguments = build_synthetic_arguments(_spec(load_mode='open_loop', concurrency=None, rate=2.5), '/tmp/artifacts')
+    flags = _flags(arguments)
+    assert flags['--request-rate'] == '2.5'
+    assert '--concurrency' not in flags
+    assert flags['--osl'] == '32'
+
+
+@pytest.mark.parametrize(
+    'overrides',
+    [
+        {'load_mode': 'closed_loop', 'rate': 1.0},  # closed loop must not declare a rate
+        {'load_mode': 'closed_loop', 'concurrency': None},  # closed loop needs a concurrency
+        {'load_mode': 'open_loop'},  # open loop must not keep the closed-loop concurrency
+        {'load_mode': 'open_loop', 'concurrency': None},  # open loop needs a rate
+        {'load_mode': 'open_loop', 'concurrency': None, 'rate': 0},
+    ],
+)
+def test_load_mode_and_point_are_mutually_exclusive(overrides: dict) -> None:
+    with pytest.raises(ValueError):
+        _spec(**overrides)
+
+
 def test_chat_completions_url_is_normalized_to_the_api_base() -> None:
     arguments = build_synthetic_arguments(_spec(url='http://127.0.0.1:8000/v1/chat/completions'), '/tmp/artifacts')
     flags = _flags(arguments)

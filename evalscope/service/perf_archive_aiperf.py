@@ -10,6 +10,7 @@ from typing import Any, Optional
 from evalscope.metrics.semantics import resolve_perf_semantics
 from evalscope.perf.integrations.aiperf.metrics import NodeMetricsAnalysis
 from evalscope.perf.results.aiperf_import import load_aiperf_run, observed_cache_usage, query_aiperf_requests
+from evalscope.perf.results.derivation import resolve_itl
 from evalscope.perf.results.single_run import SingleRunManifest, load_single_manifest
 from evalscope.perf.utils.perf_constants import Metrics, PercentileMetrics
 from evalscope.utils.uri_utils import sanitize_endpoint
@@ -198,11 +199,12 @@ def list_items(directory: str) -> list[dict]:
     total, _ = query_aiperf_requests(str(normalized), phase='profiling', limit=1)
     rows = []
     for metric in result.metrics:
-        if any(key in metric.statistics for key in ('p50', 'p95', 'p99')):
+        if any(key in metric.statistics for key in ('p50', 'p90', 'p95', 'p99')):
             rows.append(
                 [
                     metric.key,
                     metric.statistics.get('p50'),
+                    metric.statistics.get('p90'),
                     metric.statistics.get('p95'),
                     metric.statistics.get('p99'),
                     metric.unit,
@@ -223,7 +225,7 @@ def list_items(directory: str) -> list[dict]:
             else None,
             'num_requests': total,
             'has_requests': total > 0,
-            'percentile_columns': ['Metric', 'P50', 'P95', 'P99', 'Unit', 'Count'] if rows else [],
+            'percentile_columns': ['Metric', 'P50', 'P90', 'P95', 'P99', 'Unit', 'Count'] if rows else [],
             'percentile_rows': rows,
         }
     ]
@@ -243,12 +245,18 @@ def query_requests(directory: str, run_name: str, status: Optional[str], page: i
     )
     rows = []
     for index, row in enumerate(records):
+        itl = resolve_itl(row)
         rows.append(
             {
                 '#': offset + index + 1,
                 'Latency(s)': row.latency_seconds,
                 'TTFT(ms)': row.ttft_seconds * 1000 if row.ttft_seconds is not None else None,
-                'TPOT(ms)': None,
+                'TPOT(ms)': itl.seconds * 1000 if itl.seconds is not None else None,
+                'TPOT source': itl.source,
+                'Decode(s)': row.decode_duration_seconds,
+                'HTTP total(s)': row.http_total_seconds,
+                'HTTP duration(s)': row.http_duration_seconds,
+                'Record elapsed(s)': row.request_record_elapsed_seconds,
                 'Prompt': row.prompt_tokens,
                 'Completion': row.output_tokens,
                 'Success': {'success': 'OK', 'error': 'FAIL', 'cancelled': 'CANCELLED', 'incomplete': 'INCOMPLETE'}[
@@ -266,6 +274,11 @@ def query_requests(directory: str, run_name: str, status: Optional[str], page: i
             'Latency(s)',
             'TTFT(ms)',
             'TPOT(ms)',
+            'TPOT source',
+            'Decode(s)',
+            'HTTP total(s)',
+            'HTTP duration(s)',
+            'Record elapsed(s)',
             'Prompt',
             'Completion',
             'Success',

@@ -16,6 +16,7 @@ from urllib.parse import quote, urlsplit
 
 from evalscope.perf.executors.external import Cancellation
 from evalscope.perf.executors.urls import normalize_metrics_url
+from evalscope.perf.results.derivation import derive_itl_seconds
 from evalscope.perf.results.models import (
     AIPerfImportArguments,
     CacheObservation,
@@ -34,7 +35,7 @@ from evalscope.perf.results.models import (
 )
 from evalscope.utils.uri_utils import sanitize_endpoint
 
-_PARSER = 'aiperf-0.13.0-v4'
+_PARSER = 'aiperf-0.13.0-v5'
 _FILES = (
     'profile_export_aiperf.json',
     'profile_export.jsonl',
@@ -154,16 +155,20 @@ def _record(raw: dict, index: int) -> PerfRequestRecord:
         raise ValueError('Invalid context overflow status')
     cancelled = metadata.get('was_cancelled')
     status_reason = None
-    prompt = _metric(metrics, 'usage_prompt_tokens', 'tokens')
-    prompt_source = 'server_usage' if prompt is not None else None
+    usage_prompt = _metric(metrics, 'usage_prompt_tokens', 'tokens')
+    usage_completion = _metric(metrics, 'usage_completion_tokens', 'tokens')
+    usage_total = _metric(metrics, 'usage_total_tokens', 'tokens')
+    usage_reasoning = _metric(metrics, 'usage_reasoning_tokens', 'tokens')
+    aiperf_input = _metric(metrics, 'input_sequence_length', 'tokens')
+    aiperf_output = _metric(metrics, 'output_sequence_length', 'tokens')
+    prompt, prompt_source = usage_prompt, 'server_usage'
     if prompt is None:
-        prompt = _metric(metrics, 'input_sequence_length', 'tokens')
-        prompt_source = 'aiperf_estimate' if prompt is not None else None
-    output = _metric(metrics, 'usage_completion_tokens', 'tokens')
-    output_source = 'server_usage' if output is not None else None
+        prompt, prompt_source = aiperf_input, 'aiperf_estimate'
+    output, output_source = usage_completion, 'server_usage'
     if output is None:
-        output = _metric(metrics, 'output_sequence_length', 'tokens')
-        output_source = 'aiperf_estimate' if output is not None else None
+        output, output_source = aiperf_output, 'aiperf_estimate'
+    prompt_source = prompt_source if prompt is not None else None
+    output_source = output_source if output is not None else None
     cached = _metric(metrics, 'usage_prompt_cache_read_tokens', 'tokens')
     error_code = error.get('code') if error else None
     if error_code is not None and (type(error_code) is not int or error_code < 0):
@@ -187,6 +192,20 @@ def _record(raw: dict, index: int) -> PerfRequestRecord:
         status, status_reason = 'incomplete', 'request_time_range_invalid'
     else:
         status = 'success'
+    latency = _metric(metrics, 'request_latency', 'ms', 0.001)
+    ttft = _metric(metrics, 'time_to_first_token', 'ms', 0.001)
+    itl = _metric(metrics, 'inter_token_latency', 'ms', 0.001)
+    itl_source, itl_method = 'aiperf_raw', 'aiperf_inter_token_latency'
+    if itl is None:
+        itl_source = itl_method = None
+        if status == 'success':
+            derived = derive_itl_seconds(
+                latency_seconds=latency,
+                ttft_seconds=ttft,
+                output_sequence_tokens=_integer(aiperf_output, 'output_sequence_length'),
+            )
+            itl, itl_source, itl_method = derived.seconds, derived.source, derived.method
+    record_elapsed = (end - start) / 1e9 if start is not None and end is not None and end >= start else None
     return PerfRequestRecord(
         index=index,
         request_id=metadata.get('x_request_id'),
@@ -197,14 +216,27 @@ def _record(raw: dict, index: int) -> PerfRequestRecord:
         status_reason=status_reason,
         start_ns=metadata.get('request_start_ns'),
         end_ns=metadata.get('request_end_ns'),
-        latency_seconds=_metric(metrics, 'request_latency', 'ms', 0.001),
-        ttft_seconds=_metric(metrics, 'time_to_first_token', 'ms', 0.001),
+        request_record_elapsed_seconds=record_elapsed,
+        latency_seconds=latency,
+        ttft_seconds=ttft,
+        itl_seconds=itl,
+        itl_source=itl_source,
+        itl_method=itl_method,
+        decode_duration_seconds=_metric(metrics, 'decode_duration', 'ms', 0.001),
+        http_total_seconds=_metric(metrics, 'http_req_total', 'ms', 0.001),
+        http_duration_seconds=_metric(metrics, 'http_req_duration', 'ms', 0.001),
         prompt_tokens=_integer(prompt, 'prompt_tokens'),
         prompt_tokens_source=prompt_source,
         output_tokens=_integer(output, 'output_tokens'),
         output_tokens_source=output_source,
         cached_tokens=_integer(cached, 'cached_tokens'),
         cached_tokens_source='server_usage' if cached is not None else None,
+        aiperf_input_sequence_tokens=_integer(aiperf_input, 'input_sequence_length'),
+        aiperf_output_sequence_tokens=_integer(aiperf_output, 'output_sequence_length'),
+        usage_prompt_tokens=_integer(usage_prompt, 'usage_prompt_tokens'),
+        usage_completion_tokens=_integer(usage_completion, 'usage_completion_tokens'),
+        usage_total_tokens=_integer(usage_total, 'usage_total_tokens'),
+        usage_reasoning_tokens=_integer(usage_reasoning, 'usage_reasoning_tokens'),
         error_code=error_code,
     )
 
@@ -357,7 +389,7 @@ def _statistics(summary: dict) -> list[MetricStatistics]:
             raise ValueError(f'Unsupported summary metric: {key}')
         count = _integer(_number(item.get('count')), f'{key}.count')
         statistics = {}
-        for stat in ('avg', 'min', 'max', 'p50', 'p95', 'p99', 'std'):
+        for stat in ('avg', 'min', 'max', 'p50', 'p90', 'p95', 'p99', 'std'):
             value = _number(item.get(stat))
             if value is not None:
                 if value < 0 or (key == 'request_error_rate' and value > 100):
@@ -632,26 +664,41 @@ def import_aiperf_run(arguments: AIPerfImportArguments, cancel_event: Optional[C
     return run
 
 
-def _generation(normalized_dir: str) -> Path:
+def current_generation(normalized_dir: str) -> str:
+    """The generation identity ``current.json`` publishes right now."""
     root = Path(normalized_dir).resolve(strict=True)
     pointer = _json(_owned_file(root, 'current.json'))
     identity = pointer.get('generation')
     if not isinstance(identity, str) or re.fullmatch(r'[0-9a-f]{64}', identity) is None:
         raise ValueError('Invalid result generation')
-    generation = (root / 'generations' / identity).resolve(strict=True)
-    if not generation.is_relative_to(root / 'generations'):
+    return identity
+
+
+def _generation(normalized_dir: str, generation: Optional[str] = None) -> Path:
+    """Resolve one published generation, or validate and resolve a pinned one."""
+    root = Path(normalized_dir).resolve(strict=True)
+    identity = current_generation(normalized_dir) if generation is None else generation
+    if not isinstance(identity, str) or re.fullmatch(r'[0-9a-f]{64}', identity) is None:
+        raise ValueError('Invalid result generation')
+    generation_root = root / 'generations'
+    candidate = generation_root / identity
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as error:
+        raise ValueError('Result generation is unavailable') from error
+    if not resolved.is_relative_to(generation_root.resolve(strict=True)):
         raise ValueError('Result generation escapes the result directory')
-    manifest = ImportManifest.model_validate(_json(_owned_file(generation, 'import.json')))
+    manifest = ImportManifest.model_validate(_json(_owned_file(resolved, 'import.json')))
     if manifest.input_hash != identity:
         raise ValueError('Result generation identity mismatch')
-    return generation
+    return resolved
 
 
-def load_aiperf_run(normalized_dir: str) -> PerfRunResult:
-    """Read the currently published normalized run."""
-    generation = _generation(normalized_dir)
-    run = PerfRunResult.model_validate(_json(_owned_file(generation, 'run.json')))
-    manifest = ImportManifest.model_validate(_json(_owned_file(generation, 'import.json')))
+def load_aiperf_run(normalized_dir: str, generation: Optional[str] = None) -> PerfRunResult:
+    """Read a published normalized run, pinned to *generation* when given."""
+    generation_dir = _generation(normalized_dir, generation)
+    run = PerfRunResult.model_validate(_json(_owned_file(generation_dir, 'run.json')))
+    manifest = ImportManifest.model_validate(_json(_owned_file(generation_dir, 'import.json')))
     if manifest.parser_version != _PARSER:
         return run.model_copy(
             update={
@@ -668,6 +715,7 @@ def query_aiperf_requests(
     limit: int = 100,
     phase: Optional[str] = None,
     status: Optional[str] = None,
+    generation: Optional[str] = None,
 ) -> tuple[int, list[PerfRequestRecord]]:
     """Read a bounded, stable page and total count without loading raw JSONL."""
     if type(offset) is not int or type(limit) is not int or not 0 <= offset <= 2**63 - 1 or not 1 <= limit <= 500:
@@ -676,8 +724,8 @@ def query_aiperf_requests(
         raise ValueError('Invalid request phase')
     if status is not None and status not in ('success', 'failed'):
         raise ValueError('Invalid request status')
-    generation = _generation(normalized_dir)
-    database_path = _owned_file(generation, 'requests.db')
+    generation_dir = _generation(normalized_dir, generation)
+    database_path = _owned_file(generation_dir, 'requests.db')
     database = sqlite3.connect(f'file:{quote(str(database_path))}?mode=ro', uri=True)
     try:
         conditions = []
@@ -698,10 +746,10 @@ def query_aiperf_requests(
         database.close()
 
 
-def request_observation_bounds(normalized_dir: str) -> RequestObservationBounds:
+def request_observation_bounds(normalized_dir: str, generation: Optional[str] = None) -> RequestObservationBounds:
     """Return the extent of timed profiling requests without calling it a phase window."""
-    generation = _generation(normalized_dir)
-    database_path = _owned_file(generation, 'requests.db')
+    generation_dir = _generation(normalized_dir, generation)
+    database_path = _owned_file(generation_dir, 'requests.db')
     database = sqlite3.connect(f'file:{quote(str(database_path))}?mode=ro', uri=True)
     try:
         total = database.execute("SELECT COUNT(*) FROM requests WHERE phase = 'profiling'").fetchone()[0]
@@ -715,18 +763,18 @@ def request_observation_bounds(normalized_dir: str) -> RequestObservationBounds:
         database.close()
 
 
-def observed_cache_usage(normalized_dir: str) -> CacheObservation:
+def observed_cache_usage(normalized_dir: str, generation: Optional[str] = None) -> CacheObservation:
     """Aggregate only successful requests with valid server-reported cache usage."""
-    generation = _generation(normalized_dir)
-    manifest = ImportManifest.model_validate(_json(_owned_file(generation, 'import.json')))
-    if manifest.parser_version not in (_PARSER, 'aiperf-0.13.0-v2', 'aiperf-0.13.0-v3'):
+    generation_dir = _generation(normalized_dir, generation)
+    manifest = ImportManifest.model_validate(_json(_owned_file(generation_dir, 'import.json')))
+    if manifest.parser_version not in (_PARSER, 'aiperf-0.13.0-v2', 'aiperf-0.13.0-v3', 'aiperf-0.13.0-v4'):
         return CacheObservation(
             observed_requests=0,
             successful_requests=None,
             availability='unavailable',
             reason='Legacy parser cannot verify request completion; reimport raw artifacts',
         )
-    database_path = _owned_file(generation, 'requests.db')
+    database_path = _owned_file(generation_dir, 'requests.db')
     database = sqlite3.connect(f'file:{quote(str(database_path))}?mode=ro', uri=True)
     successful = observed = cached = prompt = 0
     try:
@@ -767,9 +815,9 @@ def observed_cache_usage(normalized_dir: str) -> CacheObservation:
     )
 
 
-def request_cache_groups(normalized_dir: str) -> CacheRequestGroups:
+def request_cache_groups(normalized_dir: str, generation: Optional[str] = None) -> CacheRequestGroups:
     """Calculate exact nearest-rank latency distributions for verified request cache usage."""
-    coverage = observed_cache_usage(normalized_dir)
+    coverage = observed_cache_usage(normalized_dir, generation)
     if coverage.availability != 'available':
         return CacheRequestGroups(
             availability='unavailable',
@@ -784,8 +832,8 @@ def request_cache_groups(normalized_dir: str) -> CacheRequestGroups:
             successful_requests=coverage.successful_requests,
             observed_requests=coverage.observed_requests,
         )
-    generation = _generation(normalized_dir)
-    database_path = _owned_file(generation, 'requests.db')
+    generation_dir = _generation(normalized_dir, generation)
+    database_path = _owned_file(generation_dir, 'requests.db')
     database = sqlite3.connect(f'file:{quote(str(database_path))}?mode=ro', uri=True)
     valid = (
         "phase='profiling' AND status='success' "
@@ -801,7 +849,7 @@ def request_cache_groups(normalized_dir: str) -> CacheRequestGroups:
         criterion = f"{where} AND json_type(record_json, '$.{field}') IN ('integer', 'real')"
         count, mean = database.execute(f'SELECT COUNT(*), AVG({expression}) FROM requests WHERE {criterion}').fetchone()
         values = []
-        for percentile in (0.5, 0.95, 0.99):
+        for percentile in (0.5, 0.9, 0.95, 0.99):
             if not count:
                 values.append(None)
                 continue
@@ -812,7 +860,9 @@ def request_cache_groups(normalized_dir: str) -> CacheRequestGroups:
                     (index,),
                 ).fetchone()[0]
             )
-        return RequestLatencyDistribution(count=count, mean=mean, p50=values[0], p95=values[1], p99=values[2])
+        return RequestLatencyDistribution(
+            count=count, mean=mean, p50=values[0], p90=values[1], p95=values[2], p99=values[3]
+        )
 
     try:
         groups = []
@@ -845,6 +895,7 @@ def query_node_metrics(
     end_ns: Optional[int] = None,
     offset: int = 0,
     limit: int = 500,
+    generation: Optional[str] = None,
 ) -> tuple[int, list[NodeMetricSample]]:
     """Read a bounded source-attributed node time-series page."""
     if type(offset) is not int or type(limit) is not int or not 0 <= offset <= 2**63 - 1 or not 1 <= limit <= 2000:
@@ -869,8 +920,8 @@ def query_node_metrics(
             clauses.append(f'{column} {operation} ?')
             parameters.append(value)
     where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
-    generation = _generation(normalized_dir)
-    database_path = _owned_file(generation, 'requests.db')
+    generation_dir = _generation(normalized_dir, generation)
+    database_path = _owned_file(generation_dir, 'requests.db')
     database = sqlite3.connect(f'file:{quote(str(database_path))}?mode=ro', uri=True)
     try:
         total = database.execute('SELECT COUNT(*) FROM node_samples' + where, parameters).fetchone()[0]
@@ -894,10 +945,12 @@ class NodeSeriesNotFound(ValueError):
     """The requested node and metric do not occur in the archive."""
 
 
-def query_node_metric_series(normalized_dir: str, query: NodeMetricSeriesQuery) -> NodeMetricSeries:
+def query_node_metric_series(
+    normalized_dir: str, query: NodeMetricSeriesQuery, generation: Optional[str] = None
+) -> NodeMetricSeries:
     """Select equally spaced raw points from one labelled series without averaging peaks."""
-    generation = _generation(normalized_dir)
-    database_path = _owned_file(generation, 'requests.db')
+    generation_dir = _generation(normalized_dir, generation)
+    database_path = _owned_file(generation_dir, 'requests.db')
     database = sqlite3.connect(f'file:{quote(str(database_path))}?mode=ro', uri=True)
     clauses = ['node_id = ?', 'metric_name = ?']
     parameters: list = [query.node_id, query.metric_name]

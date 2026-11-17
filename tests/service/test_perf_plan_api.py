@@ -536,3 +536,89 @@ def test_preview_module_never_returns_local_paths_for_runtime() -> None:
     assert preview.runtime.runtime_status == 'available'
     assert preview.runtime.runtime_version == '0.13.0'
     assert os.path.isabs(preview.normalized.connection.tokenizer_path)
+
+
+def test_runtime_binding_reaches_the_worker_payload_and_stays_out_of_the_archive(
+    client, tmp_path: Path, queue
+) -> None:
+    """The API key and metrics targets travel beside the plan, never inside it."""
+    app, http = client
+    app.config['AIPERF_EXECUTABLE'] = str(_fake_aiperf(tmp_path))
+    text = _text()
+    body = {
+        'content': text,
+        'expected_plan_hash': _plan_hash(http, text),
+        'acknowledged': _acks(http, text),
+        'runtime': {'api_key': 'sk-runtime-only', 'telemetry': {'required': False, 'targets': []}},
+    }
+    response = http.post(
+        '/api/v1/perf/plans/invoke?async=1',
+        headers={'EvalScope-Task-Id': TASK_ID},
+        json=body,
+    )
+    assert response.status_code == 202
+    assert 'sk-runtime-only' not in response.get_data(as_text=True)
+
+    _, job = queue.jobs[0]
+    payload = job.args[2]
+    assert payload.runtime.api_key.get_secret_value() == 'sk-runtime-only'
+    for path in (Path(log.OUTPUT_DIR) / TASK_ID).rglob('*'):
+        if path.is_file():
+            assert 'sk-runtime-only' not in path.read_text(errors='ignore'), path
+
+
+@pytest.mark.parametrize(
+    'runtime',
+    [
+        'sk-runtime-only',
+        {'api_key': 'sk-runtime-only', 'unexpected': 1},
+        {'telemetry': {'required': True, 'targets': []}},
+    ],
+)
+def test_an_invalid_runtime_binding_is_rejected_before_any_reservation(
+    client, tmp_path: Path, queue, runtime
+) -> None:
+    app, http = client
+    app.config['AIPERF_EXECUTABLE'] = str(_fake_aiperf(tmp_path))
+    text = _text()
+    response = http.post(
+        '/api/v1/perf/plans/invoke?async=1',
+        headers={'EvalScope-Task-Id': TASK_ID},
+        json={
+            'content': text,
+            'expected_plan_hash': _plan_hash(http, text),
+            'acknowledged': _acks(http, text),
+            'runtime': runtime,
+        },
+    )
+    assert response.status_code == 400
+    assert 'Invalid plan runtime binding' in response.json['error']
+    assert queue.jobs == []
+    assert not (Path(log.OUTPUT_DIR) / TASK_ID).exists()
+
+
+def test_changing_the_output_limits_after_preview_forces_a_new_preview(client, tmp_path: Path, queue) -> None:
+    """A stale hash names the plan that was previewed, so an OSL edit cannot slip through."""
+    app, http = client
+    app.config['AIPERF_EXECUTABLE'] = str(_fake_aiperf(tmp_path))
+    original = (FIXTURES / 'matrix-osl-load.json').read_text()
+    stale_hash = _plan_hash(http, original)
+
+    document = json.loads(original)
+    document['load']['output_token_limits'] = [128, 512]
+    changed = json.dumps(document)
+
+    response = http.post(
+        '/api/v1/perf/plans/invoke?async=1',
+        headers={'EvalScope-Task-Id': TASK_ID},
+        json={
+            'content': changed,
+            'expected_plan_hash': stale_hash,
+            'acknowledged': _acks(http, changed),
+        },
+    )
+    assert response.status_code == 409
+    assert response.json['plan_hash'] == _plan_hash(http, changed)
+    assert response.json['plan_hash'] != stale_hash
+    assert queue.jobs == []
+    assert not (Path(log.OUTPUT_DIR) / TASK_ID).exists()

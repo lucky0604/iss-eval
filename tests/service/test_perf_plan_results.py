@@ -210,3 +210,70 @@ def test_a_lost_queued_plan_is_reported_rather_than_replayed(root: Path) -> None
     write_submission(perf_root, submission.model_copy(update={'state': 'queued'}))
     assert plan_progress(perf_root, queued=False)['plan_state'] == 'lost'
     assert plan_progress(perf_root, queued=True)['plan_state'] == 'queued'
+
+
+def test_progress_names_the_tier_being_executed(root: Path) -> None:
+    """The task list must show this tier's ISL/OSL/ratio/load point, not the first run's."""
+    from evalscope.service.perf_plans import plan_progress
+
+    plan = compile_plan_text((FIXTURES / 'matrix-osl-load.json').read_text())
+    rows = [
+        PlanRunState(
+            run_id=run.run_id,
+            order=run.order,
+            workload_kind=run.workload_kind,
+            message_structure=run.message_structure,
+            load_mode=run.load_mode,
+            concurrency=run.concurrency,
+            rate=run.rate,
+            input_tokens=run.input_tokens,
+            output_token_limit=run.output_token_limit,
+            target_ratio=run.target_ratio,
+            repetition=run.repetition,
+            formal_requests=run.request_count,
+            primer_requests=run.primer_requests,
+        )
+        for run in plan.runs
+    ]
+    current = next(run for run in plan.runs if run.output_token_limit == 1000 and run.input_tokens == 1024)
+    manifest = PerfPlanManifest(
+        plan_hash=plan.plan_hash,
+        normalized_hash=plan.normalized_hash,
+        semantic_fingerprint=plan.semantic_fingerprint,
+        workload_semantics=plan.workload_semantics,
+        status='running',
+        phase='profiling',
+        current_run=current.run_id,
+        completed_runs=3,
+        total_runs=plan.run_count,
+        runs=rows,
+    )
+    progress = plan_progress(_archive(root, manifest=manifest))
+
+    assert progress['completed_subruns'] == 3 and progress['total_subruns'] == 80
+    assert progress['current_run'] == {
+        'run_id': current.run_id,
+        'order': current.order,
+        'workload_kind': 'token_prefix',
+        'load_mode': 'closed_loop',
+        'concurrency': current.concurrency,
+        'rate': None,
+        'input_tokens': 1024,
+        'output_token_limit': 1000,
+        'target_ratio': current.target_ratio,
+        'repetition': current.repetition,
+    }
+
+
+def test_manifest_rows_without_tier_dimensions_still_read(root: Path) -> None:
+    """Manifests written before the output-length axis keep their old shape."""
+    row = PlanRunState(
+        run_id='i000-r000-l000-n000',
+        order=0,
+        workload_kind='token_prefix',
+        message_structure='user_only',
+        concurrency=1,
+        formal_requests=8,
+    )
+    assert row.load_mode is None and row.rate is None
+    assert row.input_tokens is None and row.output_token_limit is None and row.repetition is None

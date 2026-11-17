@@ -11,7 +11,7 @@ from evalscope.utils.logger import get_logger
 from evalscope.version import __version__
 
 from .api_models import ConfigResponse
-from .blueprints import bp_eval, bp_perf, bp_reports, bp_tasks
+from .blueprints import bp_eval, bp_perf, bp_perf_reports, bp_reports, bp_tasks
 from .responses import json_response
 from .utils import OUTPUT_DIR as _DEFAULT_ROOT
 from .utils import queue_health
@@ -55,8 +55,19 @@ def create_app(outputs: str = None):
     # Register blueprints
     app.register_blueprint(bp_eval)
     app.register_blueprint(bp_perf)
+    app.register_blueprint(bp_perf_reports)
     app.register_blueprint(bp_reports)
     app.register_blueprint(bp_tasks)
+
+    # Exports left queued or running by a previous process must not promise
+    # artifacts they never wrote. Scan is best-effort: a read-only or missing
+    # outputs root never blocks the dashboard from starting.
+    try:
+        from .perf_exports import recover_exports
+
+        recover_exports(app.config['OUTPUTS_ROOT'] or _DEFAULT_ROOT)
+    except Exception as error:  # noqa: BLE001 - startup must survive a broken archive tree
+        logger.warning(f'Export recovery skipped: {error}')
 
     @app.route('/health', methods=['GET'])
     def health_check():

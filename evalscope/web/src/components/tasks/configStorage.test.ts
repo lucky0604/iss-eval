@@ -71,7 +71,7 @@ describe('Browser configuration storage', () => {
   it('does not save or export metrics tokens or credentials embedded in URLs', () => {
     const state = savedWorkspace()
     state.engine = 'aiperf'
-    state.aiperf = { ...DEFAULT_AIPERF, tokenizer: '/tokenizer', nodes: [
+    state.aiperf = { ...DEFAULT_AIPERF, runType: 'cache', tokenizer: '/tokenizer', nodes: [
       { id: 'p', nodeId: 'p', role: 'prefill', engine: 'vllm', url: 'http://p:9000/metrics', labels: 'model=a', bearerToken: 'node-secret' },
       { id: 'd', nodeId: 'd', role: 'decode', engine: 'sglang', url: 'http://user:pass@d/metrics?key=other-secret', labels: '', bearerToken: 'other-token' },
     ] }
@@ -190,7 +190,7 @@ describe('Browser configuration storage', () => {
     delete old.aiperfTemplates
     expect(parseImport(JSON.stringify(old))).toMatchObject({ version: 2, aiperfTemplates: [] })
 
-    state.aiperfTemplates = [{ id: 'aiperf', name: 'Cache', value: { ...DEFAULT_AIPERF, tokenizer: '/tok', nodes: [
+    state.aiperfTemplates = [{ id: 'aiperf', name: 'Cache', value: { ...DEFAULT_AIPERF, runType: 'cache', tokenizer: '/tok', nodes: [
       { id: 'p', nodeId: 'p', role: 'prefill', engine: 'vllm', url: 'http://p/metrics', labels: '', bearerToken: 'private' },
     ] } }]
     const imported = parseImport(exportLibrary(state, true))
@@ -209,6 +209,33 @@ describe('Browser configuration storage', () => {
     expect(merged.connections[1].name).toBe('Server A (2)')
     expect(merged.connections[1].id).not.toBe('a')
     expect(state.connections).toHaveLength(1)
+  })
+  it('reads a draft saved before the matrix as a one-point axis and round-trips the matrix fields', () => {
+    const state = savedWorkspace()
+    const old = { ...DEFAULT_AIPERF, runType: 'cache', tokenizer: '/tokenizer',
+      inputTokens: '2048', outputTokens: '64' } as unknown as Record<string, unknown>
+    delete old.matrixInputLengths
+    delete old.matrixOutputLimits
+    state.engine = 'aiperf'
+    state.aiperf = old as unknown as typeof state.aiperf
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(state))
+    const migrated = readWorkspace()
+    expect(migrated).toMatchObject({ ok: true, value: { aiperf: {
+      matrixInputLengths: '2048', matrixOutputLimits: '64',
+    } } })
+    if (!migrated.ok) return
+    expect(writeWorkspace(migrated.value).ok).toBe(true)
+    expect(readWorkspace()).toMatchObject({ ok: true, value: { aiperf: {
+      runType: 'cache', matrixInputLengths: '2048',
+    } } })
+  })
+  it('rejects an unknown matrix workload when reading saved state', () => {
+    const state = savedWorkspace()
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(state))
+    const raw = JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY)!)
+    raw.aiperf.runType = 'ensemble'
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(raw))
+    expect(readWorkspace()).toEqual({ ok: false, error: 'invalidStorage' })
   })
   it('saves drafts as explicit independent templates', () => {
     const draft = { ...DEFAULT_EVAL, datasets: 'gsm8k' }

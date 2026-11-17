@@ -449,3 +449,79 @@ def test_import_quality_can_only_degrade_when_cache_verification_runs(
         assert any(reason.endswith(':structural_damage') for reason in outcome.quality_reasons)
     if expected_quality == 'partial':
         assert outcome.quality_reasons
+
+
+def test_runtime_binding_supplies_secrets_without_entering_the_archive(tmp_path: Path, monkeypatch) -> None:
+    """Credentials and metrics targets arrive beside the plan, never inside it."""
+    from pydantic import SecretStr
+
+    from evalscope.perf.executors.arguments import TelemetryConfiguration, TelemetryTarget
+    from evalscope.perf.plans.execution import PlanRuntimeBinding, _arguments
+
+    root = tmp_path / 'task'
+    root.mkdir()
+    plan = compile_plan_text(json.dumps(_managed_plan()))
+    observed = []
+
+    def fake_scenario(arguments, context, scenario, tokenizer, pool, cancel_event, on_phase=None):
+        observed.append(
+            (
+                arguments.api_key.get_secret_value() if arguments.api_key is not None else None,
+                [target.url for target in arguments.telemetry.targets],
+            )
+        )
+        return CacheScenarioOutcome(status='completed', quality='partial', cleanup_confirmed=True)
+
+    monkeypatch.setattr(execution_module, 'run_cache_scenario', fake_scenario)
+    binding = PlanRuntimeBinding(
+        api_key=SecretStr('sk-runtime-only'),
+        telemetry=TelemetryConfiguration(
+            targets=[TelemetryTarget(node_id='n1', role='decode', engine='vllm', url='http://127.0.0.1:9090')]
+        ),
+    )
+    outcome = run_perf_plan(
+        plan,
+        _context(root),
+        tokenizer=object(),
+        token_pool=[1],
+        tokenizer_id='tok',
+        template_id='tpl',
+        binding=binding,
+    )
+
+    assert outcome.status == 'completed'
+    assert observed == [('sk-runtime-only', ['http://127.0.0.1:9090'])] * plan.run_count
+    # Without a binding no credential is invented from ambient state.
+    assert _arguments(plan, run=plan.runs[0]).api_key is None
+    for path in root.rglob('*'):
+        if path.is_file():
+            assert 'sk-runtime-only' not in path.read_text(errors='ignore'), path
+
+
+@pytest.mark.parametrize(
+    ('fixture', 'binding', 'message'),
+    [
+        (
+            'synthetic-small.json',
+            {'api_key': 'sk-runtime-only'},
+            'does not pass an API key',
+        ),
+        (
+            'synthetic-small.json',
+            {
+                'telemetry': {
+                    'required': False,
+                    'targets': [{'node_id': 'n1', 'role': 'decode', 'engine': 'vllm', 'url': 'http://127.0.0.1:9090'}],
+                }
+            },
+            'do not collect node metrics',
+        ),
+        ('managed-small.json', {'telemetry': {'required': True, 'targets': []}}, 'no configured targets'),
+    ],
+)
+def test_runtime_binding_rejects_what_the_plan_cannot_represent(fixture: str, binding: dict, message: str) -> None:
+    from evalscope.perf.plans.execution import PlanRuntimeBinding, validate_plan_runtime_binding
+
+    plan = compile_plan_text((FIXTURES / fixture).read_text())
+    with pytest.raises(ValueError, match=message):
+        validate_plan_runtime_binding(plan, PlanRuntimeBinding.model_validate(binding))

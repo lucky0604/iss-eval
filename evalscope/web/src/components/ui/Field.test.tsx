@@ -134,6 +134,21 @@ describe('Field — autoComplete passthrough', () => {
   })
 })
 
+describe('Field — real parameter name', () => {
+  it('shows the parameter name beside the localized title without changing the accessible name', () => {
+    renderTextField({ paramName: 'output_token_limits' })
+
+    const input = screen.getByRole('textbox')
+    const label = document.getElementById(input.getAttribute('aria-labelledby') as string)
+    expect(label).toHaveTextContent('output_token_limits')
+    expect(input).toHaveAccessibleName()
+    expect(input).not.toHaveAccessibleName(/output_token_limits/)
+    // The parameter name is decoration for sighted readers: assistive technology
+    // announces the localized title only.
+    expect(label?.querySelector('[aria-hidden="true"]')).toHaveTextContent('output_token_limits')
+  })
+})
+
 describe('Field — accessibility (axe)', () => {
   it('has no axe violations with an associated error', async () => {
     const { container } = renderTextField({ error: 'Model name is required' })

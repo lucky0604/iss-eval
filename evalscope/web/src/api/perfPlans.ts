@@ -38,6 +38,33 @@ export function exportPerfPlan(content: string, signal?: AbortSignal): Promise<P
   return apiPostValidated('/api/v1/perf/plans/export', { content }, { signal })
 }
 
+/** One metrics endpoint supplied next to the plan, never inside its text. */
+export interface PlanRuntimeTelemetryTarget {
+  node_id: string
+  role: 'prefill' | 'decode'
+  engine: 'vllm' | 'sglang'
+  url: string
+  labels: Record<string, string>
+  headers?: Record<string, string>
+}
+
+/**
+ * Runtime-only submission inputs.
+ *
+ * A portable plan carries no credential and no metrics target, so the model key
+ * and node endpoints travel beside it. The worker payload receives them; the
+ * plan file, its hash and its archive never do.
+ */
+export interface PlanRuntimeBinding {
+  api_key?: string
+  telemetry?: {
+    required: boolean
+    sample_interval_seconds: number
+    max_scrape_gap_seconds?: number
+    targets: PlanRuntimeTelemetryTarget[]
+  }
+}
+
 /**
  * Submit a plan for one explicit task id.
  *
@@ -47,13 +74,18 @@ export function exportPerfPlan(content: string, signal?: AbortSignal): Promise<P
 export function submitPerfPlan(
   content: string,
   taskId: string,
-  options: { acknowledged?: string[]; expectedPlanHash?: string } = {},
+  options: { acknowledged?: string[]; expectedPlanHash?: string; runtime?: PlanRuntimeBinding } = {},
 ): Promise<PerfPlanSubmitResponse> {
   const headers: Record<string, string> = { 'EvalScope-Task-Id': taskId }
   if (options.expectedPlanHash) headers['EvalScope-Plan-Hash'] = options.expectedPlanHash
   return apiPostValidated(
     '/api/v1/perf/plans/invoke',
-    { content, acknowledged: options.acknowledged ?? [], expected_plan_hash: options.expectedPlanHash },
+    {
+      content,
+      acknowledged: options.acknowledged ?? [],
+      expected_plan_hash: options.expectedPlanHash,
+      ...(options.runtime ? { runtime: options.runtime } : {}),
+    },
     { headers, params: { async: 1 } },
   )
 }

@@ -13,6 +13,7 @@ import KpiStrip from '@/components/ui/KpiStrip'
 import ErrorAlert from '@/components/ui/ErrorAlert'
 import PerfChartGroup from '@/components/perf/PerfChartGroup'
 import PerfRunsTab from '@/components/perf/PerfRunsTab'
+import PerfReportView from '@/components/perf/PerfReportView'
 import NodeWindowPanel from '@/components/perf/NodeWindowPanel'
 import { CapabilityNotice, PerformanceQualityBanner, PerformanceResultHeader } from '@/components/perf/PerformanceResultShell'
 import { capabilityState, isCapabilityAvailable, resultTabLabelKey } from '@/domain/perf/capabilities'
@@ -23,7 +24,7 @@ import { formatMetric } from '@/domain/metric'
 import { Lightbulb } from 'lucide-react'
 import type { PerfDetailResponse } from '@/api/types'
 
-type TabKey = 'overview' | 'charts' | 'runs' | 'nodes'
+type TabKey = 'numeric' | 'overview' | 'charts' | 'runs' | 'nodes'
 
 /** Return a shallow copy of `info` with the given keys removed. */
 function omitKeys(info: Record<string, string>, keys: string[]): Record<string, string> {
@@ -121,7 +122,10 @@ export default function PerfReportDetailPage() {
   // the user switch tabs; the pick is scoped to the report it was made on.
   const tabScope = `${rootPath}\0${path}\0${data?.num_runs ?? ''}`
   const [pickedTab, setActiveTab] = useScopedState<TabKey | null>(tabScope, null)
-  const activeTab: TabKey = pickedTab ?? (singleRun && data ? 'runs' : 'overview')
+  // AIPerf archives open on the unified numeric report; other archives keep the
+  // overview default but can still open the numeric tab.
+  const numericDefault = data?.engine === 'aiperf'
+  const activeTab: TabKey = pickedTab ?? (numericDefault ? 'numeric' : singleRun && data ? 'runs' : 'overview')
 
   const runMode = perfRunMode(data)
   const inputOnly = runMode !== 'generation'
@@ -172,10 +176,12 @@ export default function PerfReportDetailPage() {
 
   const tabs = singleRun
     ? [
+        { key: 'numeric', label: t('perf.report.openLink'), panelId: 'perf-numeric-panel' },
         { key: 'overview', label: t('perf.archive.overview'), panelId: 'perf-overview-panel' },
         { key: 'runs', label: t('perf.archive.runsTab'), panelId: 'perf-runs-panel' },
       ]
     : [
+        { key: 'numeric', label: t('perf.report.openLink'), panelId: 'perf-numeric-panel' },
         { key: 'overview', label: t('perf.archive.overview'), panelId: 'perf-overview-panel' },
         ...(isCapabilityAvailable(data.capabilities, 'sweep')
           ? [{ key: 'charts', label: t('perf.archive.charts'), panelId: 'perf-charts-panel' }]
@@ -302,6 +308,7 @@ export default function PerfReportDetailPage() {
         activeKey={activeTab}
         onChange={(k) => setActiveTab(k as TabKey)}
         panels={{
+          'perf-numeric-panel': <PerfReportView location={{ rootPath, path }} />,
           'perf-overview-panel': overviewPanel,
           ...(!singleRun ? { 'perf-charts-panel': chartsPanel } : {}),
           'perf-runs-panel': runsPanel,

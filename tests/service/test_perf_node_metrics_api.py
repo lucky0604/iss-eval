@@ -11,8 +11,12 @@ from evalscope.perf.experiments.planner import plan_cache_experiment
 from evalscope.perf.integrations.aiperf.metrics import analyze_node_metrics
 from evalscope.perf.results.aiperf_import import import_aiperf_run
 from evalscope.perf.results.models import AIPerfImportArguments
+from evalscope.service import perf_reports
 from evalscope.service.app import create_app
 from evalscope.service.blueprints import perf
+from evalscope.service.perf_exports import ExportSpec
+from evalscope.service.perf_exports.collect import collect
+from evalscope.service.perf_exports.html import render_html
 from evalscope.service.utils import log
 from tests.perf.test_experiment_planner import _config
 
@@ -177,3 +181,157 @@ def test_series_sampling_matches_labels_and_full_window(archive, monkeypatch: py
     monkeypatch.setattr('evalscope.perf.results.aiperf_import._MAX_NODE_SERIES_CANDIDATES', 2)
     budget = client.get(base, query_string=params)
     assert budget.status_code == 413 and 'narrow the time window' in budget.json['error']
+
+@pytest.fixture
+def node_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A real cache-experiment archive whose node analysis came from a real import."""
+    monkeypatch.setattr(log, 'OUTPUT_DIR', str(tmp_path))
+    monkeypatch.setattr(perf, 'OUTPUT_DIR', str(tmp_path))
+    plan = plan_cache_experiment(_config(), 'node-task', 'tokenizer', 'template')
+    item = plan.subruns[0]
+    root = tmp_path / 'node-task' / 'perf'
+    run = root / 'runs' / item.subrun_id
+    raw = run / 'raw' / 'aiperf'
+    raw.mkdir(parents=True)
+    for name in ('profile_export.jsonl', 'profile_export_aiperf.json', 'phase_manifest.json'):
+        shutil.copyfile(FIXTURES / name, raw / name)
+    phase = next(
+        row for row in json.loads((raw / 'phase_manifest.json').read_text())['phases']
+        if row['phase_kind'] == 'profiling'
+    )
+    start, end = phase['start_ns'], phase['end_ns']
+    (raw / 'server_metrics_export.json').write_text(json.dumps({
+        'schema_version': '1.1', 'aiperf_version': '0.13.0',
+        'metrics': {
+            'vllm:num_requests_waiting': {'type': 'gauge'},
+            'vllm:prefix_cache_hits': {'type': 'counter'},
+            'vllm:prefix_cache_queries': {'type': 'counter'},
+        },
+    }))
+    events = []
+    for endpoint, waiting, hits, queries in (
+        ('http://127.0.0.1:18081/metrics', (2, 3), (10, 18), (20, 30)),
+        ('http://127.0.0.1:18082/metrics', (7, 9), (40, 52), (80, 100)),
+    ):
+        # Scrapes before and after the phase bracket the counters; the two
+        # inside it are the gauge samples the window mean uses.
+        for index, timestamp in enumerate((
+            start - 1_000_000, start + 1_000_000, end - 1_000_000, end + 1_000_000
+        )):
+            sample = 0 if index < 2 else 1
+            events.append({
+                'endpoint_url': endpoint,
+                'timestamp_ns': timestamp,
+                'metrics': {
+                    'vllm:num_requests_waiting': [{'labels': {'model': 'fixture'}, 'value': waiting[sample]}],
+                    'vllm:prefix_cache_hits': [{'labels': {'model': 'fixture'}, 'value': hits[sample]}],
+                    'vllm:prefix_cache_queries': [{'labels': {'model': 'fixture'}, 'value': queries[sample]}],
+                },
+            })
+    (raw / 'server_metrics_export.jsonl').write_text(''.join(json.dumps(event) + '\n' for event in events))
+    import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(run / 'normalized'), targets=[
+        {'node_id': 'p', 'role': 'prefill', 'engine': 'vllm', 'url': 'http://127.0.0.1:18081/metrics',
+         'labels': {'model': 'fixture'}},
+        {'node_id': 'd', 'role': 'decode', 'engine': 'vllm', 'url': 'http://127.0.0.1:18082/metrics',
+         'labels': {'model': 'fixture'}},
+    ]))
+    (root / 'experiment_plan.json').write_text(plan.model_dump_json())
+    (root / 'experiment.json').write_text(json.dumps({
+        'schema_version': '1.0', 'plan_hash': plan.plan_hash, 'status': 'completed', 'completed_subruns': 1,
+        'total_subruns': len(plan.subruns), 'subruns': [
+            {'subrun_id': row.subrun_id, 'status': 'completed' if row == item else 'not_started',
+             'scenario': f'runs/{row.subrun_id}/scenario.json' if row == item else None}
+            for row in plan.subruns],
+    }))
+    (run / 'scenario.json').write_text(json.dumps({'status': 'completed', 'target_ratio': item.target_ratio,
+        'normalized': 'normalized', 'node_analysis': 'node_analysis.json'}))
+    analysis = analyze_node_metrics(str(run / 'normalized'), max(end - start, 1) + 10)
+    (run / 'node_analysis.json').write_text(analysis.model_dump_json())
+    return root, run, item, analysis
+
+
+def _snapshot(tmp_path: Path, root: Path) -> perf_reports.ReportSnapshot:
+    return perf_reports.load_report_snapshot(
+        outputs_root=str(tmp_path), root_path=str(root.parent.parent), rel_path=f'{root.parent.name}/perf'
+    )
+
+
+def test_persisted_node_analysis_reaches_the_report_and_the_print_export(node_archive, tmp_path: Path) -> None:
+    root, _run, item, analysis = node_archive
+    assert analysis.series, 'the import plus analysis must produce real series'
+    snapshot = _snapshot(tmp_path, root)
+    assert snapshot.document.capabilities.node_metrics.availability == 'available'
+    row = next(row for row in snapshot.document.runs if row.run_id == item.subrun_id)
+    assert row.nodes is not None
+    assert row.nodes.window_source == 'aiperf_phase'
+    assert row.nodes.max_gap_ns is not None and row.nodes.max_gap_ns > 0
+    # Each planned node keeps its own series; no cross-node merge.
+    assert {metric.node_id for metric in row.nodes.metrics} == {'p', 'd'}
+    assert {metric.role for metric in row.nodes.metrics} == {'prefill', 'decode'}
+    waiting = {
+        metric.node_id: metric for metric in row.nodes.metrics
+        if metric.metric_name.endswith('num_requests_waiting')
+    }
+    assert set(waiting) == {'p', 'd'}
+    # A gauge window mean is time weighted between the two scrapes, so it sits
+    # between the observed samples rather than repeating either one.
+    assert 2 < waiting['p'].statistic.value < 3
+    assert 7 < waiting['d'].statistic.value < 9
+    for metric in row.nodes.metrics:
+        assert metric.statistic is not None
+        assert metric.statistic.availability in ('available', 'partial')
+        assert metric.statistic.boundary is not None and metric.statistic.boundary != 'unknown'
+        if metric.statistic.coverage is not None:
+            assert 0 <= metric.statistic.coverage <= 1
+        if metric.statistic.availability == 'partial':
+            assert metric.statistic.reason
+    assert waiting['p'].metric_unit and waiting['d'].metric_unit
+    ratios = {ratio.node_id: ratio for ratio in row.nodes.cache_ratios}
+    assert ratios['p'].ratio == pytest.approx(0.8) and ratios['d'].ratio == pytest.approx(0.6)
+
+    dataset = collect(snapshot)
+    spec = ExportSpec(kind='html', path=f'{root.parent.name}/perf', root_path=str(tmp_path), locale='zh')
+    html = render_html(dataset, spec, generated_at='2026-11-17T00:00:00Z')
+    assert snapshot.document.snapshot_id in html
+    assert '节点监控' in html and 'vllm:num_requests_waiting' in html
+    assert f'{waiting["p"].statistic.value:.4f}' in html
+    assert f'{waiting["d"].statistic.value:.4f}' in html
+    assert 'prefill' in html and 'decode' in html
+    assert '80.00' in html and '60.00' in html
+
+
+def test_changed_node_data_stamps_a_new_snapshot_and_leaves_the_old_one_intact(node_archive, tmp_path: Path) -> None:
+    root, run, item, _analysis = node_archive
+    first = _snapshot(tmp_path, root)
+    first_id = first.document.snapshot_id
+    first_row = next(row for row in first.document.runs if row.run_id == item.subrun_id)
+    first_metric = next(metric for metric in first_row.nodes.metrics if metric.metric_name.endswith('num_requests_waiting'))
+    first_value = first_metric.statistic.value
+
+    data = json.loads((run / 'node_analysis.json').read_text())
+    changed = False
+    for series in data['series']:
+        statistic = series.get('statistic')
+        if statistic is not None and statistic.get('value') is not None:
+            statistic['value'] = first_value + 1.0
+            changed = True
+            break
+    assert changed
+    (run / 'node_analysis.json').write_text(json.dumps(data))
+
+    second = _snapshot(tmp_path, root)
+    assert second.document.snapshot_id != first_id
+    second_row = next(row for row in second.document.runs if row.run_id == item.subrun_id)
+    second_value = next(
+        metric.statistic.value
+        for metric in second_row.nodes.metrics
+        if metric.node_id == first_metric.node_id and metric.metric_name == first_metric.metric_name
+        and metric.labels == first_metric.labels
+    )
+    assert second_value == first_value + 1.0
+    # The old snapshot object still describes the state it pinned.
+    assert first_row.nodes.metrics[0].statistic.value is not None
+    assert next(
+        metric.statistic.value for metric in first_row.nodes.metrics
+        if metric.metric_name == first_metric.metric_name and metric.node_id == first_metric.node_id
+    ) == first_value

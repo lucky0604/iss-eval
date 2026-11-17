@@ -84,6 +84,12 @@ export interface WebApiContracts {
   perf_detail_response: PerfDetailResponse;
   perf_engines_response: PerfEnginesResponse;
   perf_entry_list_response: PerfEntryListResponse;
+  perf_export_artifact: PerfExportArtifact;
+  perf_export_capabilities_response: PerfExportCapabilitiesResponse;
+  perf_export_response: PerfExportResponse;
+  perf_export_spec: PerfExportSpec;
+  perf_export_status_response: PerfExportStatusResponse;
+  perf_export_view: PerfExportView;
   perf_invoke_response: PerfInvokeResponse;
   perf_live_response: PerfLiveResponse;
   perf_metrics: PerfMetrics;
@@ -94,6 +100,10 @@ export interface WebApiContracts {
   perf_plan_response: PerfPlanResponse;
   perf_plan_run_view: PerfPlanRunView;
   perf_plan_submit_response: PerfPlanSubmitResponse;
+  perf_report_charts_response: PerfReportChartsResponse;
+  perf_report_requests_response: PerfReportRequestsResponse;
+  perf_report_runs_response: PerfReportRunsResponse;
+  perf_report_summary_response: PerfReportSummaryResponse;
   perf_requests_response: PerfRequestsResponse;
   perf_run_item: PerfRunItem;
   perf_run_summary: PerfRunSummary;
@@ -108,7 +118,7 @@ export interface WebApiContracts {
   predictions_response: PredictionsResponse;
   progress_response: ProgressResponse;
   report_data: ReportData;
-  report_group: ReportGroup;
+  report_group: Evalscope_Service_ApiModels_Reports__ReportGroup;
   report_metric: ReportMetric;
   report_summary: ReportSummary;
   result_availability: ResultAvailability;
@@ -130,6 +140,7 @@ export interface ActiveTaskInfo {
   alias?: string | null;
   completed_subruns?: number | null;
   config?: TaskConfigSummary | null;
+  current_run?: ActivePlanRunInfo | null;
   current_subrun?: string | null;
   endpoint?: string | null;
   engine?: ("evalscope" | "aiperf") | null;
@@ -167,6 +178,25 @@ export interface TaskConfigSummary {
   temperature?: number | null;
   top_k?: number | null;
   top_p?: number | null;
+}
+/**
+ * Dimensions of the matrix tier a portable plan is executing right now.
+ *
+ * The task list needs to name the tier without loading the whole plan
+ * archive; every value comes from the compiled run, not from the document's
+ * first item.
+ */
+export interface ActivePlanRunInfo {
+  concurrency?: number | null;
+  input_tokens?: number | null;
+  load_mode?: ("closed_loop" | "open_loop") | null;
+  order: number;
+  output_token_limit?: number | null;
+  rate?: number | null;
+  repetition?: number | null;
+  run_id: string;
+  target_ratio?: number | null;
+  workload_kind: string;
 }
 /**
  * Public settings of an AIPerf single load run imported by the service.
@@ -581,6 +611,7 @@ export interface RequestLatencyDistribution {
   count: number;
   mean?: number | null;
   p50?: number | null;
+  p90?: number | null;
   p95?: number | null;
   p99?: number | null;
   unit?: "seconds";
@@ -595,11 +626,19 @@ export interface CacheRequestsResponse {
  * A request record without inferred server cache data.
  */
 export interface PerfRequestRecord {
+  aiperf_input_sequence_tokens?: number | null;
+  aiperf_output_sequence_tokens?: number | null;
   cached_tokens?: number | null;
   cached_tokens_source?: "server_usage" | null;
+  decode_duration_seconds?: number | null;
   end_ns?: number | null;
   error_code?: number | null;
+  http_duration_seconds?: number | null;
+  http_total_seconds?: number | null;
   index: number;
+  itl_method?: string | null;
+  itl_seconds?: number | null;
+  itl_source?: ("aiperf_raw" | "derived") | null;
   latency_seconds?: number | null;
   output_tokens?: number | null;
   output_tokens_source?: ("server_usage" | "aiperf_estimate") | null;
@@ -607,12 +646,17 @@ export interface PerfRequestRecord {
   prompt_tokens?: number | null;
   prompt_tokens_source?: ("server_usage" | "aiperf_estimate") | null;
   request_id?: string | null;
+  request_record_elapsed_seconds?: number | null;
   session_id?: string | null;
   start_ns?: number | null;
   status: "success" | "error" | "cancelled" | "incomplete";
   status_reason?: string | null;
   ttft_seconds?: number | null;
   turn_index?: number | null;
+  usage_completion_tokens?: number | null;
+  usage_prompt_tokens?: number | null;
+  usage_reasoning_tokens?: number | null;
+  usage_total_tokens?: number | null;
 }
 export interface CacheScenarioResponse {
   cache?: CacheObservation | null;
@@ -1001,7 +1045,7 @@ export interface ListReportsGroupedResponse {
   filters: ReportFilters;
   page: number;
   page_size: number;
-  reports: ReportGroup[];
+  reports: Evalscope_Service_ApiModels_Reports__ReportGroup[];
   total: number;
 }
 export interface ReportFilters {
@@ -1011,7 +1055,7 @@ export interface ReportFilters {
 /**
  * One row per model in a `group_by=model` listing - display-only rollup, never a merged report.
  */
-export interface ReportGroup {
+export interface Evalscope_Service_ApiModels_Reports__ReportGroup {
   children: ReportSummary[];
   dataset_count: number;
   dataset_name: string;
@@ -1298,6 +1342,77 @@ export interface PerformanceResultEntry {
   unreadable_reason?: string | null;
 }
 /**
+ * One downloaded file; ``url`` is relative to the service origin.
+ */
+export interface PerfExportArtifact {
+  filename: string;
+  media_type: string;
+  name: string;
+  sha256: string;
+  size: number;
+  url: string;
+}
+/**
+ * Which artifact kinds this host can produce right now.
+ */
+export interface PerfExportCapabilitiesResponse {
+  kinds: string[];
+  pdf_available: boolean;
+  pdf_message?: string;
+  pdf_renderer?: string | null;
+}
+/**
+ * A newly queued export, or the equivalent one that already existed.
+ */
+export interface PerfExportResponse {
+  created: boolean;
+  export: PerfExportView;
+}
+/**
+ * The independently persisted state of one export.
+ */
+export interface PerfExportView {
+  artifacts?: PerfExportArtifact[];
+  attempts: number;
+  created_at: string;
+  error?: string | null;
+  export_id: string;
+  finished_at?: string | null;
+  progress?: string | null;
+  request_count?: number | null;
+  run_count?: number | null;
+  snapshot_created_at?: string | null;
+  snapshot_id?: string | null;
+  source_kind?: string | null;
+  spec: PerfExportSpec;
+  started_at?: string | null;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  warnings?: string[];
+}
+/**
+ * What to export: one archive, one group/locale and one artifact kind.
+ *
+ * It is also echoed in every status response so a client can retry exactly
+ * the same export without keeping its own copy.
+ */
+export interface PerfExportSpec {
+  group?: string | null;
+  kind?: "html" | "pdf" | "csv" | "requests" | "bundle";
+  locale?: "en" | "zh";
+  path?: string | null;
+  phase?: "warmup" | "profiling" | "all";
+  preset?: "core" | "all";
+  pretty?: boolean;
+  root_path?: string | null;
+  run_key?: string | null;
+  search?: string | null;
+  status?: ("success" | "failed") | null;
+  task_id?: string | null;
+}
+export interface PerfExportStatusResponse {
+  export: PerfExportView;
+}
+/**
  * Typed AIPerf task result, compatible with the shared task monitor.
  */
 export interface PerfInvokeResponse {
@@ -1555,6 +1670,7 @@ export interface PlanBudgets {
 export interface ContextCheck {
   case_id?: string | null;
   limit_tokens?: number | null;
+  output_token_limit?: number | null;
   overhead?: "included" | "known" | "unknown";
   required_tokens?: number | null;
   run_id: string;
@@ -1598,17 +1714,19 @@ export interface TokenizerIdentity {
 export interface PerfPlanRunView {
   cache_verification?: CacheRatioVerification | null;
   case_id?: string | null;
-  concurrency: number;
+  concurrency?: number | null;
   declared_total_input_tokens?: number | null;
   finished_ns?: number | null;
   formal_requests: number;
   input_tokens?: number | null;
+  load_mode?: "closed_loop" | "open_loop";
   message_structure: "user_only" | "system_and_user";
   normalized?: string | null;
   order: number;
   output_token_limit: number;
   primer_requests?: number;
   quality?: ("complete" | "partial" | "invalid") | null;
+  rate?: number | null;
   reason?: string | null;
   repetition: number;
   requests_available?: boolean;
@@ -1712,21 +1830,27 @@ export interface PerfPlanPreviewResponse {
   engine_available: boolean;
   intent: "diagnostic" | "benchmark";
   limit: number;
-  normalized: PerfPlanDocument;
+  load_mode?: "closed_loop" | "open_loop";
+  normalized: PerfPlanDocument | PerfPlanDocumentV11;
   normalized_hash: string;
   offset: number;
+  output_token_limits?: number[];
   plan_hash: string;
   requires_acknowledgement?: string[];
   runs: PlanRunSummary[];
   runtime: PlanRuntimeIdentity;
-  schema_version?: "1.0";
+  schema_version?: "1.0" | "1.1";
   semantic_fingerprint: string;
   source_hash: string;
   total_runs: number;
   workload_semantics: "managed_token_prefix" | "aiperf_synthetic_compat";
 }
 /**
- * A portable, versioned and credential-free performance plan.
+ * Frozen schema 1.0 plan: closed loop and one scalar output limit.
+ *
+ * Do not add axes here. Existing archives and their compiled run IDs are read
+ * and recompiled with this exact shape, so a new field would silently change
+ * the identity of every accepted 1.0 plan.
  */
 export interface PerfPlanDocument {
   connection: PlanConnection;
@@ -1783,7 +1907,7 @@ export interface PlanExecution {
   seed?: number | null;
 }
 /**
- * Load axis, request count and output budget shared by every run.
+ * Schema 1.0 load axis: closed loop only and one output limit for every run.
  */
 export interface PlanLoad {
   mode?: "closed_loop";
@@ -1797,7 +1921,7 @@ export interface PlanLoad {
   request_count: number;
 }
 /**
- * One closed-loop concurrency point.
+ * One closed-loop concurrency point of a schema 1.0 plan.
  */
 export interface PlanLoadPoint {
   concurrency: number;
@@ -1928,17 +2052,65 @@ export interface SyntheticCase {
   unique_user_tokens: number;
 }
 /**
+ * Current schema 1.1 plan: output-limit axis and explicit closed/open load.
+ */
+export interface PerfPlanDocumentV11 {
+  connection: PlanConnection;
+  deployment?: DeploymentFacts;
+  execution?: PlanExecution;
+  intent?: "diagnostic" | "benchmark";
+  kind?: "iss-eval.perf-plan";
+  load: PlanLoadV11;
+  name?: string | null;
+  priming?: PlanPriming;
+  schema_version?: "1.1";
+  telemetry?: PlanTelemetry;
+  warmup?: PlanWarmup;
+  workload: TokenPrefixWorkload | SyntheticWorkload;
+}
+/**
+ * Schema 1.1 load axis: an output-limit axis and an explicit load mode.
+ */
+export interface PlanLoadV11 {
+  mode?: "closed_loop" | "open_loop";
+  /**
+   * @minItems 1
+   * @maxItems 64
+   */
+  output_token_limits: [number, ...number[]];
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  points: [PlanLoadPointV11, ...PlanLoadPointV11[]];
+  repetitions?: number;
+  request_count: number;
+}
+/**
+ * One load point of a schema 1.1 plan.
+ *
+ * Exactly one field is set, mirroring ``LoadConfiguration``: ``concurrency``
+ * for a closed loop, ``rate`` (requests per second) for an open loop. The
+ * load-level validator enforces that the field matches ``PlanLoadV11.mode``.
+ */
+export interface PlanLoadPointV11 {
+  concurrency?: number | null;
+  rate?: number | null;
+}
+/**
  * Bounded per-run projection of the compiled matrix.
  */
 export interface PlanRunSummary {
   case_id?: string | null;
-  concurrency: number;
+  concurrency?: number | null;
   declared_total_input_tokens?: number | null;
   input_tokens?: number | null;
+  load_mode?: "closed_loop" | "open_loop";
   message_structure: "user_only" | "system_and_user";
   order: number;
   output_token_limit: number;
   primer_requests: number;
+  rate?: number | null;
   repetition: number;
   request_count: number;
   run_id: string;
@@ -1994,6 +2166,403 @@ export interface PerfPlanSubmitResponse {
   queue_position?: number | null;
   state: "reserved" | "queued" | "running" | "completed" | "stopped" | "error" | "lost";
   task_id: string;
+}
+/**
+ * Chart data computed from the whole snapshot, not the current table page.
+ */
+export interface PerfReportChartsResponse {
+  metric: string;
+  series: ReportChartSeries[];
+  snapshot_id: string;
+  statistic: string;
+}
+/**
+ * One facet value, load mode and repetition; the chart never mixes output
+ * limits and never joins two independent repetition efforts into one line.
+ */
+export interface ReportChartSeries {
+  facet: string;
+  facet_dimensions: ReportRunDimensions;
+  load_mode?: string | null;
+  points?: ReportChartPoint[];
+  repetition?: number | null;
+}
+/**
+ * The matrix cell a run belongs to; repetitions share every value.
+ */
+export interface ReportRunDimensions {
+  case_id?: string | null;
+  concurrency?: number | null;
+  deployment_mode?: string | null;
+  input_tokens?: number | null;
+  load_mode?: string | null;
+  message_structure?: string | null;
+  output_token_limit?: number | null;
+  rate?: number | null;
+  repetition?: number | null;
+  target_ratio?: number | null;
+  workload?: string | null;
+}
+export interface ReportChartPoint {
+  availability?: "available" | "partial" | "unavailable";
+  dimensions: ReportRunDimensions;
+  order: number;
+  reason?: string | null;
+  run_id: string;
+  run_key: string;
+  value?: number | null;
+}
+/**
+ * One page of a run's request details, filtered and sorted server-side.
+ */
+export interface PerfReportRequestsResponse {
+  limit: number;
+  offset: number;
+  order: "asc" | "desc";
+  phase?: string | null;
+  requests: ReportRequestRow[];
+  run_id: string;
+  run_key: string;
+  search?: string | null;
+  snapshot_id: string;
+  sort: string;
+  status?: string | null;
+  total: number;
+}
+/**
+ * A request with every measured boundary kept apart.
+ */
+export interface ReportRequestRow {
+  aiperf_input_sequence_tokens?: number | null;
+  aiperf_output_sequence_tokens?: number | null;
+  cached_tokens?: number | null;
+  cached_tokens_source?: string | null;
+  decode_duration_seconds?: number | null;
+  end_ns?: number | null;
+  error_code?: number | null;
+  http_duration_seconds?: number | null;
+  http_total_seconds?: number | null;
+  index: number;
+  latency_seconds?: number | null;
+  output_tokens?: number | null;
+  output_tokens_source?: string | null;
+  phase: string;
+  prompt_tokens?: number | null;
+  prompt_tokens_source?: string | null;
+  request_id?: string | null;
+  request_record_elapsed_seconds?: number | null;
+  session_id?: string | null;
+  start_ns?: number | null;
+  status: "success" | "error" | "cancelled" | "incomplete";
+  status_reason?: string | null;
+  tpot_method?: string | null;
+  tpot_seconds?: number | null;
+  tpot_source?: string | null;
+  ttft_seconds?: number | null;
+  turn_index?: number | null;
+  usage_completion_tokens?: number | null;
+  usage_prompt_tokens?: number | null;
+  usage_reasoning_tokens?: number | null;
+  usage_total_tokens?: number | null;
+}
+/**
+ * One page of the full main table; ``total`` is the filtered row count.
+ */
+export interface PerfReportRunsResponse {
+  group?: string | null;
+  limit: number;
+  offset: number;
+  order: "asc" | "desc";
+  rows: ReportRun[];
+  snapshot_id: string;
+  sort: string;
+  total: number;
+}
+/**
+ * One stable report row, whether or not its data could be read.
+ */
+export interface ReportRun {
+  archive_identity: string;
+  availability?: "available" | "partial" | "unavailable";
+  counts: ReportRunCounts;
+  dimensions: ReportRunDimensions;
+  e2e: Distribution;
+  lifecycle: "not_started" | "running" | "completed" | "cancelled" | "error" | "unknown";
+  nodes?: ReportRunNodes | null;
+  observation: ObservationWindow;
+  observed_concurrency?: number | null;
+  observed_concurrency_peak?: number | null;
+  order: number;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  quality_reasons?: string[];
+  rates: RateMetrics;
+  reason?: string | null;
+  run_id: string;
+  run_key: string;
+  tokens: TokenSummary;
+  tpot: Distribution;
+  ttft: Distribution;
+}
+/**
+ * Planned versus observed request counts for one run.
+ */
+export interface ReportRunCounts {
+  cancelled?: number;
+  error?: number;
+  incomplete?: number;
+  planned_requests?: number;
+  primer_requests?: number;
+  success?: number;
+  total?: number;
+}
+/**
+ * Exact percentiles plus their population, source and availability.
+ *
+ * Every numeric field is ``None`` when the value is genuinely missing; a
+ * measured zero stays ``0``. ``percentile_method`` distinguishes a
+ * recomputed nearest-rank value from a percentile the native summary
+ * reported in its own table.
+ */
+export interface Distribution {
+  availability?: "available" | "partial" | "unavailable";
+  count: number;
+  max?: number | null;
+  mean?: number | null;
+  min?: number | null;
+  p50?: number | null;
+  p90?: number | null;
+  p95?: number | null;
+  p99?: number | null;
+  percentile_method: "nearest_rank" | "reported";
+  population: "successful_profiling_requests" | "run_summary" | "server_usage";
+  reason?: string | null;
+  source: string;
+  sources?: {
+    [k: string]: number;
+  };
+  std?: number | null;
+  unit: string;
+}
+/**
+ * The node observation that already exists for this run, if any.
+ */
+export interface ReportRunNodes {
+  availability: "available" | "partial" | "missing" | "invalid";
+  cache_ratios?: ReportNodeCacheRatio[];
+  end_ns?: number | null;
+  max_gap_ns?: number | null;
+  metrics?: ReportNodeMetric[];
+  quality_reasons?: string[];
+  reason?: string | null;
+  start_ns?: number | null;
+  timed_requests?: number;
+  total_requests?: number;
+  window_source?: string | null;
+}
+/**
+ * vLLM prefix lookup-token ratio, distinct from response cache usage.
+ */
+export interface ReportNodeCacheRatio {
+  availability: "available" | "partial" | "missing" | "invalid";
+  hit_tokens?: number | null;
+  lookup_tokens?: number | null;
+  node_id: string;
+  ratio?: number | null;
+  reason?: string | null;
+  role: "prefill" | "decode";
+  semantics?: string | null;
+}
+/**
+ * One node/label/engine series, never merged with another node's values.
+ */
+export interface ReportNodeMetric {
+  engine: string;
+  histogram?: ReportNodeHistogram | null;
+  labels?: {
+    [k: string]: string;
+  };
+  metric_kind?: string | null;
+  metric_name: string;
+  metric_unit?: string | null;
+  node_id: string;
+  reason?: string | null;
+  role: "prefill" | "decode";
+  statistic?: ReportNodeStatistic | null;
+  window_source?: string | null;
+}
+/**
+ * A histogram-family node metric summarized over the same window.
+ */
+export interface ReportNodeHistogram {
+  availability: "available" | "partial" | "missing" | "invalid";
+  boundary?: ("exact" | "bracketed" | "step" | "unknown") | null;
+  count?: number | null;
+  mean?: number | null;
+  metric_key: string;
+  p50?: number | null;
+  p95?: number | null;
+  p99?: number | null;
+  reason?: string | null;
+  unit?: string | null;
+}
+/**
+ * One measured node-metric window value with its provenance boundary.
+ */
+export interface ReportNodeStatistic {
+  availability: "available" | "partial" | "missing" | "invalid";
+  boundary?: ("exact" | "bracketed" | "step" | "unknown") | null;
+  coverage?: number | null;
+  reason?: string | null;
+  sample_count?: number | null;
+  sample_peak?: number | null;
+  value?: number | null;
+}
+/**
+ * Observed request time extent, distinct from an authoritative phase window.
+ */
+export interface ObservationWindow {
+  end_ns?: number | null;
+  seconds?: number | null;
+  start_ns?: number | null;
+  timed_requests?: number;
+  total_requests?: number;
+}
+/**
+ * Client-measured rates; a configured target rate is never reported here.
+ */
+export interface RateMetrics {
+  availability?: "available" | "partial" | "unavailable";
+  cache?: CachePairing;
+  input?: TokenRate;
+  input_tokens_per_second?: number | null;
+  output?: TokenRate;
+  output_tokens_per_second?: number | null;
+  reason?: string | null;
+  requests_per_minute?: number | null;
+  requests_per_second?: number | null;
+  source?: "measured_records" | "run_summary";
+  window_authoritative?: boolean | null;
+  window_seconds?: number | null;
+  window_source?: ("aiperf_phase" | "observed_request_bounds" | "run_summary") | null;
+}
+/**
+ * How many successful requests carry a verified prompt/cache token pair.
+ */
+export interface CachePairing {
+  availability?: "available" | "partial" | "unknown";
+  paired_requests?: number;
+  reason?: string | null;
+  successful_requests?: number;
+}
+/**
+ * One direction's token throughput with the coverage it was computed from.
+ *
+ * ``tokens_per_second`` is only set when the direction is fully covered by the
+ * successful requests and a statistics window exists. A fully covered zero is
+ * a measured ``0.0``; a partial or absent direction stays ``None`` with the
+ * reason, so a rate is never extrapolated from a subset of the requests.
+ */
+export interface TokenRate {
+  availability?: "available" | "partial" | "unavailable";
+  coverage?: number | null;
+  covered_requests?: number;
+  reason?: string | null;
+  source?: ("server_usage" | "aiperf_estimate" | "mixed" | "run_summary") | null;
+  successful_requests?: number;
+  tokens?: number | null;
+  tokens_per_second?: number | null;
+}
+/**
+ * Request token totals with their real coverage, never an implied zero.
+ */
+export interface TokenSummary {
+  cached_requests?: number;
+  cached_source?: "server_usage" | null;
+  cached_tokens?: number | null;
+  input_requests?: number;
+  input_source?: ("server_usage" | "aiperf_estimate" | "mixed") | null;
+  input_tokens?: number | null;
+  output_requests?: number;
+  output_source?: ("server_usage" | "aiperf_estimate" | "mixed") | null;
+  output_tokens?: number | null;
+  successful_requests?: number;
+}
+/**
+ * Snapshot identity, plan-wide counts and groups without the run rows.
+ */
+export interface PerfReportSummaryResponse {
+  report: ReportHeader;
+  total_runs: number;
+}
+/**
+ * Snapshot identity and plan-wide description without the run rows.
+ */
+export interface ReportHeader {
+  capabilities: ReportCapabilities;
+  compiler_version?: string | null;
+  contract_version?: string | null;
+  counts: ReportCounts;
+  created_at: string;
+  declared_max_model_len?: number | null;
+  deployment_evidence?: string | null;
+  deployment_mode?: string | null;
+  groups?: Evalscope_Perf_Results_Report__ReportGroup[];
+  model?: string | null;
+  normalized_hash?: string | null;
+  partial?: boolean;
+  partial_reason?: string | null;
+  phase?: string | null;
+  plan_hash?: string | null;
+  quality?: ("complete" | "partial" | "invalid") | null;
+  quality_reasons?: string[];
+  schema_version?: "1.0";
+  snapshot_id: string;
+  source_identity: string;
+  source_kind: "plan" | "cache_experiment" | "single" | "native";
+  statistics_version?: string;
+  status?: string | null;
+  task_id?: string | null;
+  workload_semantics?: string | null;
+}
+/**
+ * What this snapshot can and cannot answer, per data family.
+ */
+export interface ReportCapabilities {
+  cache: ReportCapability;
+  client_metrics: ReportCapability;
+  node_metrics: ReportCapability;
+  requests: ReportCapability;
+  token_usage: ReportCapability;
+}
+export interface ReportCapability {
+  availability: "available" | "partial" | "unavailable" | "unsupported";
+  reason?: string | null;
+}
+/**
+ * Plan-wide counts that never shrink to the currently paged window.
+ */
+export interface ReportCounts {
+  cancelled_runs?: number;
+  completed_runs?: number;
+  failed_runs?: number;
+  not_started_runs?: number;
+  observed_requests?: number;
+  planned_requests?: number;
+  planned_runs?: number;
+  running_runs?: number;
+  successful_requests?: number;
+}
+/**
+ * A stable group description; member rows keep their own percentiles.
+ */
+export interface Evalscope_Perf_Results_Report__ReportGroup {
+  dimensions: ReportRunDimensions;
+  group_key: string;
+  observed_requests: number;
+  planned_requests: number;
+  run_count: number;
+  run_keys: string[];
+  successful_requests: number;
 }
 export interface PerfRequestsResponse {
   columns: string[];
@@ -2055,12 +2624,15 @@ export interface PlanConfigSnapshot {
   input_lengths?: number[];
   intent?: string | null;
   kind?: "perf";
+  load_mode?: string | null;
   model?: string;
   name?: string | null;
   normalized_hash?: string | null;
   output_token_limit?: number | null;
+  output_token_limits?: number[];
   plan_hash?: string | null;
   primer_timeout_seconds?: number | null;
+  rates?: number[];
   repetitions?: number | null;
   request_count?: number | null;
   schema_version?: number;

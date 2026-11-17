@@ -12,13 +12,14 @@ import time
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Sequence, Tuple
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 
 from evalscope.perf.executors.arguments import (
     AIPerfArguments,
     CacheExperiment,
     LoadConfiguration,
     LoadPoint,
+    TelemetryConfiguration,
     WarmupConfiguration,
 )
 from evalscope.perf.executors.external import Cancellation
@@ -76,13 +77,26 @@ class CacheRatioVerification(BaseArgument):
 
 
 class PlanRunState(BaseArgument):
-    """Progress and artifact references for one planned run."""
+    """Progress and artifact references for one planned run.
+
+    The dimensions repeat what the run id encodes so progress, archive and the
+    report can name the tier being executed without re-parsing the id. They are
+    optional because manifests written before the output-length axis existed
+    carry only ``run_id``, ``concurrency`` and the request counts.
+    """
 
     run_id: str
     order: int
     workload_kind: Literal['token_prefix', 'aiperf_synthetic']
     message_structure: Literal['user_only', 'system_and_user']
-    concurrency: int
+    load_mode: Optional[Literal['closed_loop', 'open_loop']] = None
+    concurrency: Optional[int] = None
+    rate: Optional[float] = None
+    input_tokens: Optional[int] = None
+    output_token_limit: Optional[int] = None
+    target_ratio: Optional[float] = None
+    case_id: Optional[str] = None
+    repetition: Optional[int] = None
     formal_requests: int
     primer_requests: int = 0
     status: RunStatus = 'not_started'
@@ -169,28 +183,57 @@ def _arguments(
     run: Optional[PlannedRun] = None,
     cache: Optional[CacheExperiment] = None,
     load: Optional[LoadConfiguration] = None,
+    binding: Optional['PlanRuntimeBinding'] = None,
 ) -> AIPerfArguments:
     document = compiled.normalized
-    resolved_load = load or LoadConfiguration(
-        points=[LoadPoint(concurrency=run.concurrency)] if run else [LoadPoint(concurrency=1)],
-        request_count=run.request_count if run else document.load.request_count,
-        output_token_limit=run.output_token_limit if run else document.load.output_token_limit,
-        repetitions=1,
-    )
+    if load is not None:
+        resolved_load = load
+    elif run is not None:
+        # Each run owns exactly one load point and its own output budget: taking a
+        # value from the document's first item would send every tier the same OSL.
+        point = LoadPoint(concurrency=run.concurrency) if run.load_mode == 'closed_loop' else LoadPoint(rate=run.rate)
+        resolved_load = LoadConfiguration(
+            mode=run.load_mode,
+            points=[point],
+            request_count=run.request_count,
+            output_token_limit=run.output_token_limit,
+            repetitions=1,
+        )
+    else:
+        resolved_load = LoadConfiguration(
+            points=[LoadPoint(concurrency=1)],
+            request_count=document.load.request_count,
+            output_token_limit=document.load.output_token_limits[0],
+            repetitions=1,
+        )
     return AIPerfArguments(
         model=document.connection.model,
         url=document.connection.url,
+        api_key=binding.api_key if binding is not None else None,
         tokenizer_path=document.connection.tokenizer_path,
         stream=document.connection.streaming,
         deployment_mode=_deployment_mode(compiled),
         cache_experiment=cache,
         load=resolved_load,
+        telemetry=binding.telemetry if binding is not None else TelemetryConfiguration(),
     )
 
 
 def display_arguments(compiled: CompiledPerfPlan) -> AIPerfArguments:
     """Return the AIPerf arguments used for task metadata display."""
     return _arguments(compiled, run=compiled.runs[0] if compiled.runs else None)
+
+
+class PlanRuntimeBinding(BaseArgument):
+    """Server-side inputs that must never enter the portable document.
+
+    A portable plan deliberately carries no credential and no metrics target.
+    The submitter supplies them next to the plan, they live only in the worker
+    payload, and nothing here is archived with the plan's provenance.
+    """
+
+    api_key: Optional[SecretStr] = None
+    telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
 
 
 class PerfPlanRunRequest(BaseArgument):
@@ -201,6 +244,7 @@ class PerfPlanRunRequest(BaseArgument):
     tokenizer_path: str
     alignment: Optional[PlanAlignment] = None
     max_token_pool: int = Field(default=65536, gt=0)
+    runtime: PlanRuntimeBinding = Field(default_factory=PlanRuntimeBinding)
 
 
 def _managed_cache(compiled: CompiledPerfPlan, run: PlannedRun) -> CacheExperiment:
@@ -277,7 +321,9 @@ def _synthetic_spec(compiled: CompiledPerfPlan, run: PlannedRun) -> SyntheticRun
         unique_user_tokens=run.unique_user_tokens,
         output_token_limit=run.output_token_limit,
         request_count=run.request_count,
+        load_mode=run.load_mode,
         concurrency=run.concurrency,
+        rate=run.rate,
         stream=document.connection.streaming,
     )
 
@@ -289,6 +335,7 @@ def _warmup(
     tokenizer_id: str,
     template_id: str,
     cancellation: _PlanCancellation,
+    binding: Optional[PlanRuntimeBinding] = None,
 ) -> PlanWarmupState:
     """Send the one-off warmup with the service HTTP client, before the matrix."""
     document = compiled.normalized
@@ -318,7 +365,9 @@ def _warmup(
         token_pool,
         cancellation,
     )
-    result: WarmupResult = asyncio.run(run_warmup(_arguments(compiled), configuration, workload, cancellation))
+    result: WarmupResult = asyncio.run(
+        run_warmup(_arguments(compiled, binding=binding), configuration, workload, cancellation)
+    )
     return PlanWarmupState(
         status=result.status,
         request_count=result.request_count,
@@ -480,6 +529,26 @@ def _record_run_quality(row: PlanRunState, outcome_quality: Optional[Quality], r
         reasons.append(f'{row.run_id}:invalid')
 
 
+def validate_plan_runtime_binding(compiled: CompiledPerfPlan, binding: Optional[PlanRuntimeBinding]) -> None:
+    """Reject a runtime binding the selected workload cannot honour.
+
+    Failing before the archive is created matters: a run that silently skipped
+    required metrics or authentication would still look complete afterwards.
+    """
+    if binding is None:
+        return
+    if binding.telemetry.required and not binding.telemetry.targets:
+        raise ValueError('Required node metrics have no configured targets')
+    if compiled.workload_semantics == 'aiperf_synthetic_compat':
+        if binding.telemetry.targets:
+            raise ValueError('Synthetic compatibility runs do not collect node metrics')
+        if binding.api_key is not None:
+            raise ValueError(
+                'Synthetic compatibility does not pass an API key; use a managed token-prefix plan for '
+                'authenticated endpoints'
+            )
+
+
 def run_perf_plan(
     compiled: CompiledPerfPlan,
     context: ExecutionContext,
@@ -490,6 +559,7 @@ def run_perf_plan(
     tokenizer_id: Optional[str] = None,
     template_id: Optional[str] = None,
     alignment: Optional[PlanAlignment] = None,
+    binding: Optional[PlanRuntimeBinding] = None,
     cancel_event: Optional[Cancellation] = None,
 ) -> PerfPlanOutcome:
     """Run every compiled member serially under one manifest, without implicit retry."""
@@ -503,6 +573,7 @@ def run_perf_plan(
         raise ValueError('The submitted plan hash does not match the compiled plan')
     if context.runtime is None:
         raise ValueError('AIPerf runtime is not configured')
+    validate_plan_runtime_binding(compiled, binding)
     needs_tokenizer = compiled.workload_semantics == 'managed_token_prefix' or compiled.normalized.warmup.enabled
     if needs_tokenizer and (tokenizer is None or token_pool is None or tokenizer_id is None or template_id is None):
         raise ValueError(
@@ -536,7 +607,14 @@ def run_perf_plan(
             order=run.order,
             workload_kind=run.workload_kind,
             message_structure=run.message_structure,
+            load_mode=run.load_mode,
             concurrency=run.concurrency,
+            rate=run.rate,
+            input_tokens=run.input_tokens,
+            output_token_limit=run.output_token_limit,
+            target_ratio=run.target_ratio,
+            case_id=run.case_id,
+            repetition=run.repetition,
             formal_requests=run.request_count,
             primer_requests=run.primer_requests,
         )
@@ -587,6 +665,7 @@ def run_perf_plan(
                     tokenizer_id or '',
                     template_id or '',
                     cancellation,
+                    binding,
                 )
             except WorkloadCancelled:
                 warmup_state = PlanWarmupState(status='cancelled', reason='cancelled')
@@ -619,7 +698,7 @@ def run_perf_plan(
                 if run.workload_kind == 'token_prefix':
                     assert tokenizer is not None and token_pool is not None
                     assert run.target_ratio is not None and run.input_tokens is not None
-                    sub_arguments = _arguments(compiled, run=run, cache=_managed_cache(compiled, run))
+                    sub_arguments = _arguments(compiled, run=run, cache=_managed_cache(compiled, run), binding=binding)
                     scenario = CacheScenarioArguments(
                         target_ratio=run.target_ratio,
                         input_tokens=run.input_tokens,
@@ -681,7 +760,9 @@ def run_perf_plan(
                         'target_prefix_ratio': run.target_ratio,
                         'output_token_limit': run.output_token_limit,
                         'request_count': run.request_count,
+                        'load_mode': run.load_mode,
                         'concurrency': run.concurrency,
+                        'rate': run.rate,
                         'status': outcome.exit_reason,
                         'artifact_status': outcome.artifact_status,
                         'executor': 'aiperf',

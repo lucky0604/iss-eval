@@ -108,8 +108,14 @@ function parseAIPerf(value: unknown): AIPerfDraft {
   const fields = Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'nodes'))
   const result = parseDraft(fields, defaults)
   if (!['closed_loop', 'open_loop'].includes(result.mode) || !['single', 'pd'].includes(result.deploymentMode) ||
-      !['cache', 'single'].includes(result.runType))
+      !['matrix', 'cache', 'single'].includes(result.runType))
     throw new Error('Invalid AIPerf mode')
+  // Drafts saved before the matrix existed carry one input/output length each:
+  // read them as one-point axes instead of dropping the only size the user set.
+  if (!('matrixInputLengths' in raw) && /^\d+$/.test(result.inputTokens.trim()))
+    result.matrixInputLengths = result.inputTokens.trim()
+  if (!('matrixOutputLimits' in raw) && /^\d+$/.test(result.outputTokens.trim()))
+    result.matrixOutputLimits = result.outputTokens.trim()
   const input = raw.nodes ?? []
   if (!Array.isArray(input) || input.length > 64) throw new Error('Invalid metrics nodes')
   const ids = new Set<string>()
@@ -145,6 +151,8 @@ function parseLegacyAIPerf(value: unknown): AIPerfDraft {
     ...DEFAULT_AIPERF, tokenizer: old.tokenizer, ratios: old.ratios, inputTokens: old.inputTokens,
     requestCount: old.requestCount, outputTokens: old.outputTokens, loads: old.loads,
     mode: old.mode as AIPerfDraft['mode'], repetitions: old.repetitions, pool: old.pool,
+    matrixInputLengths: /^\d+$/.test(old.inputTokens.trim()) ? old.inputTokens.trim() : DEFAULT_AIPERF.matrixInputLengths,
+    matrixOutputLimits: /^\d+$/.test(old.outputTokens.trim()) ? old.outputTokens.trim() : DEFAULT_AIPERF.matrixOutputLimits,
     deploymentMode: nodes.length ? 'pd' : 'single', nodes,
   })
 }

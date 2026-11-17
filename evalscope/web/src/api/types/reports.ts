@@ -14,7 +14,7 @@ export type {
   LoadReportResponse,
   // Report list / summary
   ReportSummary,
-  ReportGroup,
+  Evalscope_Service_ApiModels_Reports__ReportGroup as ReportGroup,
   ListReportsResponse,
   ListReportsGroupedResponse,
   // Prediction rows (chat messages + agent trace)
