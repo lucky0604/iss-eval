@@ -8,9 +8,9 @@ process, so it is safe to call from a preview request.
 import hashlib
 import json
 import random
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Collection, Dict, List, Literal, Optional, Tuple
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from evalscope.perf.executors.urls import normalize_chat_url
 from evalscope.utils import BaseArgument
@@ -19,16 +19,20 @@ from .diagnostics import PlanDiagnostic, error
 from .documents import (
     PLAN_SCHEMA_VERSION,
     PerfPlanDocument,
+    PlanDocument,
     SyntheticWorkload,
     TokenPrefixWorkload,
     parse_plan_document,
 )
 from .strict import PlanParseError, classify_document, parse_document_text
 
-COMPILER_VERSION = '1.2'
-"""1.2 derives the default synthetic seed from request semantics only, so the
-quality policy no longer enters the semantic fingerprint; archives keep the
-version they were compiled with and are never recomputed."""
+COMPILER_VERSION = '1.3'
+"""1.3 compiles schema 1.1 plans: the output-limit axis and explicit closed/open
+load enter run IDs, namespaces, budgets and the semantic fingerprint. Schema
+1.0 documents keep the frozen 1.2 algorithm so existing archives and golden
+hashes survive; archives keep the version they were compiled with and are
+never recomputed."""
+LEGACY_COMPILER_VERSION = '1.2'
 CONTRACT_VERSION = PLAN_SCHEMA_VERSION
 MAX_RUNS = 10000
 
@@ -39,8 +43,9 @@ class PlannedRun(BaseArgument):
     run_id: str
     order: int
     workload_kind: Literal['token_prefix', 'aiperf_synthetic']
-    load_mode: Literal['closed_loop'] = 'closed_loop'
-    concurrency: int = Field(gt=0)
+    load_mode: Literal['closed_loop', 'open_loop'] = 'closed_loop'
+    concurrency: Optional[int] = Field(default=None, gt=0)
+    rate: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
     request_count: int = Field(gt=0)
     output_token_limit: int = Field(gt=0)
     repetition: int = Field(ge=0)
@@ -53,6 +58,14 @@ class PlannedRun(BaseArgument):
     declared_total_input_tokens: Optional[int] = None
     shared_system_tokens: Optional[int] = None
     unique_user_tokens: Optional[int] = None
+
+    @model_validator(mode='after')
+    def validate_load(self) -> 'PlannedRun':
+        if self.load_mode == 'closed_loop' and (self.concurrency is None or self.rate is not None):
+            raise ValueError('closed-loop runs require only concurrency')
+        if self.load_mode == 'open_loop' and (self.rate is None or self.concurrency is not None):
+            raise ValueError('open-loop runs require only rate')
+        return self
 
     @property
     def message_structure(self) -> Literal['user_only', 'system_and_user']:
@@ -100,7 +113,7 @@ class CompiledPerfPlan(BaseArgument):
     compiler_version: str = COMPILER_VERSION
     workload_semantics: Literal['managed_token_prefix', 'aiperf_synthetic_compat']
     intent: Literal['diagnostic', 'benchmark']
-    normalized: PerfPlanDocument
+    normalized: PlanDocument
     runs: List[PlannedRun]
     run_count: int = Field(ge=0)
     budgets: PlanBudgets
@@ -127,7 +140,16 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
-def _workload_semantics(document: PerfPlanDocument) -> Literal['managed_token_prefix', 'aiperf_synthetic_compat']:
+def _is_legacy(document: PlanDocument) -> bool:
+    """Return whether the document uses the frozen schema 1.0 compilation."""
+    return isinstance(document, PerfPlanDocument)
+
+
+def _compiler_version(document: PlanDocument) -> str:
+    return LEGACY_COMPILER_VERSION if _is_legacy(document) else COMPILER_VERSION
+
+
+def _workload_semantics(document: PlanDocument) -> Literal['managed_token_prefix', 'aiperf_synthetic_compat']:
     return 'managed_token_prefix' if isinstance(document.workload, TokenPrefixWorkload) else 'aiperf_synthetic_compat'
 
 
@@ -135,7 +157,7 @@ def _namespace(plan_seed: str, run_id: str) -> str:
     return hashlib.sha256(f'{plan_seed}:{run_id}'.encode('utf-8')).hexdigest()
 
 
-def planned_run_count(document: PerfPlanDocument) -> int:
+def planned_run_count(document: PlanDocument) -> int:
     """Return the expanded matrix size without allocating a single run.
 
     The count is a plain integer product of the declared axes, so a huge
@@ -144,46 +166,64 @@ def planned_run_count(document: PerfPlanDocument) -> int:
     """
     load = document.load
     points = len(load.points)
+    outputs = len(load.output_token_limits)
     workload = document.workload
     if isinstance(workload, TokenPrefixWorkload):
-        axes = len(workload.input_lengths) * len(workload.target_ratios)
+        axes = len(workload.input_lengths) * len(workload.target_ratios) * outputs
     else:
-        axes = len(workload.cases)
+        axes = len(workload.cases) * outputs
     return axes * points * load.repetitions
 
 
-def _managed_members(document: PerfPlanDocument) -> List[PlannedRun]:
+def _load_key(run_id_parts: List[str], *, legacy: bool, output_index: int) -> str:
+    """Join ID segments, keeping the 1.0 shape when there is no output axis."""
+    parts = list(run_id_parts)
+    if not legacy:
+        parts.insert(1, f'o{output_index:03d}')
+    return '-'.join(parts)
+
+
+def _managed_members(document: PlanDocument) -> List[PlannedRun]:
     workload = document.workload
     assert isinstance(workload, TokenPrefixWorkload)
     load = document.load
+    # Schema 1.0 has no output axis, so its run IDs must stay free of an ``o``
+    # segment; an inserted default would invalidate every archived run ID.
+    legacy = _is_legacy(document)
     seed = document.execution.seed if document.execution.seed is not None else workload.seed
     primer_requests = workload.prefix_pool_size
     members: List[PlannedRun] = []
     for load_index, point in enumerate(load.points):
         for input_index, input_tokens in enumerate(workload.input_lengths):
-            for ratio_index, ratio in enumerate(workload.target_ratios):
-                for repetition in range(load.repetitions):
-                    run_id = f'i{input_index:03d}-r{ratio_index:03d}-l{load_index:03d}-n{repetition:03d}'
-                    members.append(
-                        PlannedRun(
-                            run_id=run_id,
-                            order=0,
-                            workload_kind='token_prefix',
-                            concurrency=point.concurrency,
-                            request_count=load.request_count,
-                            output_token_limit=load.output_token_limit,
-                            repetition=repetition,
-                            seed=seed,
-                            primer_requests=primer_requests if ratio else 0,
-                            namespace=_namespace(f'{seed}:{document.connection.tokenizer_path}', run_id),
-                            input_tokens=input_tokens,
-                            target_ratio=ratio,
+            for output_index, output_limit in enumerate(load.output_token_limits):
+                output_part = '' if legacy else f'-o{output_index:03d}'
+                for ratio_index, ratio in enumerate(workload.target_ratios):
+                    for repetition in range(load.repetitions):
+                        run_id = (
+                            f'i{input_index:03d}{output_part}-r{ratio_index:03d}-l{load_index:03d}-n{repetition:03d}'
                         )
-                    )
+                        members.append(
+                            PlannedRun(
+                                run_id=run_id,
+                                order=0,
+                                workload_kind='token_prefix',
+                                load_mode=load.mode,
+                                concurrency=point.concurrency,
+                                rate=getattr(point, 'rate', None),
+                                request_count=load.request_count,
+                                output_token_limit=output_limit,
+                                repetition=repetition,
+                                seed=seed,
+                                primer_requests=primer_requests if ratio else 0,
+                                namespace=_namespace(f'{seed}:{document.connection.tokenizer_path}', run_id),
+                                input_tokens=input_tokens,
+                                target_ratio=ratio,
+                            )
+                        )
     return members
 
 
-def _request_semantics(document: PerfPlanDocument) -> Dict[str, Any]:
+def _request_semantics(document: PlanDocument) -> Dict[str, Any]:
     """Fields that decide which requests are generated; quality policy is excluded.
 
     ``ratio_tolerance`` and ``require_observed_ratio`` only judge a result, so
@@ -203,7 +243,7 @@ def _request_semantics(document: PerfPlanDocument) -> Dict[str, Any]:
     }
 
 
-def _synthetic_seed(document: PerfPlanDocument) -> int:
+def _synthetic_seed(document: PlanDocument) -> int:
     """Return the declared seed or a reproducible content-derived one.
 
     A synthetic case has no seed of its own. When the plan does not declare one
@@ -224,39 +264,44 @@ def _synthetic_seed(document: PerfPlanDocument) -> int:
     return int(hashlib.sha256(payload.encode('utf-8')).hexdigest()[:12], 16)
 
 
-def _synthetic_members(document: PerfPlanDocument) -> List[PlannedRun]:
+def _synthetic_members(document: PlanDocument) -> List[PlannedRun]:
     workload = document.workload
     assert isinstance(workload, SyntheticWorkload)
     load = document.load
+    legacy = _is_legacy(document)
     seed = _synthetic_seed(document)
     members: List[PlannedRun] = []
     for load_index, point in enumerate(load.points):
         for case_index, case in enumerate(workload.cases):
-            for repetition in range(load.repetitions):
-                run_id = f'c{case_index:03d}-l{load_index:03d}-n{repetition:03d}'
-                members.append(
-                    PlannedRun(
-                        run_id=run_id,
-                        order=0,
-                        workload_kind='aiperf_synthetic',
-                        concurrency=point.concurrency,
-                        request_count=load.request_count,
-                        output_token_limit=load.output_token_limit,
-                        repetition=repetition,
-                        seed=seed,
-                        primer_requests=0,
-                        namespace=_namespace(f'{seed}:{case.case_id}', run_id),
-                        case_id=case.case_id,
-                        declared_total_input_tokens=case.declared_total_input_tokens,
-                        shared_system_tokens=case.shared_system_tokens,
-                        unique_user_tokens=case.unique_user_tokens,
-                        target_ratio=case.target_prefix_ratio,
+            for output_index, output_limit in enumerate(load.output_token_limits):
+                output_part = '' if legacy else f'-o{output_index:03d}'
+                for repetition in range(load.repetitions):
+                    run_id = f'c{case_index:03d}{output_part}-l{load_index:03d}-n{repetition:03d}'
+                    members.append(
+                        PlannedRun(
+                            run_id=run_id,
+                            order=0,
+                            workload_kind='aiperf_synthetic',
+                            load_mode=load.mode,
+                            concurrency=point.concurrency,
+                            rate=getattr(point, 'rate', None),
+                            request_count=load.request_count,
+                            output_token_limit=output_limit,
+                            repetition=repetition,
+                            seed=seed,
+                            primer_requests=0,
+                            namespace=_namespace(f'{seed}:{case.case_id}', run_id),
+                            case_id=case.case_id,
+                            declared_total_input_tokens=case.declared_total_input_tokens,
+                            shared_system_tokens=case.shared_system_tokens,
+                            unique_user_tokens=case.unique_user_tokens,
+                            target_ratio=case.target_prefix_ratio,
+                        )
                     )
-                )
     return members
 
 
-def _order_members(members: List[PlannedRun], document: PerfPlanDocument) -> List[PlannedRun]:
+def _order_members(members: List[PlannedRun], document: PlanDocument) -> List[PlannedRun]:
     """Apply the declared order; the execution layer must not reshuffle."""
     if document.execution.order == 'seeded_shuffle':
         seed = document.execution.seed
@@ -275,14 +320,16 @@ def _order_members(members: List[PlannedRun], document: PerfPlanDocument) -> Lis
     return members
 
 
-def _budgets(document: PerfPlanDocument, runs: List[PlannedRun]) -> PlanBudgets:
+def _budgets(document: PlanDocument, runs: List[PlannedRun]) -> PlanBudgets:
     formal_requests = sum(run.request_count for run in runs)
     warmup = document.warmup
     warmup_requests = warmup.request_count if warmup.enabled else 0
     primer_requests = sum(run.primer_requests for run in runs)
     return PlanBudgets(
         formal_requests=formal_requests,
-        formal_output_tokens=formal_requests * document.load.output_token_limit,
+        # Runs may carry different output limits, so the ceiling is summed per
+        # run instead of multiplying by one axis value.
+        formal_output_tokens=sum(run.request_count * run.output_token_limit for run in runs),
         warmup_requests=warmup_requests,
         warmup_output_tokens=warmup_requests * warmup.output_token_limit,
         primer_requests=primer_requests,
@@ -312,7 +359,42 @@ _DEPLOYMENT_SEMANTIC_FIELDS = (
 """Deployment facts that make two results comparable; ``evidence`` is a provenance label, not a fact."""
 
 
-def _semantic_payload(document: PerfPlanDocument, runs: List[PlannedRun]) -> Dict[str, Any]:
+def _legacy_run_payload(run: PlannedRun) -> Dict[str, Any]:
+    """Serialize a run exactly as compiler 1.2 did, so 1.0 identities survive.
+
+    Adding ``rate`` to :class:`PlannedRun` changed ``model_dump``; a 1.0 plan
+    recompiled today must still hash to its archived value, so the old key set
+    is reconstructed explicitly instead of relying on the current model.
+    """
+    return {
+        'run_id': run.run_id,
+        'order': run.order,
+        'workload_kind': run.workload_kind,
+        'load_mode': 'closed_loop',
+        'concurrency': run.concurrency,
+        'request_count': run.request_count,
+        'output_token_limit': run.output_token_limit,
+        'repetition': run.repetition,
+        'seed': run.seed,
+        'primer_requests': run.primer_requests,
+        'namespace': run.namespace,
+        'case_id': run.case_id,
+        'input_tokens': run.input_tokens,
+        'target_ratio': run.target_ratio,
+        'declared_total_input_tokens': run.declared_total_input_tokens,
+        'shared_system_tokens': run.shared_system_tokens,
+        'unique_user_tokens': run.unique_user_tokens,
+    }
+
+
+def _run_payload(run: PlannedRun, *, legacy: bool, exclude: Collection[str] = frozenset()) -> Dict[str, Any]:
+    """Return the identity payload of one run for its own compiler version."""
+    if legacy:
+        return {key: value for key, value in _legacy_run_payload(run).items() if key not in exclude}
+    return run.model_dump(mode='json', exclude_none=True, exclude=exclude)
+
+
+def _semantic_payload(document: PlanDocument, runs: List[PlannedRun]) -> Dict[str, Any]:
     """Fields that make two results comparable; identity, paths and credentials never enter.
 
     The tokenizer *path* is deliberately absent: it is identity, not semantics.
@@ -320,11 +402,12 @@ def _semantic_payload(document: PerfPlanDocument, runs: List[PlannedRun]) -> Dic
     even when the local directory moved, and that comparison uses the archived
     effective identity rather than this fingerprint.
     """
+    legacy = _is_legacy(document)
     base_url, endpoint = normalize_chat_url(document.connection.url)
     deployment = document.deployment.model_dump(mode='json')
     return {
-        'contract_version': CONTRACT_VERSION,
-        'compiler_version': COMPILER_VERSION,
+        'contract_version': document.schema_version,
+        'compiler_version': _compiler_version(document),
         'workload_semantics': _workload_semantics(document),
         'intent': document.intent,
         'connection': {
@@ -340,11 +423,11 @@ def _semantic_payload(document: PerfPlanDocument, runs: List[PlannedRun]) -> Dic
         'execution': document.execution.model_dump(mode='json'),
         # ``order`` is a scheduling decision and ``namespace`` derives from the
         # tokenizer path; neither changes what is measured.
-        'runs': [run.model_dump(mode='json', exclude={'order', 'namespace'}) for run in runs],
+        'runs': [_run_payload(run, legacy=legacy, exclude={'order', 'namespace'}) for run in runs],
     }
 
 
-def compile_plan(document: PerfPlanDocument, source_text: Optional[str] = None) -> CompiledPerfPlan:
+def compile_plan(document: PlanDocument, source_text: Optional[str] = None) -> CompiledPerfPlan:
     """Expand and hash a validated plan without any I/O.
 
     ``source_text`` is the original uploaded text; when it is absent (a plan
@@ -373,18 +456,22 @@ def compile_plan(document: PerfPlanDocument, source_text: Optional[str] = None) 
             'load',
         )
     runs = _order_members(members, document)
+    legacy = _is_legacy(document)
+    compiler_version = _compiler_version(document)
     normalized = document.model_dump(mode='json')
     normalized_text = _canonical(normalized)
     source_payload = source_text if source_text is not None else normalized_text
     semantic_payload = _semantic_payload(document, runs)
     plan_payload = {
-        'contract_version': CONTRACT_VERSION,
-        'compiler_version': COMPILER_VERSION,
+        'contract_version': document.schema_version,
+        'compiler_version': compiler_version,
         'normalized_hash': _sha256(normalized_text),
         'semantic_fingerprint': _sha256(_canonical(semantic_payload)),
-        'runs': [run.model_dump(mode='json') for run in runs],
+        'runs': [_run_payload(run, legacy=legacy) for run in runs],
     }
     return CompiledPerfPlan(
+        contract_version=document.schema_version,
+        compiler_version=compiler_version,
         workload_semantics=_workload_semantics(document),
         intent=document.intent,
         normalized=document,
@@ -411,7 +498,7 @@ def _upgrade_parse_code(error_value: PlanParseError) -> PlanParseError:
     return error_value
 
 
-def parse_plan_text(text: Any) -> Tuple[PerfPlanDocument, str]:
+def parse_plan_text(text: Any) -> Tuple[PlanDocument, str]:
     """Strictly decode, classify and validate one portable plan document."""
     document, source_text = parse_document_text(text)
     if classify_document(document) != 'perf_plan':

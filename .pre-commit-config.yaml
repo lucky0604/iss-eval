@@ -12,6 +12,7 @@ repos:
         exclude: evalscope/third_party/|docs/|examples
       - id: check-yaml
         exclude: evalscope/third_party/|docs/|examples
+        args: [--allow-multiple-documents]
       - id: end-of-file-fixer
         exclude: evalscope/third_party/|docs/|examples|.*\.json
       - id: requirements-txt-fixer

@@ -4,14 +4,17 @@ import type { PerfPlanResponse, PerfSinglePlanResponse } from '@/api/generated/c
 import { useLocale } from '@/contexts/LocaleContext'
 import { useAsyncResource } from '@/hooks/useAsyncResource'
 import { useTaskForm } from '@/components/tasks/useTaskForm'
-import { endpointOrigin, type FieldErrors, type ModelConnection } from '@/components/tasks/taskConfig'
+import { type FieldErrors, type ModelConnection } from '@/components/tasks/taskConfig'
 import {
-  buildAIPerfPayload, newAIPerfNode, validateAIPerfDraft, type AIPerfDraft, type AIPerfNodeDraft,
+  buildAIPerfPayload, validateAIPerfDraft, type AIPerfDraft,
 } from '@/components/tasks/aiperfDraft'
 import Field from '@/components/ui/Field'
 import { FORM_INPUT_CLASS, inputClass } from '@/components/ui/formStyles'
 import Button from '@/components/ui/Button'
 import PerfPlanImportPanel from '@/components/perf/PerfPlanImportPanel'
+import MetricsNodeEditor from '@/components/perf/MetricsNodeEditor'
+import { metricsNodeFieldIds } from '@/domain/perf/metricsNodes'
+import PlanMatrixForm from '@/components/perf/PlanMatrixForm'
 
 interface Props {
   connection: ModelConnection
@@ -25,7 +28,8 @@ interface Props {
   onPlanSubmitted?: (taskId: string) => void
 }
 
-type TextField = Exclude<keyof AIPerfDraft, 'nodes' | 'required' | 'mode' | 'deploymentMode' | 'runType' | 'prompts'>
+type TextField = Exclude<keyof AIPerfDraft, 'nodes' | 'required' | 'mode' | 'deploymentMode' | 'runType' | 'prompts' |
+  `matrix${string}`>
 type Preview = { kind: 'cache'; value: PerfPlanResponse } | { kind: 'single'; value: PerfSinglePlanResponse }
 const FIELD_LABELS: Record<TextField, string> = {
   tokenizer: 'tasks.aiperf.tokenizer', ratios: 'tasks.aiperf.ratios', inputTokens: 'tasks.aiperf.inputTokens',
@@ -33,10 +37,16 @@ const FIELD_LABELS: Record<TextField, string> = {
   repetitions: 'tasks.aiperf.repetitions', pool: 'tasks.aiperf.pool', seed: 'tasks.aiperf.seed',
   sampleInterval: 'tasks.aiperf.sampleInterval', maxGap: 'tasks.aiperf.maxGap',
 }
-const NODE_LABELS = { nodeId: 'tasks.aiperf.nodeId', url: 'tasks.aiperf.url', labels: 'tasks.aiperf.labels',
-  bearerToken: 'tasks.aiperf.token' } as const
 
-export default function CacheExperimentForm({ connection, onSubmit, disabled, draft, onChange, toolbar, onValidateConnection, onPlanSubmitted }: Props) {
+/**
+ * AIPerf entry point: the full matrix is the primary workload, the legacy prefix
+ * cache experiment and single run remain selectable from the same control.
+ */
+export default function CacheExperimentForm(props: Props) {
+  return props.draft.runType === 'matrix' ? <PlanMatrixForm {...props} /> : <LegacyAIPerfForm {...props} />
+}
+
+function LegacyAIPerfForm({ connection, onSubmit, disabled, draft, onChange, toolbar, onValidateConnection, onPlanSubmitted }: Props) {
   const { t } = useLocale()
   const engines = useAsyncResource((signal) => getPerfEngines(signal), [])
   const capability = engines.data?.engines.find((item) => item.engine === 'aiperf')
@@ -61,7 +71,8 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
   }, [key])
 
   const values: Record<string, string | boolean> = {
-    ...Object.fromEntries(Object.entries(draft).filter(([name]) => name !== 'nodes').map(([name, value]) => [`aiperf-${name}`, value])),
+    ...Object.fromEntries(Object.entries(draft).filter(([name]) => name !== 'nodes' && !name.startsWith('matrix'))
+      .map(([name, value]) => [`aiperf-${name}`, value])),
     'aiperf-nodes': JSON.stringify(draft.nodes.map((node) => ({ ...node, bearerToken: '' }))),
   }
   for (const node of draft.nodes) {
@@ -71,7 +82,7 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
   const domOrder = ['connection-api', 'connection-model', 'connection-url',
     ...['prompts', 'tokenizer', 'ratios', 'inputTokens', 'requestCount', 'outputTokens', 'loads', 'repetitions', 'pool',
       'seed', 'sampleInterval', 'maxGap'].map((name) => `aiperf-${name}`),
-    ...draft.nodes.flatMap((node) => ['nodeId', 'url', 'labels', 'bearerToken'].map((name) => `aiperf-node-${node.id}-${name}`)),
+    ...metricsNodeFieldIds('aiperf', draft.nodes),
     'aiperf-nodes']
   const { errorFor, submitHandler } = useTaskForm({ domOrder, values })
   const validate = () => ({
@@ -79,11 +90,6 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
     ...Object.fromEntries(Object.entries(validateAIPerfDraft(draft)).map(([field, message]) => [`aiperf-${field}`, message])),
   })
   const update = <K extends keyof AIPerfDraft>(field: K, value: AIPerfDraft[K]) => onChange({ ...draft, [field]: value })
-  const updateNode = (id: string, patch: Partial<AIPerfNodeDraft>) => update('nodes', draft.nodes.map((node) => {
-    if (node.id !== id) return node
-    const clearToken = patch.url !== undefined && endpointOrigin(node.url) !== endpointOrigin(patch.url)
-    return { ...node, ...patch, ...(clearToken ? { bearerToken: '' } : {}) }
-  }))
   const previewPlan = async () => {
     const request = ++sequence.current
     pending.current?.abort()
@@ -114,15 +120,6 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
         onChange={(event) => update(name, event.target.value)} />}
     </Field>
   }
-  const nodeField = (node: AIPerfNodeDraft, name: 'nodeId' | 'url' | 'labels' | 'bearerToken', type = 'text') => {
-    const id = `aiperf-node-${node.id}-${name}`
-    const error = errorFor(id)
-    return <Field id={id} name={id} labelKey={NODE_LABELS[name]} error={error}
-      autoComplete={name === 'bearerToken' ? 'off' : undefined}>
-      {(aria) => <input {...aria} type={type} className={inputClass(error)} value={node[name]}
-        onChange={(event) => updateNode(node.id, { [name]: event.target.value })} />}
-    </Field>
-  }
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     submitHandler(validate, () => void previewPlan())(event)
   }
@@ -136,6 +133,7 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
         <Field id="aiperf-runType" name="runType" labelKey="tasks.aiperf.runType">
           {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={draft.runType}
             onChange={(event) => update('runType', event.target.value as AIPerfDraft['runType'])}>
+            <option value="matrix">{t('tasks.aiperf.matrix.run')}</option>
             <option value="cache">{t('tasks.aiperf.cacheRun')}</option><option value="single">{t('tasks.aiperf.singleRun')}</option>
           </select>}
         </Field>
@@ -163,37 +161,8 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
         </div>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.required}
           onChange={(event) => update('required', event.target.checked)} />{t('tasks.aiperf.required')}</label>
-        <section className="space-y-3" aria-labelledby="aiperf-nodes-title">
-          <h3 id="aiperf-nodes-title" className="text-sm font-semibold">{t('tasks.aiperf.nodes')}</h3>
-          <p className="text-xs text-[var(--text-muted)]">{t('tasks.aiperf.nodesHint')}</p>
-          {draft.nodes.map((node, index) => <fieldset key={node.id} className="min-w-0 space-y-3 rounded border border-[var(--border)] p-3">
-            <legend className="px-1 text-sm">{t('tasks.aiperf.node', { number: index + 1 })}</legend>
-            <div className="grid min-w-0 gap-3 md:grid-cols-2">
-              {nodeField(node, 'nodeId')}
-              <Field id={`aiperf-node-${node.id}-role`} name={`role-${node.id}`} labelKey="tasks.aiperf.role">
-                {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={node.role}
-                  onChange={(event) => updateNode(node.id, { role: event.target.value as AIPerfNodeDraft['role'] })}>
-                  <option value="prefill">{t('tasks.aiperf.prefill')}</option><option value="decode">{t('tasks.aiperf.decode')}</option>
-                </select>}
-              </Field>
-              <Field id={`aiperf-node-${node.id}-engine`} name={`engine-${node.id}`} labelKey="tasks.aiperf.engine">
-                {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={node.engine}
-                  onChange={(event) => updateNode(node.id, { engine: event.target.value as AIPerfNodeDraft['engine'] })}>
-                  <option value="vllm">vLLM</option><option value="sglang">SGLang</option>
-                </select>}
-              </Field>
-              {nodeField(node, 'url')}{nodeField(node, 'labels')}{nodeField(node, 'bearerToken', 'password')}
-            </div>
-            <Button type="button" variant="ghost" size="sm" onClick={() => update('nodes', draft.nodes.filter((item) => item.id !== node.id))}>
-              {t('tasks.aiperf.removeNode')}
-            </Button>
-          </fieldset>)}
-          <Button id="aiperf-nodes" type="button" variant="outline" size="sm" disabled={draft.nodes.length >= 64}
-            aria-describedby={errorFor('aiperf-nodes') ? 'aiperf-nodes-error' : undefined}
-            onClick={() => update('nodes', [...draft.nodes, newAIPerfNode()])}>{t('tasks.aiperf.addNode')}</Button>
-          {errorFor('aiperf-nodes') && <p id="aiperf-nodes-error" role="alert" className="text-xs text-[var(--danger)]">{errorFor('aiperf-nodes')}</p>}
-          <p className="text-xs text-[var(--text-muted)]">{t('tasks.aiperf.tokenHint')}</p>
-        </section>
+        <MetricsNodeEditor idPrefix="aiperf" nodes={draft.nodes} errorFor={errorFor} disabled={disabled}
+          onChange={(nodes) => update('nodes', nodes)} />
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={probe}
           onChange={(event) => setProbe(event.target.checked)} />{t('tasks.aiperf.probe')}</label>
         <p className="text-xs text-[var(--text-muted)]">{t('tasks.aiperf.limitations')}</p>

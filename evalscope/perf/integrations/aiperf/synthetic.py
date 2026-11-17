@@ -14,7 +14,7 @@ request shape stays ``system`` + ``user`` instead of one concatenated prompt.
 from pathlib import Path
 from typing import List, Literal, Optional
 
-from pydantic import Field, StrictInt
+from pydantic import Field, StrictInt, model_validator
 
 from evalscope.perf.executors.arguments import AIPerfArguments
 from evalscope.perf.executors.external import Cancellation, run_external
@@ -28,7 +28,12 @@ SUPPORTED_AIPERF_VERSION = '0.13.0'
 
 
 class SyntheticRunSpec(BaseArgument):
-    """One legacy-shaped synthetic point; values are explicit, never re-derived."""
+    """One legacy-shaped synthetic point; values are explicit, never re-derived.
+
+    ``load_mode`` selects exactly one CLI load flag: a closed-loop run sends
+    ``--concurrency``, an open-loop run sends ``--request-rate``. Both are never
+    passed together, and the flag this run did not declare stays unset.
+    """
 
     case_id: str = Field(min_length=1, max_length=64)
     model: str = Field(min_length=1)
@@ -38,10 +43,21 @@ class SyntheticRunSpec(BaseArgument):
     unique_user_tokens: StrictInt = Field(gt=0)
     output_token_limit: StrictInt = Field(gt=0)
     request_count: StrictInt = Field(gt=0)
-    concurrency: StrictInt = Field(gt=0)
+    load_mode: Literal['closed_loop', 'open_loop'] = 'closed_loop'
+    concurrency: Optional[StrictInt] = Field(default=None, gt=0)
+    rate: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
     stream: bool = True
     apply_chat_template: Literal[False] = False
     cache_bust: Literal['none'] = 'none'
+
+    @model_validator(mode='after')
+    def validate_load_point(self) -> 'SyntheticRunSpec':
+        if self.load_mode == 'closed_loop':
+            if self.concurrency is None or self.rate is not None:
+                raise ValueError('closed-loop synthetic runs require only concurrency')
+        elif self.rate is None or self.concurrency is not None:
+            raise ValueError('open-loop synthetic runs require only rate')
+        return self
 
 
 class PreparedSyntheticRun(BaseArgument):
@@ -81,6 +97,13 @@ def build_synthetic_arguments(spec: SyntheticRunSpec, artifact_dir: str) -> List
     # ``--endpoint-type chat`` appends the endpoint path itself, so the base must
     # keep the API prefix (``/v1``) that the legacy script passed verbatim.
     base = f'{origin}{endpoint[: -len("/chat/completions")]}'
+    # AIPerf treats these as mutually exclusive load modes; emitting the flag the
+    # run did not declare would silently change how requests are issued.
+    load_flags = (
+        ['--concurrency', str(spec.concurrency)]
+        if spec.load_mode == 'closed_loop'
+        else ['--request-rate', f'{spec.rate:g}']
+    )
     return [
         'profile',
         '--model',
@@ -100,8 +123,7 @@ def build_synthetic_arguments(spec: SyntheticRunSpec, artifact_dir: str) -> List
         '--streaming',
         '--request-count',
         str(spec.request_count),
-        '--concurrency',
-        str(spec.concurrency),
+        *load_flags,
         '--output-artifact-dir',
         artifact_dir,
     ]

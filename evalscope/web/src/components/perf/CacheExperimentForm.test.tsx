@@ -12,9 +12,10 @@ const plan = (requests = 30): PerfPlanResponse => ({ engine_available: true, war
   plan_hash: 'hash', configuration_hash: 'config', tokenizer_id: 'tokenizer', template_id: 'template',
   subruns: [], profiling_requests: requests, primer_requests: 2, max_profiling_output_tokens: 300,
 } })
+const legacy = { ...DEFAULT_AIPERF, runType: 'cache' as const }
 const connection = { model: 'model', url: 'http://localhost:1234/v1', apiKey: 'model-secret', alias: '', api: 'openai' as const }
 
-function Harness({ submit = async () => {}, initial = DEFAULT_AIPERF }: {
+function Harness({ submit = async () => {}, initial = legacy }: {
   submit?: (config: Record<string, unknown>) => Promise<void>, initial?: AIPerfDraft
 }) {
   const [draft, setDraft] = useState<AIPerfDraft>(structuredClone(initial))
@@ -99,7 +100,7 @@ it('ignores an out-of-order preview and invalidates it when the draft changes', 
   vi.mocked(validatePerfExperiment)
     .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
     .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve }))
-  await act(async () => { render(<Harness initial={{ ...DEFAULT_AIPERF, tokenizer: '/tokenizer' }} />) })
+  await act(async () => { render(<Harness initial={{ ...legacy, tokenizer: '/tokenizer' }} />) })
   expect(screen.getByText(/AIPerf 0.13.0: Available/)).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Preview plan' }))
   fireEvent.change(screen.getByLabelText('Requests per run'), { target: { value: '20' } })
@@ -116,7 +117,7 @@ it('ignores an out-of-order preview and invalidates it when the draft changes', 
 it('preflights and submits one inline-prompt run with exact user text', async () => {
   const submit = vi.fn().mockResolvedValue(undefined)
   vi.mocked(validatePerfSingle).mockResolvedValue({ engine_available: true, profiling_requests: 2 })
-  await act(async () => { render(<Harness submit={submit} initial={{ ...DEFAULT_AIPERF, tokenizer: '/tokenizer' }} />) })
+  await act(async () => { render(<Harness submit={submit} initial={{ ...legacy, tokenizer: '/tokenizer' }} />) })
   fireEvent.change(screen.getByLabelText('Workload'), { target: { value: 'single' } })
   fireEvent.change(screen.getByLabelText('Prompts (one per line; stored in this browser)'), { target: { value: 'first\n second ' } })
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Preview plan' })) })

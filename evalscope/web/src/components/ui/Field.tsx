@@ -40,6 +40,13 @@ export interface FieldProps {
    */
   error?: string
   hintKey?: string
+  /**
+   * Real configuration name of the parameter, shown next to the localized
+   * title (for example `output_token_limits`). It is part of the label so a
+   * reader of either the screen or the accessible name can match the control
+   * to the plan/document field it writes.
+   */
+  paramName?: string
   /** Stable control name. */
   name: string
   /** Autocomplete hint forwarded to the control. */
@@ -69,6 +76,7 @@ export default function Field({
   required,
   error,
   hintKey,
+  paramName,
   name,
   autoComplete,
   className,
@@ -95,6 +103,11 @@ export default function Field({
       <div className="flex items-center gap-1 mb-1">
         <label id={labelId} htmlFor={id} className={`${FORM_LABEL_CLASS} !mb-0`}>
           {t(labelKey)}
+          {paramName && (
+            <span className="ml-1 font-mono text-[10px] font-normal text-[var(--text-dim)]" aria-hidden="true">
+              {paramName}
+            </span>
+          )}
           {required && <span className="text-[var(--danger)]"> *</span>}
         </label>
         {hintKey && (

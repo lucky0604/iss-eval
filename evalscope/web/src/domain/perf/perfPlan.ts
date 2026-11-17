@@ -25,7 +25,9 @@ export interface PlanMatrixRow {
   order: number
   workload: string
   structure: string
-  concurrency: number
+  concurrency: number | null
+  outputTokenLimit: number
+  load: string
   requests: number
   primerRequests: number
   input: string
@@ -119,7 +121,9 @@ export function matrixRows(preview: PerfPlanPreviewResponse): PlanMatrixRow[] {
     order: run.order,
     workload: run.workload_kind,
     structure: run.message_structure,
-    concurrency: run.concurrency,
+    concurrency: run.concurrency ?? null,
+    outputTokenLimit: run.output_token_limit,
+    load: run.rate != null ? `${run.rate}/s` : String(run.concurrency ?? '—'),
     requests: run.request_count,
     primerRequests: run.primer_requests,
     input: run.workload_kind === 'token_prefix' ? formatTokens(run.input_tokens) : `${formatTokens(run.shared_system_tokens)} + ${formatTokens(run.unique_user_tokens)}`,

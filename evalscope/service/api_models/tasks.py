@@ -181,10 +181,13 @@ class PlanConfigSnapshot(ApiResponseModel):
     deployment_measured: Optional[bool] = None
     input_lengths: List[int] = Field(default_factory=list)
     target_ratios: List[float] = Field(default_factory=list)
+    load_mode: Optional[str] = None
     concurrencies: List[int] = Field(default_factory=list)
+    rates: List[float] = Field(default_factory=list)
     repetitions: Optional[int] = None
     request_count: Optional[int] = None
     output_token_limit: Optional[int] = None
+    output_token_limits: List[int] = Field(default_factory=list)
     warmup_enabled: Optional[bool] = None
     warmup_input_tokens: Optional[int] = None
     warmup_output_token_limit: Optional[int] = None

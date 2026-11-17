@@ -407,6 +407,7 @@ def _plan_config_snapshot(task_id: str, record: Dict[str, Any]) -> Optional[Plan
     document = compiled.normalized
     manifest = _plan_manifest(task_id) or {}
     warmup = document.warmup
+    output_limits = list(document.load.output_token_limits)
     return PlanConfigSnapshot(
         model=document.connection.model,
         alias=document.name or record.get('alias'),
@@ -429,10 +430,14 @@ def _plan_config_snapshot(task_id: str, record: Dict[str, Any]) -> Optional[Plan
         deployment_measured=(effective.deployment_evidence == 'measured') if effective else None,
         input_lengths=[int(run.input_tokens) for run in compiled.runs if run.input_tokens is not None][:64],
         target_ratios=sorted({float(run.target_ratio) for run in compiled.runs if run.target_ratio is not None}),
-        concurrencies=sorted({run.concurrency for run in compiled.runs}),
+        concurrencies=sorted({run.concurrency for run in compiled.runs if run.concurrency is not None}),
+        rates=sorted({run.rate for run in compiled.runs if run.rate is not None}),
         repetitions=document.load.repetitions,
         request_count=document.load.request_count,
-        output_token_limit=document.load.output_token_limit,
+        # Keep the scalar for schema 1.0 consumers; 1.1 readers use the list axis.
+        output_token_limit=output_limits[0] if document.schema_version == '1.0' else None,
+        output_token_limits=output_limits,
+        load_mode=document.load.mode,
         warmup_enabled=warmup.enabled,
         warmup_input_tokens=warmup.input_tokens if warmup.enabled else None,
         warmup_output_token_limit=warmup.output_token_limit if warmup.enabled else None,

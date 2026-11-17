@@ -28,6 +28,7 @@ class ContextCheck(BaseArgument):
 
     run_id: str
     case_id: Optional[str] = None
+    output_token_limit: Optional[int] = None
     required_tokens: Optional[int] = None
     limit_tokens: Optional[int] = None
     overhead: Literal['included', 'known', 'unknown'] = 'unknown'
@@ -49,14 +50,32 @@ def _distinct_context(
 ) -> Tuple[List[ContextCheck], List[PlanDiagnostic]]:
     checks: List[ContextCheck] = []
     diagnostics: List[PlanDiagnostic] = []
-    seen: set[Tuple[Optional[str], Optional[int], Optional[float], Optional[int]]] = set()
+    # One check per distinct input/output/message-structure combination: the
+    # output limit is part of the context requirement, so omitting it from the
+    # key would hide a point that overflows with a longer output limit.
+    seen: set[Tuple[Optional[str], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int]]] = set()
     for run in plan.runs:
-        key = (run.case_id, run.input_tokens, run.target_ratio, run.declared_total_input_tokens)
+        key = (
+            run.case_id,
+            run.input_tokens,
+            run.output_token_limit,
+            run.shared_system_tokens,
+            run.unique_user_tokens,
+            run.declared_total_input_tokens,
+        )
         if key in seen:
             continue
         seen.add(key)
         if limit is None:
-            checks.append(ContextCheck(run_id=run.run_id, case_id=run.case_id, overhead='unknown', status='unknown'))
+            checks.append(
+                ContextCheck(
+                    run_id=run.run_id,
+                    case_id=run.case_id,
+                    output_token_limit=run.output_token_limit,
+                    overhead='unknown',
+                    status='unknown',
+                )
+            )
             continue
         if run.workload_kind == 'token_prefix':
             required = (run.input_tokens or 0) + run.output_token_limit
@@ -65,6 +84,7 @@ def _distinct_context(
                 ContextCheck(
                     run_id=run.run_id,
                     case_id=run.case_id,
+                    output_token_limit=run.output_token_limit,
                     required_tokens=required,
                     limit_tokens=limit,
                     overhead='included',
@@ -125,6 +145,7 @@ def _distinct_context(
             ContextCheck(
                 run_id=run.run_id,
                 case_id=run.case_id,
+                output_token_limit=run.output_token_limit,
                 required_tokens=required,
                 limit_tokens=limit,
                 overhead='known' if overhead is not None else 'unknown',
@@ -195,12 +216,15 @@ def _compare_source(plan: CompiledPerfPlan, source: LegacySourceFacts) -> PlanAl
         different.append(f'endpoint type {source.endpoint_type} is not reproduced')
     if source.streaming is not None and source.streaming != document.connection.streaming:
         different.append('streaming differs from the source script')
-    if source.output_tokens is not None and source.output_tokens != document.load.output_token_limit:
-        different.append(f'output tokens {source.output_tokens} -> {document.load.output_token_limit}')
+    output_limits = list(document.load.output_token_limits)
+    if source.output_tokens is not None and output_limits != [source.output_tokens]:
+        different.append(f'output tokens {source.output_tokens} -> {output_limits}')
     if source.request_count is not None and source.request_count != document.load.request_count:
         different.append(f'request count {source.request_count} -> {document.load.request_count}')
     source_concurrency = list(source.concurrencies)
-    plan_concurrency = [point.concurrency for point in document.load.points]
+    plan_concurrency = [
+        point.concurrency for point in document.load.points if getattr(point, 'concurrency', None) is not None
+    ]
     if source_concurrency and source_concurrency != plan_concurrency:
         different.append(f'concurrency matrix {source_concurrency} -> {plan_concurrency}')
     if source.repetitions is not None and source.repetitions != document.load.repetitions:
@@ -303,35 +327,47 @@ def preflight_plan(
                 'deployment.declared_max_model_len',
             )
         )
-    elif document.load.output_token_limit >= limit:
-        diagnostics.append(
-            error(
-                'output_budget_exceeded',
-                f'An output limit of {document.load.output_token_limit} tokens leaves no room inside the declared '
-                f'context limit {limit}.',
-                'load.output_token_limit',
-            )
-        )
+    elif document.load.output_token_limits:
+        output_path = 'load.output_token_limit' if document.schema_version == '1.0' else 'load.output_token_limits'
+        # Every declared output length is judged independently: filling the
+        # context with one small limit does not make a longer limit safe.
+        for output_limit in document.load.output_token_limits:
+            if output_limit >= limit:
+                diagnostics.append(
+                    error(
+                        'output_budget_exceeded',
+                        f'An output limit of {output_limit} tokens leaves no room inside the declared '
+                        f'context limit {limit}.',
+                        output_path,
+                        output_token_limit=output_limit,
+                        limit_tokens=limit,
+                    )
+                )
 
     below: Dict[int, PlanDiagnostic] = {}
     small: Dict[int, PlanDiagnostic] = {}
     for point in document.load.points:
-        if document.load.request_count < point.concurrency:
-            below[point.concurrency] = (error if document.intent == 'benchmark' else warning)(
+        concurrency = getattr(point, 'concurrency', None)
+        # Closed-loop adequacy only: an open-loop point is paced by rate, so its
+        # request count is not compared with a worker slot count.
+        if concurrency is None:
+            continue
+        if document.load.request_count < concurrency:
+            below[concurrency] = (error if document.intent == 'benchmark' else warning)(
                 'request_count_below_concurrency',
-                f'{document.load.request_count} requests cannot reach concurrency {point.concurrency}; '
-                f'{point.concurrency - document.load.request_count} slots would never be occupied.',
+                f'{document.load.request_count} requests cannot reach concurrency {concurrency}; '
+                f'{concurrency - document.load.request_count} slots would never be occupied.',
                 'load.request_count',
-                concurrency=point.concurrency,
+                concurrency=concurrency,
                 request_count=document.load.request_count,
             )
-        elif document.intent == 'benchmark' and document.load.request_count < 2 * point.concurrency:
-            small[point.concurrency] = warning(
+        elif document.intent == 'benchmark' and document.load.request_count < 2 * concurrency:
+            small[concurrency] = warning(
                 'sample_budget_small',
-                f'{document.load.request_count} requests at concurrency {point.concurrency} leave fewer than two '
+                f'{document.load.request_count} requests at concurrency {concurrency} leave fewer than two '
                 'observations per slot; completion is not statistical adequacy.',
                 'load.request_count',
-                concurrency=point.concurrency,
+                concurrency=concurrency,
                 request_count=document.load.request_count,
             )
     diagnostics.extend(below.values())

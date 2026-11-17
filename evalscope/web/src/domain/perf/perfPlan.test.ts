@@ -159,7 +159,10 @@ describe('preview projections', () => {
 
   it('renders the managed matrix with the user-only structure', () => {
     const [row] = matrixRows(preview())
-    expect(row).toMatchObject({ runId: 'i000-r000-l000-n000', structure: 'user_only', input: '1,024', ratio: '90%' })
+    expect(row).toMatchObject({
+      runId: 'i000-r000-l000-n000', structure: 'user_only', input: '1,024', ratio: '90%',
+      outputTokenLimit: 32, load: '4',
+    })
   })
 
   it('renders the synthetic split as shared plus unique', () => {

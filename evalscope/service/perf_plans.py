@@ -137,7 +137,9 @@ def _run_summary(run) -> PlanRunSummary:
         declared_total_input_tokens=run.declared_total_input_tokens,
         shared_system_tokens=run.shared_system_tokens,
         unique_user_tokens=run.unique_user_tokens,
+        load_mode=run.load_mode,
         concurrency=run.concurrency,
+        rate=run.rate,
         request_count=run.request_count,
         output_token_limit=run.output_token_limit,
         repetition=run.repetition,
@@ -198,6 +200,9 @@ def build_preview(
         source_hash=outcome.plan.source_hash,
         semantic_fingerprint=outcome.plan.semantic_fingerprint,
         normalized=outcome.plan.normalized,
+        schema_version=outcome.plan.normalized.schema_version,
+        load_mode=outcome.plan.normalized.load.mode,
+        output_token_limits=list(outcome.plan.normalized.load.output_token_limits),
         runs=[_run_summary(run) for run in outcome.plan.runs[offset : offset + limit]],
         total_runs=outcome.plan.run_count,
         offset=offset,
@@ -418,12 +423,29 @@ def plan_progress(perf_root: str | Path, *, queued: Optional[bool] = None) -> Op
         percent = min(99.9, 100.0 * completed / total)
     else:
         percent = None
+    current = None
+    if manifest is not None and manifest.current_run:
+        row = next((item for item in manifest.runs if item.run_id == manifest.current_run), None)
+        if row is not None:
+            current = {
+                'run_id': row.run_id,
+                'order': row.order,
+                'workload_kind': row.workload_kind,
+                'load_mode': row.load_mode,
+                'concurrency': row.concurrency,
+                'rate': row.rate,
+                'input_tokens': row.input_tokens,
+                'output_token_limit': row.output_token_limit,
+                'target_ratio': row.target_ratio,
+                'repetition': row.repetition,
+            }
     return {
         'percent': percent,
         'phase': manifest.phase if manifest else None,
         'current_subrun': manifest.current_run if manifest else None,
         'completed_subruns': completed,
         'total_subruns': total,
+        'current_run': current,
         'quality': manifest.quality if manifest else None,
         'plan_state': state.state,
         'plan_state_reason': state.reason,

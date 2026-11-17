@@ -29,10 +29,19 @@ def test_documented_examples_compile_and_carry_the_declared_contract() -> None:
     for name in ('managed-small.json', 'synthetic-small.json', 'legacy-context-rejected.json'):
         text = (FIXTURES / name).read_text()
         plan = compile_plan_text(text)
-        assert plan.contract_version == PLAN_SCHEMA_VERSION
-        assert plan.compiler_version
+        # The documented examples are frozen schema 1.0 documents: they must keep
+        # their own contract and compiler version instead of following the default.
+        assert plan.contract_version == json.loads(text)['schema_version']
+        assert plan.compiler_version == '1.2'
         assert plan.run_count > 0
         assert len(plan.plan_hash) == 64 and len(plan.semantic_fingerprint) == 64
+
+
+def test_schema_11_document_compiles_with_the_current_contract() -> None:
+    text = (FIXTURES / 'matrix-osl-load.json').read_text()
+    plan = compile_plan_text(text)
+    assert plan.contract_version == PLAN_SCHEMA_VERSION == '1.1'
+    assert plan.compiler_version == '1.3'
 
 
 def test_duplicate_json_key_is_rejected_before_pydantic() -> None:

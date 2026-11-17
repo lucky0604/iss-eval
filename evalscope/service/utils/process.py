@@ -457,6 +457,7 @@ def _perf_plan_worker(
             tokenizer_id=tokenizer_id,
             template_id=template_id,
             alignment=request.alignment,
+            binding=request.runtime,
             cancel_event=cancel_event,
         )
     except (PlanIdentityError, PlanExecutionConflict):

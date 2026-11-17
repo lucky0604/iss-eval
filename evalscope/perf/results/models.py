@@ -33,14 +33,27 @@ class PerfRequestRecord(BaseArgument):
     status_reason: Optional[str] = None
     start_ns: Optional[int] = None
     end_ns: Optional[int] = None
+    request_record_elapsed_seconds: Optional[float] = None
     latency_seconds: Optional[float] = None
     ttft_seconds: Optional[float] = None
+    itl_seconds: Optional[float] = None
+    itl_source: Optional[Literal['aiperf_raw', 'derived']] = None
+    itl_method: Optional[str] = None
+    decode_duration_seconds: Optional[float] = None
+    http_total_seconds: Optional[float] = None
+    http_duration_seconds: Optional[float] = None
     prompt_tokens: Optional[int] = None
     prompt_tokens_source: Optional[Literal['server_usage', 'aiperf_estimate']] = None
     output_tokens: Optional[int] = None
     output_tokens_source: Optional[Literal['server_usage', 'aiperf_estimate']] = None
     cached_tokens: Optional[int] = None
     cached_tokens_source: Optional[Literal['server_usage']] = None
+    aiperf_input_sequence_tokens: Optional[int] = None
+    aiperf_output_sequence_tokens: Optional[int] = None
+    usage_prompt_tokens: Optional[int] = None
+    usage_completion_tokens: Optional[int] = None
+    usage_total_tokens: Optional[int] = None
+    usage_reasoning_tokens: Optional[int] = None
     error_code: Optional[int] = None
 
 
@@ -69,9 +82,13 @@ class ImportManifest(BaseArgument):
     """Input and parser identity for an atomically published import."""
 
     schema_version: Literal['1.0'] = '1.0'
-    parser_version: Literal['aiperf-0.13.0-v1', 'aiperf-0.13.0-v2', 'aiperf-0.13.0-v3', 'aiperf-0.13.0-v4'] = (
-        'aiperf-0.13.0-v4'
-    )
+    parser_version: Literal[
+        'aiperf-0.13.0-v1',
+        'aiperf-0.13.0-v2',
+        'aiperf-0.13.0-v3',
+        'aiperf-0.13.0-v4',
+        'aiperf-0.13.0-v5',
+    ] = 'aiperf-0.13.0-v5'
     input_hash: str
     files: Dict[str, str]
     allow_partial_tail: bool = False
@@ -191,6 +208,7 @@ class RequestLatencyDistribution(BaseArgument):
     count: int = Field(ge=0)
     mean: Optional[float] = None
     p50: Optional[float] = None
+    p90: Optional[float] = None
     p95: Optional[float] = None
     p99: Optional[float] = None
     unit: Literal['seconds'] = 'seconds'

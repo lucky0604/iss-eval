@@ -15,7 +15,7 @@ from evalscope.perf.results.aiperf_import import (
     query_node_metrics,
     request_cache_groups,
 )
-from evalscope.perf.results.models import AIPerfImportArguments
+from evalscope.perf.results.models import AIPerfImportArguments, PerfRequestRecord
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'aiperf'
 
@@ -297,7 +297,7 @@ def test_request_cache_group_budget_preserves_coverage_without_fake_results(monk
     from evalscope.perf.results import aiperf_import
     from evalscope.perf.results.models import CacheObservation
 
-    monkeypatch.setattr(aiperf_import, 'observed_cache_usage', lambda _: CacheObservation(
+    monkeypatch.setattr(aiperf_import, 'observed_cache_usage', lambda *_args: CacheObservation(
         availability='available', observed_requests=200001, successful_requests=200002, ratio=.5,
     ))
     result = request_cache_groups('/unused')
@@ -408,3 +408,291 @@ def test_required_missing_labels_degrade_quality_without_losing_requests(tmp_pat
     assert run.quality == 'invalid' and 'configured_node_metrics_missing' in run.quality_reasons
     assert query_node_metrics(str(output), node_id='p')[0] == 0
     assert query_aiperf_requests(str(output), phase='profiling')[0] == 2
+
+
+def _profiling_template() -> dict:
+    return json.loads((FIXTURES / 'profile_export.jsonl').read_text().splitlines()[1])
+
+
+def test_summary_p90_and_raw_itl_are_preserved_with_units(tmp_path: Path) -> None:
+    raw, output = tmp_path / 'raw', tmp_path / 'normalized'
+    names = ('profile_export_aiperf.json', 'profile_export.jsonl', 'phase_manifest.json')
+    _copy(raw, {name: name for name in names})
+    run = import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(output)))
+    metrics = {metric.key: metric for metric in run.metrics}
+    assert metrics['time_to_first_token'].statistics['p90'] == pytest.approx(0.0007203288999999999)
+    assert metrics['time_to_first_token'].statistics['p95'] == pytest.approx(0.0007258934499999999)
+    _, records = query_aiperf_requests(str(output), phase='profiling')
+    assert records and all(record.itl_seconds == 0 and record.itl_source == 'aiperf_raw' for record in records)
+    assert all(record.itl_method == 'aiperf_inter_token_latency' for record in records)
+    first = records[0]
+    assert first.aiperf_input_sequence_tokens == 8 and first.aiperf_output_sequence_tokens == 2
+    assert first.usage_prompt_tokens == 8 and first.usage_completion_tokens == 2 and first.usage_total_tokens == 10
+    assert first.http_total_seconds is not None and first.http_duration_seconds is not None
+    assert first.decode_duration_seconds == 0
+    assert first.request_record_elapsed_seconds is not None
+    assert first.request_record_elapsed_seconds != first.latency_seconds
+
+
+def test_raw_itl_is_preferred_over_derivation(tmp_path: Path) -> None:
+    raw, output = tmp_path / 'raw', tmp_path / 'normalized'
+    raw.mkdir()
+    record = _profiling_template()
+    record['metrics']['inter_token_latency'] = {'unit': 'ms', 'value': 5}
+    record['metrics']['request_latency']['value'] = 100
+    record['metrics']['time_to_first_token']['value'] = 20
+    record['metrics']['output_sequence_length']['value'] = 10
+    (raw / 'profile_export.jsonl').write_text(json.dumps(record) + '\n')
+    import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(output)))
+    _, records = query_aiperf_requests(str(output), phase='profiling')
+    assert records[0].itl_seconds == pytest.approx(0.005)
+    assert records[0].itl_source == 'aiperf_raw'
+
+
+def test_missing_raw_itl_derives_only_where_the_boundaries_hold(tmp_path: Path) -> None:
+    raw, output = tmp_path / 'raw', tmp_path / 'normalized'
+    raw.mkdir()
+    record = _profiling_template()
+    del record['metrics']['inter_token_latency']
+    record['metrics']['request_latency']['value'] = 100
+    record['metrics']['time_to_first_token']['value'] = 20
+    record['metrics']['output_sequence_length']['value'] = 10
+    error = json.loads(json.dumps(record))
+    error['error'] = {'code': 503, 'message': 'overloaded'}
+    with_unit = json.loads(json.dumps(record))
+    with_unit['metrics']['inter_token_latency'] = {'unit': 's', 'value': 1}
+    (raw / 'profile_export.jsonl').write_text(
+        ''.join(json.dumps(item) + '\n' for item in (record, error, with_unit))
+    )
+    with pytest.raises(ValueError, match='inter_token_latency'):
+        import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(output)))
+
+
+def test_derived_itl_marks_source_and_skips_unsuccessful_or_short_outputs(tmp_path: Path) -> None:
+    from evalscope.perf.results.derivation import ITL_DERIVATION_METHOD
+
+    raw, output = tmp_path / 'raw', tmp_path / 'normalized'
+    raw.mkdir()
+    good = _profiling_template()
+    del good['metrics']['inter_token_latency']
+    good['metrics']['request_latency']['value'] = 100
+    good['metrics']['time_to_first_token']['value'] = 20
+    good['metrics']['output_sequence_length']['value'] = 10
+    single = json.loads(json.dumps(good))
+    single['metrics']['output_sequence_length']['value'] = 1
+    inverted = json.loads(json.dumps(good))
+    inverted['metrics']['time_to_first_token']['value'] = 200
+    failed = json.loads(json.dumps(good))
+    failed['error'] = {'code': 503, 'message': 'overloaded'}
+    (raw / 'profile_export.jsonl').write_text(
+        ''.join(json.dumps(item) + '\n' for item in (good, single, inverted, failed))
+    )
+    import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(output)))
+    _, records = query_aiperf_requests(str(output), phase='profiling')
+    assert records[0].itl_seconds == pytest.approx((0.1 - 0.02) / 9)
+    assert records[0].itl_source == 'derived' and records[0].itl_method == ITL_DERIVATION_METHOD
+    assert all(record.itl_seconds is None for record in records[1:])
+    assert all(record.itl_source is None for record in records[1:])
+
+
+def test_legacy_request_json_without_new_fields_remains_readable_and_derivable(tmp_path: Path) -> None:
+    import sqlite3
+
+    from evalscope.perf.results.derivation import resolve_itl
+
+    raw, output = tmp_path / 'raw', tmp_path / 'normalized'
+    record = _profiling_template()
+    record['metrics']['request_latency']['value'] = 100
+    record['metrics']['time_to_first_token']['value'] = 20
+    record['metrics']['output_sequence_length']['value'] = 10
+    raw.mkdir()
+    (raw / 'profile_export.jsonl').write_text(json.dumps(record) + '\n')
+    import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(output)))
+    identity = json.loads((output / 'current.json').read_text())['generation']
+    database_path = output / 'generations' / identity / 'requests.db'
+    removed = {
+        'itl_seconds', 'itl_source', 'itl_method', 'decode_duration_seconds', 'http_total_seconds',
+        'http_duration_seconds', 'aiperf_input_sequence_tokens', 'aiperf_output_sequence_tokens',
+        'usage_prompt_tokens', 'usage_completion_tokens', 'usage_total_tokens', 'usage_reasoning_tokens',
+        'request_record_elapsed_seconds',
+    }
+    database = sqlite3.connect(database_path)
+    try:
+        index, payload = database.execute('SELECT idx, record_json FROM requests LIMIT 1').fetchone()
+        stored = json.loads(payload)
+        for key in removed:
+            stored.pop(key, None)
+        database.execute('UPDATE requests SET record_json = ? WHERE idx = ?', (json.dumps(stored), index))
+        database.commit()
+    finally:
+        database.close()
+    _, records = query_aiperf_requests(str(output), phase='profiling')
+    assert records[0].itl_seconds is None and records[0].usage_prompt_tokens is None
+    resolved = resolve_itl(records[0])
+    assert resolved.source is None and resolved.seconds is None
+    assert resolved.reason == 'output_sequence_length_missing'
+
+
+# --- statistics window, token coverage and observed concurrency ---------------
+
+PHASE_START_NS = 1793613173340081000
+PHASE_END_NS = 1793613173343018000
+
+
+def _aggregation_record(index: int, status: str, start_ns: int, end_ns: int, **fields) -> PerfRequestRecord:
+    return PerfRequestRecord(
+        index=index,
+        request_id=f'agg-{index}',
+        phase='profiling',
+        status=status,  # type: ignore[arg-type]
+        start_ns=start_ns,
+        end_ns=end_ns,
+        **fields,
+    )
+
+
+def test_phase_window_preferred_for_rates() -> None:
+    from evalscope.perf.results.report import aggregate_requests
+
+    records = [
+        _aggregation_record(
+            0, 'success', PHASE_START_NS, PHASE_START_NS + 974083,
+            ttft_seconds=0.0001, latency_seconds=0.0008, aiperf_output_sequence_tokens=5,
+        ),
+        _aggregation_record(
+            1, 'success', PHASE_START_NS + 974084, PHASE_END_NS,
+            ttft_seconds=0.0001, latency_seconds=0.0008, aiperf_output_sequence_tokens=5,
+        ),
+    ]
+    aggregation = aggregate_requests(records, phase_window=(PHASE_START_NS, PHASE_END_NS))
+
+    # The request extent stays visible; the phase window is what rates divide by.
+    assert aggregation.observation.seconds == pytest.approx(0.002937)
+    assert aggregation.rates.window_seconds == pytest.approx(0.002937)
+    assert aggregation.rates.requests_per_second == pytest.approx(2 / 0.002937)
+    assert aggregation.rates.requests_per_minute == pytest.approx(40858.01838610828)
+    assert aggregation.rates.window_source == 'aiperf_phase'
+    assert aggregation.rates.window_authoritative is True
+    # The baseline summed successful request durations (0.001948167 s) and
+    # divided by that, inflating RPM to 61596.36; that window must never return.
+    assert aggregation.rates.window_seconds != pytest.approx(0.001948167)
+
+    # Without an upstream phase window the observed extent is used and labelled,
+    # never passed off as an AIPerf-reported statistics window.
+    observed = aggregate_requests(records)
+    assert observed.rates.window_source == 'observed_request_bounds'
+    assert observed.rates.window_authoritative is False
+    assert observed.rates.window_seconds == pytest.approx(0.002937)
+
+    # A phase window wider than the requests still wins, so the extent cannot
+    # silently shrink the denominator.
+    wider = aggregate_requests(records, phase_window=(PHASE_START_NS - 1_000_000, PHASE_END_NS + 1_000_000))
+    assert wider.observation.seconds == pytest.approx(0.002937)
+    assert wider.rates.window_seconds == pytest.approx(0.004937)
+    assert wider.rates.requests_per_minute == pytest.approx(2 / 0.004937 * 60)
+
+
+def test_token_coverage_blocks_partial_rates() -> None:
+    from evalscope.perf.results.report import aggregate_requests
+
+    t0 = 1_000_000_000
+    ten_seconds = 10_000_000_000
+    partial = aggregate_requests([
+        _aggregation_record(
+            0, 'success', t0, t0 + ten_seconds,
+            ttft_seconds=0.1, latency_seconds=1.0, aiperf_output_sequence_tokens=5,
+            prompt_tokens=100, output_tokens=5,
+        ),
+        _aggregation_record(
+            1, 'success', t0, t0 + ten_seconds,
+            ttft_seconds=0.1, latency_seconds=1.0, aiperf_output_sequence_tokens=5,
+        ),
+    ])
+    assert partial.tokens.input_tokens == 100
+    assert partial.tokens.input_requests == 1 and partial.tokens.successful_requests == 2
+    assert partial.rates.input_tokens_per_second is None
+    assert partial.rates.input.tokens_per_second is None
+    assert partial.rates.input.availability == 'partial'
+    assert partial.rates.input.covered_requests == 1
+    assert partial.rates.input.successful_requests == 2
+    assert partial.rates.input.reason == 'incomplete_token_coverage'
+    assert partial.rates.output.reason == 'incomplete_token_coverage'
+
+    # A fully covered zero is a measured zero, not an unknown value.
+    measured_zero = aggregate_requests([
+        _aggregation_record(
+            index, 'success', t0, t0 + ten_seconds,
+            ttft_seconds=0.1, latency_seconds=1.0, aiperf_output_sequence_tokens=5,
+            prompt_tokens=0, output_tokens=0,
+        )
+        for index in range(2)
+    ])
+    assert measured_zero.rates.input.tokens == 0
+    assert measured_zero.rates.input.tokens_per_second == 0.0
+    assert measured_zero.rates.input.availability == 'available'
+    assert measured_zero.rates.input.reason is None
+
+    # No usage at all stays unknown, never a zero.
+    unknown = aggregate_requests([
+        _aggregation_record(
+            0, 'success', t0, t0 + ten_seconds,
+            ttft_seconds=0.1, latency_seconds=1.0, aiperf_output_sequence_tokens=5,
+        )
+    ])
+    assert unknown.rates.input.tokens is None
+    assert unknown.rates.input.tokens_per_second is None
+    assert unknown.rates.input.availability == 'unavailable'
+    assert unknown.rates.input.reason == 'no_token_usage'
+
+    # Cache pairing counts only verified server pairs and never implies the rest.
+    paired = aggregate_requests([
+        _aggregation_record(
+            0, 'success', t0, t0 + ten_seconds,
+            ttft_seconds=0.1, latency_seconds=1.0, aiperf_output_sequence_tokens=5,
+            prompt_tokens=100, prompt_tokens_source='server_usage',
+            cached_tokens=40, cached_tokens_source='server_usage',
+        ),
+        _aggregation_record(
+            1, 'success', t0, t0 + ten_seconds,
+            ttft_seconds=0.1, latency_seconds=1.0, aiperf_output_sequence_tokens=5,
+        ),
+    ])
+    assert paired.rates.cache.availability == 'partial'
+    assert paired.rates.cache.paired_requests == 1
+    assert paired.rates.cache.successful_requests == 2
+    assert paired.rates.cache.reason == 'incomplete_cache_coverage'
+
+
+def test_concurrency_mean_and_peak_include_failures() -> None:
+    from evalscope.perf.results.report import aggregate_requests
+
+    t0 = 1_000_000_000
+    ten_seconds = 10_000_000_000
+    concurrent = aggregate_requests([
+        _aggregation_record(
+            index, status, t0, t0 + ten_seconds,
+            **({} if status != 'success' else {
+                'ttft_seconds': 0.1, 'latency_seconds': 1.0, 'aiperf_output_sequence_tokens': 5,
+            }),
+        )
+        for index, status in enumerate(('success', 'success', 'error'))
+    ])
+    assert concurrent.observed_concurrency == pytest.approx(3.0)
+    assert concurrent.observed_concurrency_peak == 3
+
+    # Staggered valid intervals, including a failed and a cancelled request.
+    staggered = aggregate_requests([
+        _aggregation_record(0, 'success', t0, t0 + 2_000_000_000),
+        _aggregation_record(1, 'error', t0 + 1_000_000_000, t0 + 3_000_000_000),
+        _aggregation_record(2, 'cancelled', t0 + 3_000_000_000, t0 + 4_000_000_000),
+    ])
+    assert staggered.observed_concurrency == pytest.approx(1.25)
+    assert staggered.observed_concurrency_peak == 2
+
+    # A legacy parser without elapsed durations still measures real in-flight time.
+    legacy = aggregate_requests([
+        _aggregation_record(0, 'success', t0, t0 + 1_000_000_000),
+        _aggregation_record(1, 'success', t0, t0 + 1_000_000_000),
+    ])
+    assert legacy.observed_concurrency == pytest.approx(2.0)
+    assert legacy.observed_concurrency_peak == 2

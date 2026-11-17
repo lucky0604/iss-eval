@@ -4,6 +4,16 @@ These types are the single source of truth for the ``iss-eval.perf-plan`` file
 format. They are deliberately independent of the Web layer: the service imports
 them, it does not define them. Runtime secrets, executor paths and arbitrary
 command arguments have no field here by design.
+
+Two schema versions are accepted, and each one has its own entrance model so a
+document can never mix their fields:
+
+* ``1.0`` (:class:`PerfPlanDocument`): closed loop only and one scalar
+  ``load.output_token_limit``. It is frozen: recompiling an old plan must keep
+  its run IDs and hashes.
+* ``1.1`` (:class:`PerfPlanDocumentV11`): ``load.output_token_limits`` is an
+  axis and ``load.mode`` selects closed-loop ``concurrency`` points or
+  open-loop ``rate`` points (requests per second).
 """
 
 import math
@@ -19,7 +29,9 @@ from evalscope.utils.uri_utils import validate_http_endpoint
 from .strict import PlanParseError
 
 PLAN_KIND = 'iss-eval.perf-plan'
-PLAN_SCHEMA_VERSION = '1.0'
+PLAN_SCHEMA_VERSION_V10 = '1.0'
+PLAN_SCHEMA_VERSION = '1.1'
+SUPPORTED_PLAN_SCHEMA_VERSIONS = (PLAN_SCHEMA_VERSION_V10, PLAN_SCHEMA_VERSION)
 
 _CASE_ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
 _MAX_NAME = 120
@@ -166,13 +178,13 @@ PlanWorkload = Annotated[Union[TokenPrefixWorkload, SyntheticWorkload], Field(di
 
 
 class PlanLoadPoint(BaseArgument):
-    """One closed-loop concurrency point."""
+    """One closed-loop concurrency point of a schema 1.0 plan."""
 
     concurrency: StrictInt = Field(gt=0)
 
 
 class PlanLoad(BaseArgument):
-    """Load axis, request count and output budget shared by every run."""
+    """Schema 1.0 load axis: closed loop only and one output limit for every run."""
 
     mode: Literal['closed_loop'] = 'closed_loop'
     points: List[PlanLoadPoint] = Field(min_length=1, max_length=32)
@@ -180,10 +192,72 @@ class PlanLoad(BaseArgument):
     output_token_limit: StrictInt = Field(gt=0)
     repetitions: StrictInt = Field(default=1, gt=0)
 
+    @property
+    def output_token_limits(self) -> List[int]:
+        """Return the single limit as a one-item axis, the shape schema 1.1 uses."""
+        return [self.output_token_limit]
+
     @model_validator(mode='after')
     def unique_points(self) -> 'PlanLoad':
         if len({point.concurrency for point in self.points}) != len(self.points):
             raise ValueError('load points must have unique concurrency values')
+        return self
+
+
+class PlanLoadPointV11(BaseArgument):
+    """One load point of a schema 1.1 plan.
+
+    Exactly one field is set, mirroring ``LoadConfiguration``: ``concurrency``
+    for a closed loop, ``rate`` (requests per second) for an open loop. The
+    load-level validator enforces that the field matches ``PlanLoadV11.mode``.
+    """
+
+    concurrency: Optional[StrictInt] = Field(default=None, gt=0)
+    rate: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+
+    @field_validator('rate', mode='before')
+    @classmethod
+    def validate_rate_type(cls, value: object) -> object:
+        # A JSON boolean or numeric string is not a declared requests-per-second
+        # rate; pydantic would otherwise coerce it into one.
+        if isinstance(value, bool) or isinstance(value, str):
+            raise ValueError('open-loop rate must be a finite number of requests per second')
+        return value
+
+
+class PlanLoadV11(BaseArgument):
+    """Schema 1.1 load axis: an output-limit axis and an explicit load mode."""
+
+    mode: Literal['closed_loop', 'open_loop'] = 'closed_loop'
+    points: List[PlanLoadPointV11] = Field(min_length=1, max_length=32)
+    request_count: StrictInt = Field(gt=0)
+    output_token_limits: List[StrictInt] = Field(min_length=1, max_length=64)
+    repetitions: StrictInt = Field(default=1, gt=0)
+
+    @field_validator('output_token_limits')
+    @classmethod
+    def validate_limits(cls, value: List[int]) -> List[int]:
+        if any(item <= 0 for item in value):
+            raise ValueError('output token limits must be positive integers')
+        if len(set(value)) != len(value):
+            raise ValueError('output token limits must be unique')
+        return value
+
+    @model_validator(mode='after')
+    def validate_points(self) -> 'PlanLoadV11':
+        seen: set[tuple[str, float]] = set()
+        for index, point in enumerate(self.points):
+            if self.mode == 'closed_loop':
+                if point.concurrency is None or point.rate is not None:
+                    raise ValueError(f'load points[{index}] require only concurrency when load.mode is closed_loop')
+                key = ('concurrency', float(point.concurrency))
+            else:
+                if point.rate is None or point.concurrency is not None:
+                    raise ValueError(f'load points[{index}] require only rate when load.mode is open_loop')
+                key = ('rate', point.rate)
+            if key in seen:
+                raise ValueError(f'load point {key[0]} {key[1]:g} must be unique')
+            seen.add(key)
         return self
 
 
@@ -256,17 +330,20 @@ class PlanTelemetry(BaseArgument):
         return value
 
 
-class PerfPlanDocument(BaseArgument):
-    """A portable, versioned and credential-free performance plan."""
+class _PlanDocumentFields(BaseArgument):
+    """Fields shared by every supported plan schema version.
+
+    ``schema_version`` and the version-specific ``load`` model are declared by
+    the concrete entrance models, so one document can never carry both the
+    scalar 1.0 limit and the 1.1 axis.
+    """
 
     kind: Literal['iss-eval.perf-plan'] = PLAN_KIND
-    schema_version: Literal['1.0'] = PLAN_SCHEMA_VERSION
     name: Optional[str] = Field(default=None, max_length=_MAX_NAME)
     intent: Literal['diagnostic', 'benchmark'] = 'benchmark'
     connection: PlanConnection
     deployment: DeploymentFacts = Field(default_factory=DeploymentFacts)
     workload: PlanWorkload
-    load: PlanLoad
     warmup: PlanWarmup = Field(default_factory=PlanWarmup)
     priming: PlanPriming = Field(default_factory=PlanPriming)
     execution: PlanExecution = Field(default_factory=PlanExecution)
@@ -281,7 +358,7 @@ class PerfPlanDocument(BaseArgument):
         return cleaned or None
 
     @model_validator(mode='after')
-    def validate_modes(self) -> 'PerfPlanDocument':
+    def validate_modes(self) -> '_PlanDocumentFields':
         workload = self.workload
         if isinstance(workload, TokenPrefixWorkload) and self.priming.policy != 'prime_all_prefixes':
             raise ValueError(
@@ -296,17 +373,82 @@ class PerfPlanDocument(BaseArgument):
         return self
 
 
-def parse_plan_document(document: dict) -> PerfPlanDocument:
-    """Validate a decoded document, mapping version problems to a stable code."""
-    version = document.get('schema_version')
-    if version is not None and version != PLAN_SCHEMA_VERSION:
+class PerfPlanDocument(_PlanDocumentFields):
+    """Frozen schema 1.0 plan: closed loop and one scalar output limit.
+
+    Do not add axes here. Existing archives and their compiled run IDs are read
+    and recompiled with this exact shape, so a new field would silently change
+    the identity of every accepted 1.0 plan.
+    """
+
+    schema_version: Literal['1.0'] = PLAN_SCHEMA_VERSION_V10
+    load: PlanLoad
+
+
+class PerfPlanDocumentV11(_PlanDocumentFields):
+    """Current schema 1.1 plan: output-limit axis and explicit closed/open load."""
+
+    schema_version: Literal['1.1'] = PLAN_SCHEMA_VERSION
+    load: PlanLoadV11
+
+
+PlanDocument = Union[PerfPlanDocument, PerfPlanDocumentV11]
+
+
+def _version_label(version: object) -> str:
+    return version if isinstance(version, str) else type(version).__name__
+
+
+def _reject_cross_version_fields(version: str, document: dict) -> None:
+    """Point a document that mixes 1.0 and 1.1 load fields at the right version."""
+    load = document.get('load')
+    if not isinstance(load, dict):
+        return
+    if version == PLAN_SCHEMA_VERSION_V10:
+        if 'output_token_limits' in load:
+            raise PlanParseError(
+                'invalid_value',
+                "schema_version '1.0' accepts the scalar load.output_token_limit only; an output-limit axis "
+                "requires schema_version '1.1' and load.output_token_limits",
+                'load.output_token_limits',
+            )
+        if load.get('mode') == 'open_loop':
+            raise PlanParseError(
+                'invalid_value',
+                "schema_version '1.0' supports closed-loop load only; open-loop rate requires schema_version '1.1'",
+                'load.mode',
+            )
+        points = load.get('points')
+        if isinstance(points, list) and any(isinstance(point, dict) and 'rate' in point for point in points):
+            raise PlanParseError(
+                'invalid_value',
+                "schema_version '1.0' points accept concurrency only; open-loop rate requires schema_version '1.1'",
+                'load.points',
+            )
+        return
+    if 'output_token_limit' in load:
+        raise PlanParseError(
+            'invalid_value',
+            "schema_version '1.1' replaces the scalar load.output_token_limit with the list "
+            'load.output_token_limits; express a single value as a one-item list',
+            'load.output_token_limit',
+        )
+
+
+def parse_plan_document(document: dict) -> PlanDocument:
+    """Validate a decoded document, dispatching on its declared schema version."""
+    version = document.get('schema_version', PLAN_SCHEMA_VERSION_V10)
+    if version not in SUPPORTED_PLAN_SCHEMA_VERSIONS:
         raise PlanParseError(
             'unsupported_schema',
-            f'schema_version {version!r} is not supported; this build reads {PLAN_SCHEMA_VERSION!r} only',
+            f'schema_version {_version_label(version)!r} is not supported; this build reads '
+            f'{PLAN_SCHEMA_VERSION_V10!r} and {PLAN_SCHEMA_VERSION!r}',
             'schema_version',
         )
+    _reject_cross_version_fields(version, document)
+    model = PerfPlanDocument if version == PLAN_SCHEMA_VERSION_V10 else PerfPlanDocumentV11
     try:
-        return PerfPlanDocument.model_validate(document)
+        return model.model_validate(document)
     except ValidationError as error:
         raise _plan_parse_error(error) from None
     except Exception as error:  # pragma: no cover - defensive, unexpected validator failure

@@ -32,7 +32,12 @@ from evalscope.perf.integrations.aiperf.single_run import (
     probe_version,
     validate_single_run_configuration,
 )
-from evalscope.perf.plans.execution import PerfPlanRunRequest, display_arguments
+from evalscope.perf.plans.execution import (
+    PerfPlanRunRequest,
+    PlanRuntimeBinding,
+    display_arguments,
+    validate_plan_runtime_binding,
+)
 from evalscope.perf.plans.provenance import PlanExecutionConflict, PlanIdentityError
 from evalscope.perf.plugin.api.base import ApiPluginBase
 from evalscope.perf.plugin.registry import ApiRegistry, DatasetRegistry
@@ -937,7 +942,18 @@ def _queue_snapshot(task_id: str) -> Optional[dict]:
         return None
 
 
-def _plan_meta(task_id: str, prepared) -> tuple[ActiveTaskInfo, PerfPlanRunRequest]:
+def _plan_runtime_binding(value: object) -> PlanRuntimeBinding:
+    """Validate the submitter's runtime-only inputs; they never enter the plan file."""
+    if value is None:
+        return PlanRuntimeBinding()
+    if not isinstance(value, dict):
+        raise ValueError('runtime must be an object')
+    return PlanRuntimeBinding.model_validate(value)
+
+
+def _plan_meta(
+    task_id: str, prepared, binding: Optional[PlanRuntimeBinding] = None
+) -> tuple[ActiveTaskInfo, PerfPlanRunRequest]:
     arguments = display_arguments(prepared.plan)
     meta = build_task_info(task_id, 'perf', arguments, prepared.plan.normalized.name, engine='aiperf')
     payload = PerfPlanRunRequest(
@@ -945,6 +961,7 @@ def _plan_meta(task_id: str, prepared) -> tuple[ActiveTaskInfo, PerfPlanRunReque
         source_text=prepared.source_text,
         tokenizer_path=prepared.plan.normalized.connection.tokenizer_path,
         alignment=prepared.alignment,
+        runtime=binding or PlanRuntimeBinding(),
     )
     return meta, payload
 
@@ -1030,6 +1047,14 @@ def invoke_perf_plan():
     except ValueError:
         return jsonify({'error': 'Invalid plan submission'}), 400
 
+    try:
+        binding = _plan_runtime_binding(body.get('runtime'))
+        validate_plan_runtime_binding(prepared.plan, binding)
+    except ValidationError:
+        return jsonify({'error': 'Invalid plan runtime binding'}), 400
+    except ValueError as error:
+        return jsonify({'error': f'Invalid plan runtime binding: {error}'}), 400
+
     if prepared.duplicate:
         return _duplicate_response(task_id, prepared.state, prepared.state_reason)
 
@@ -1065,7 +1090,7 @@ def invoke_perf_plan():
         return jsonify({'error': 'Failed to persist the plan identity'}), 500
 
     create_log_file(task_id, os.path.join('perf', 'benchmark.log'))
-    meta, request_payload = _plan_meta(task_id, prepared)
+    meta, request_payload = _plan_meta(task_id, prepared, binding)
     if not _async_requested():
         try:
             payload = _run_perf_plan(task_id, runtime, request_payload, meta)

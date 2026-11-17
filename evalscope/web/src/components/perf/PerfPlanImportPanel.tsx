@@ -240,14 +240,15 @@ export default function PerfPlanImportPanel({ disabled = false, onSubmitted }: P
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
-                  <tr><th>#</th><th>run</th><th>{t('tasks.aiperf.planImport.matrix')}</th><th>concurrency</th>
-                    <th>{t('tasks.aiperf.planImport.budget')}</th><th>primer</th><th>ratio</th></tr>
+                  <tr><th>#</th><th>run</th><th>{t('tasks.aiperf.planImport.matrix')}</th><th>OSL</th>
+                    <th>load</th><th>{t('tasks.aiperf.planImport.budget')}</th><th>primer</th><th>ratio</th></tr>
                 </thead>
                 <tbody>
                   {rows.map((row) => (
                     <tr key={row.runId}>
                       <td>{row.order}</td><td className="font-mono">{row.runId}</td><td>{row.input} · {row.structure}</td>
-                      <td>{row.concurrency}</td><td>{row.requests}</td><td>{row.primerRequests}</td><td>{row.ratio}</td>
+                      <td>{row.outputTokenLimit}</td><td>{row.load}</td><td>{row.requests}</td>
+                      <td>{row.primerRequests}</td><td>{row.ratio}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -50,6 +50,26 @@ class TaskConfigSummary(ApiResponseModel):
     min_prompt_length: Optional[int] = None
 
 
+class ActivePlanRunInfo(ApiResponseModel):
+    """Dimensions of the matrix tier a portable plan is executing right now.
+
+    The task list needs to name the tier without loading the whole plan
+    archive; every value comes from the compiled run, not from the document's
+    first item.
+    """
+
+    run_id: str
+    order: int
+    workload_kind: str
+    load_mode: Optional[Literal['closed_loop', 'open_loop']] = None
+    concurrency: Optional[int] = None
+    rate: Optional[float] = None
+    input_tokens: Optional[int] = None
+    output_token_limit: Optional[int] = None
+    target_ratio: Optional[float] = None
+    repetition: Optional[int] = None
+
+
 class ActiveTaskInfo(ApiResponseModel):
     """Display identity of a task that is queued, running, or recently finished."""
 
@@ -72,6 +92,7 @@ class ActiveTaskInfo(ApiResponseModel):
     current_subrun: Optional[str] = None
     completed_subruns: Optional[int] = None
     total_subruns: Optional[int] = None
+    current_run: Optional[ActivePlanRunInfo] = None
     quality: Optional[Literal['complete', 'partial', 'invalid']] = None
     config: Optional[TaskConfigSummary] = None
     report_url: Optional[str] = None

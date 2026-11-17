@@ -164,6 +164,13 @@ export default function PerfPlanPage() {
   const runs = archive?.runs ?? []
   const qualityReasons = archive?.quality_reasons ?? []
   const reportLink = archive && rootPath && path ? perfPlanReportUrl(rootPath, path) : null
+  // A plan browsed through an explicit outputs root keeps that address: its
+  // task_id would resolve inside the service's own root, i.e. another archive.
+  const numericLink = archive
+    ? rootPath && path
+      ? `/perf-report/numeric?${new URLSearchParams({ root_path: rootPath, path })}`
+      : `/perf-report/numeric?${new URLSearchParams({ task_id: archive.task_id })}`
+    : null
 
   return (
     <div className="space-y-4 p-4">
@@ -224,8 +231,13 @@ export default function PerfPlanPage() {
             {qualityReasons.length > 0 && (
               <p className="mt-1 text-xs">{t('perf.plan.qualityReasons')}: {qualityReasons.join(', ')}</p>
             )}
+            {numericLink && (
+              <a className="mt-2 inline-block text-xs underline" href={numericLink}>
+                {t('perf.report.openLink')}
+              </a>
+            )}
             {reportLink && (
-              <a className="mt-2 inline-block text-xs underline" href={reportLink} target="_blank" rel="noreferrer">
+              <a className="mt-2 ml-3 inline-block text-xs underline" href={reportLink} target="_blank" rel="noreferrer">
                 {t('perf.plan.htmlReport')}
               </a>
             )}
