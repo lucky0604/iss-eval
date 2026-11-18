@@ -47,3 +47,15 @@ export class DomainError extends Error {
 export function isDomainError(e: unknown): e is DomainError {
   return e instanceof DomainError
 }
+
+/**
+ * Whether the service definitely refused the submission.
+ *
+ * Only 400/422 mean the request was validated and rejected. Any other 4xx (409
+ * duplicate, 404 while the task is not yet visible) and transport/5xx failures
+ * leave the outcome unknown: the first request may still be running, so callers
+ * must not rotate the task id or start a second load.
+ */
+export function isDefiniteRejection(error: unknown): error is DomainError {
+  return isDomainError(error) && (error.status === 400 || error.status === 422)
+}

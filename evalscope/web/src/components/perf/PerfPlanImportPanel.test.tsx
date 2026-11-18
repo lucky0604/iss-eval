@@ -105,9 +105,29 @@ it('retries an uncertain submission with the same task id', async () => {
   expect(second).toBe(first)
 })
 
-it('starts a new task after a definite rejection and after success', async () => {
+it('keeps the task id after a single 409 because the outcome is not definite', async () => {
   vi.mocked(previewPerfPlan).mockResolvedValue(preview())
   vi.mocked(submitPerfPlan).mockRejectedValueOnce(new DomainError('http-4xx', 'Task ID already exists', 409))
+  vi.mocked(submitPerfPlan).mockResolvedValueOnce({ task_id: 'perf_plan_task', state: 'queued', duplicate: false } as never)
+  const onAttempt = vi.fn()
+  render(
+    <LocaleProvider>
+      <PerfPlanImportPanel onAttempt={onAttempt} />
+    </LocaleProvider>,
+  )
+  await load(PLAN_TEXT)
+  await submit()
+  const first = vi.mocked(submitPerfPlan).mock.calls[0][1]
+  expect(onAttempt).toHaveBeenCalledWith(first)
+  expect(screen.getByRole('status').textContent).toContain('same task ID')
+
+  await submit()
+  expect(vi.mocked(submitPerfPlan).mock.calls[1][1]).toBe(first)
+})
+
+it('starts a new task after a definite rejection and after success', async () => {
+  vi.mocked(previewPerfPlan).mockResolvedValue(preview())
+  vi.mocked(submitPerfPlan).mockRejectedValueOnce(new DomainError('http-4xx', 'Invalid plan', 422))
   vi.mocked(submitPerfPlan).mockResolvedValueOnce({ task_id: 'perf_plan_one', state: 'queued', duplicate: false } as never)
   vi.mocked(submitPerfPlan).mockResolvedValueOnce({
     task_id: 'perf_plan_one',

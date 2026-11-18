@@ -7,9 +7,12 @@ import { FORM_INPUT_CLASS } from '@/components/ui/formStyles'
 
 interface PresetToolbarProps {
   label: string
-  entries: { id: string; name: string }[]
+  /** Stored presets; `needsCompletion` marks one saved before it was runnable. */
+  entries: { id: string; name: string; needsCompletion?: boolean }[]
   selectedId: string
   dirty: boolean
+  /** Locks load/save/delete while a submission is in flight. */
+  disabled?: boolean
   onLoad: (id: string) => void
   onSave: (name: string, asNew: boolean) => boolean
   onDelete: () => void
@@ -22,6 +25,7 @@ export default function PresetToolbar({
   entries,
   selectedId,
   dirty,
+  disabled = false,
   onLoad,
   onSave,
   onDelete,
@@ -66,12 +70,19 @@ export default function PresetToolbar({
           <Bookmark size={13} />
           {label}
         </label>
-        <span role="status">{dirty ? t('tasks.library.unsaved') : t('tasks.library.ready')}</span>
+        <span role="status">
+          {selected?.needsCompletion
+            ? t('tasks.library.needsCompletion')
+            : dirty
+              ? t('tasks.library.unsaved')
+              : t('tasks.library.ready')}
+        </span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <select
           id={`${id}-select`}
           value={selectedId}
+          disabled={disabled}
           className={`${FORM_INPUT_CLASS} !w-auto min-w-[10rem] flex-1 basis-full sm:basis-auto`}
           onChange={(event) => {
             const next = event.target.value
@@ -85,7 +96,7 @@ export default function PresetToolbar({
           <option value="">{t('tasks.library.draft')}</option>
           {entries.map((entry) => (
             <option key={entry.id} value={entry.id}>
-              {entry.name}
+              {entry.needsCompletion ? `${entry.name} · ${t('tasks.library.needsCompletionShort')}` : entry.name}
             </option>
           ))}
         </select>
@@ -93,7 +104,7 @@ export default function PresetToolbar({
           type="button"
           variant="ghost"
           size="sm"
-          disabled={!selected}
+          disabled={disabled || !selected}
           onClick={() =>
             replace(() => {
               onLoad(selectedId)
@@ -104,7 +115,7 @@ export default function PresetToolbar({
         >
           {t('tasks.library.load')}
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => save(false)}>
+        <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => save(false)}>
           <Save size={13} />
           {t('tasks.library.save')}
         </Button>
@@ -118,17 +129,17 @@ export default function PresetToolbar({
             {t('tasks.library.actions')}
           </summary>
           <div className="absolute right-0 top-full z-30 flex w-44 flex-col gap-1 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-card)] p-2 shadow-[var(--shadow)]">
-            <Button type="button" variant="ghost" size="sm" onClick={() => save(true)}>
+            <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => save(true)}>
               {t('tasks.library.saveAs')}
             </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => replace(reset)}>
+            <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => replace(reset)}>
               {t('tasks.library.reset')}
             </Button>
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              disabled={!selected}
+              disabled={disabled || !selected}
               onClick={() => setPending({ action: reset, danger: false })}
             >
               {t('tasks.library.new')}
@@ -137,7 +148,7 @@ export default function PresetToolbar({
               type="button"
               variant="ghost"
               size="sm"
-              disabled={!selected}
+              disabled={disabled || !selected}
               onClick={() => setPending({ action: onDelete, danger: true })}
             >
               {t('tasks.library.delete')}
@@ -154,6 +165,7 @@ export default function PresetToolbar({
           value={name}
           maxLength={120}
           placeholder={t('tasks.library.name', { kind: label })}
+          disabled={disabled}
           className={FORM_INPUT_CLASS}
           aria-invalid={nameError}
           aria-describedby={nameError ? `${id}-error` : undefined}

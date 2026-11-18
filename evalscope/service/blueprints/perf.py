@@ -16,7 +16,7 @@ from tabulate import tabulate
 
 from evalscope.metrics.semantics import resolve_perf_semantics
 from evalscope.perf.arguments import Arguments as PerfArguments
-from evalscope.perf.executors.arguments import AIPerfArguments, parse_perf_task_arguments
+from evalscope.perf.executors.arguments import AIPerfArguments, TelemetryConfiguration, parse_perf_task_arguments
 from evalscope.perf.executors.external import supports_external_runner
 from evalscope.perf.executors.models import ExecutionContext, ExecutionOutcome, ExternalRuntime
 from evalscope.perf.experiments.planner import CacheSubrunPlan, plan_cache_experiment
@@ -89,6 +89,7 @@ from evalscope.service.api_models import (
     PerfRequestsResponse,
     PerfRunsListResponse,
     PerfSinglePlanResponse,
+    PerfTelemetryProbeResponse,
     ProgressResponse,
     TaskStatusResponse,
     TaskSubmitResponse,
@@ -860,6 +861,28 @@ def validate_single_aiperf():
             'warnings': warnings,
         },
     )
+
+
+@bp_perf.route('/telemetry/probe', methods=['POST'])
+def probe_perf_telemetry():
+    """Probe explicitly configured Metrics endpoints without inference or tokenizer work."""
+    body = request.get_json(silent=True)
+    try:
+        if not isinstance(body, dict):
+            raise ValueError('Request body must be a JSON object')
+        raw = body.get('telemetry')
+        if not isinstance(raw, dict):
+            raise ValueError('telemetry must be a JSON object')
+        telemetry = TelemetryConfiguration.from_dict(raw)
+        if not telemetry.targets:
+            raise ValueError('At least one metrics target is required')
+    except (ValueError, TypeError) as error:
+        return jsonify({'error': f'Invalid metrics probe configuration: {_preflight_failure_reason(error)}'}), 400
+    try:
+        nodes = probe_nodes(telemetry.targets)
+    except (ImportError, RuntimeError):
+        return jsonify({'error': 'Metrics preflight is unavailable'}), 503
+    return json_response(PerfTelemetryProbeResponse, {'nodes': nodes})
 
 
 def _plan_submission() -> tuple[str, dict]:

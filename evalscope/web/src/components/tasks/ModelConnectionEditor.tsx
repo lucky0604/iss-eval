@@ -18,6 +18,8 @@ interface Props {
   selectedId: string
   errors: FieldErrors
   rememberKey: boolean
+  /** Locks every execution-affecting control while a submission is in flight. */
+  disabled?: boolean
   onRememberKeyChange: (value: boolean) => void
   onChange: (patch: Partial<ModelConnection>) => void
   onLoad: (id: string) => void
@@ -33,6 +35,7 @@ export default function ModelConnectionEditor({
   selectedId,
   errors,
   rememberKey,
+  disabled = false,
   onRememberKeyChange,
   onChange,
   onLoad,
@@ -82,7 +85,7 @@ export default function ModelConnectionEditor({
         </div>
         <button
           type="button"
-          disabled={hasErrors}
+          disabled={hasErrors || disabled}
           aria-expanded={showFields}
           aria-controls="model-connection-fields"
           onClick={() => setExpanded(!showFields)}
@@ -92,7 +95,7 @@ export default function ModelConnectionEditor({
           <ChevronDown size={14} className={showFields ? 'rotate-180' : ''} />
         </button>
       </div>
-      <div id="model-connection-fields" hidden={!showFields} onChangeCapture={() => setExpanded(true)}>
+      <fieldset id="model-connection-fields" disabled={disabled} hidden={!showFields} onChangeCapture={() => setExpanded(true)}>
         <PresetToolbar
           label={t('tasks.library.connection')}
           entries={entries}
@@ -198,7 +201,7 @@ export default function ModelConnectionEditor({
             )}
           </div>
         )}
-      </div>
+      </fieldset>
       <ConfirmDialog
         open={Boolean(pendingSave)}
         title={t('tasks.library.rememberKey')}

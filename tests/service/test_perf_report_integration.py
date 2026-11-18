@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -64,6 +65,23 @@ def _download(client, export: dict, name: str = 'html') -> bytes:
     response = client.get(url)
     assert response.status_code == 200, response.get_data(as_text=True)
     return response.data
+
+
+def _matrix_cells(html: str) -> list[list[str]]:
+    """Data rows of the wide comparison table, with markup stripped per cell.
+
+    Scoping assertions to these cells keeps them independent of snapshot hashes,
+    request ids and timestamps, which may legitimately contain digit runs such as
+    ``900`` without the report showing the moved sample.
+    """
+    table = re.search(r'<table class="matrix">.*?</table>', html, re.S)
+    assert table is not None, 'report is missing the wide matrix table'
+    rows = []
+    for body in re.findall(r'<tr>(.*?)</tr>', table.group(0), re.S):
+        cells = re.findall(r'<td[^>]*>(.*?)</td>', body, re.S)
+        if cells:
+            rows.append([re.sub(r'<[^>]+>', '', cell).strip() for cell in cells])
+    return rows
 
 
 def _tree(root: Path) -> dict:
@@ -232,8 +250,13 @@ def test_an_archive_change_after_queueing_renders_the_pinned_snapshot(tmp_path, 
     assert export['snapshot_id'] == pinned_id
     assert calls['count'] == 1
     html = _download(client, export).decode('utf-8')
-    assert '0.4' in html or '400' in html
-    assert '0.9' not in html and '900' not in html
+    rows = _matrix_cells(html)
+    target = [row for row in rows if row[3:7] == ['400.00'] * 4]
+    assert len(target) == 1, rows
+    ttft_and_duration = target[0][3:7] + target[0][11:13]
+    assert ttft_and_duration == ['400.00'] * 4 + ['0.800', '0.800']
+    assert all('900.00' not in cell and '0.900' not in cell for cell in target[0])
+    assert all('900.00' not in cell for row in rows for cell in row)
     after = {key: value for key, value in _tree(tmp_path / 't1' / 'perf').items() if not key.startswith('exports/')}
     assert baseline and after == baseline
 

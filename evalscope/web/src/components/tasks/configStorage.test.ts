@@ -1,292 +1,340 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   CONFIG_STORAGE_KEY,
-  LEGACY_CONFIG_STORAGE_KEY,
   LEGACY_AIPERF_STORAGE_KEY,
+  LEGACY_CONFIG_STORAGE_KEY,
+  LEGACY_V2_CONFIG_STORAGE_KEY,
+  clearWorkspaceStorage,
   emptyWorkspace,
   exportLibrary,
-  mergeLibrary,
   parseImport,
   readWorkspace,
-  savePreset,
   storageSnapshot,
   writeWorkspace,
+  type Workspace,
 } from './configStorage'
-import {
-  DEFAULT_CONNECTION,
-  DEFAULT_EVAL,
-  editConnection,
-  connectionPayload,
-  validateEvalDraft,
-  validatePerfDraft,
-  DEFAULT_PERF,
-} from './taskConfig'
-import { DEFAULT_AIPERF } from './aiperfDraft'
+import { defaultAIPerfDraft, type AIPerfNodeDraft } from './aiperfDraft'
+import { DEFAULT_CONNECTION, DEFAULT_EVAL, DEFAULT_PERF } from './taskConfig'
 
-afterEach(() => {
-  localStorage.clear()
-  vi.restoreAllMocks()
-})
-
-function savedWorkspace() {
-  const state = emptyWorkspace()
-  state.connection = {
-    ...DEFAULT_CONNECTION,
-    model: 'same-model',
-    url: 'http://server-a:8000/v1',
-    apiKey: 'fake-secret',
-  }
-  state.connections = [{ id: 'a', name: 'Server A', value: { ...state.connection }, rememberKey: true }]
-  state.selectedConnection = 'a'
-  state.eval.datasets = 'gsm8k'
-  return state
+const node: AIPerfNodeDraft = {
+  id: 'node-one', nodeId: 'prefill', role: 'prefill', engine: 'vllm',
+  url: 'http://user:pass@10.0.0.1:9000/metrics', labels: 'model=alpha', bearerToken: 'node-secret',
 }
 
-describe('Browser configuration storage', () => {
-  it('returns independent defaults when empty', () => {
-    const result = readWorkspace()
-    expect(result).toEqual({ ok: true, value: emptyWorkspace() })
-  })
-  it('migrates version-1 native and AIPerf drafts without overwriting the originals', () => {
-    const legacy = savedWorkspace() as unknown as Record<string, unknown>
-    legacy.version = 1
-    for (const key of ['engine', 'aiperf', 'aiperfTemplates', 'selectedAIPerf']) delete legacy[key]
-    const oldText = JSON.stringify(legacy)
-    const oldDraft = JSON.stringify({ tokenizer: '/tokenizer', ratios: '0, 80, 90', inputTokens: '20',
-      requestCount: '6', outputTokens: '2', loads: '1', mode: 'closed_loop', repetitions: '1', pool: '1',
-      prefill: 'http://p:9000/metrics', decode: 'http://d:9000/metrics', server: 'vllm' })
-    localStorage.setItem(LEGACY_CONFIG_STORAGE_KEY, oldText)
-    localStorage.setItem(LEGACY_AIPERF_STORAGE_KEY, oldDraft)
-    const result = readWorkspace()
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.value.engine).toBe('evalscope')
-    expect(result.value.perf).toEqual(DEFAULT_PERF)
-    expect(result.value.aiperf.nodes.map((node) => node.role)).toEqual(['prefill', 'decode'])
-    expect(writeWorkspace(result.value).ok).toBe(true)
-    expect(localStorage.getItem(LEGACY_CONFIG_STORAGE_KEY)).toBe(oldText)
-    expect(localStorage.getItem(LEGACY_AIPERF_STORAGE_KEY)).toBe(oldDraft)
-    expect(JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY)!).version).toBe(2)
-  })
-  it('does not save or export metrics tokens or credentials embedded in URLs', () => {
-    const state = savedWorkspace()
-    state.engine = 'aiperf'
-    state.aiperf = { ...DEFAULT_AIPERF, runType: 'cache', tokenizer: '/tokenizer', nodes: [
-      { id: 'p', nodeId: 'p', role: 'prefill', engine: 'vllm', url: 'http://p:9000/metrics', labels: 'model=a', bearerToken: 'node-secret' },
-      { id: 'd', nodeId: 'd', role: 'decode', engine: 'sglang', url: 'http://user:pass@d/metrics?key=other-secret', labels: '', bearerToken: 'other-token' },
-    ] }
-    state.aiperfTemplates = [{ id: 'preset', name: 'AIPerf', value: state.aiperf }]
-    expect(writeWorkspace(state).ok).toBe(true)
-    const raw = localStorage.getItem(CONFIG_STORAGE_KEY)!
-    expect(raw).not.toContain('node-secret')
-    expect(raw).not.toContain('other-token')
-    expect(raw).not.toContain('other-secret')
-    expect(raw).not.toContain('user:pass')
-    expect(exportLibrary(state, true)).not.toContain('node-secret')
-    expect(exportLibrary(state, true)).not.toContain('other-secret')
-    expect(readWorkspace()).toMatchObject({ ok: true, value: { engine: 'aiperf', aiperf: {
-      nodes: [{ url: 'http://p:9000/metrics', bearerToken: '' }, { url: '', bearerToken: '' }],
-    } } })
-  })
-  it('fails closed when the legacy AIPerf draft is damaged', () => {
-    localStorage.setItem(LEGACY_AIPERF_STORAGE_KEY, '{broken')
-    expect(readWorkspace()).toEqual({ ok: false, error: 'invalidStorage' })
-    expect(localStorage.getItem(LEGACY_AIPERF_STORAGE_KEY)).toBe('{broken')
-    expect(localStorage.getItem(CONFIG_STORAGE_KEY)).toBeNull()
-  })
-  it('keeps the previous workspace when an oversized draft cannot be persisted', () => {
-    const state = savedWorkspace()
-    expect(writeWorkspace(state).ok).toBe(true)
-    const before = localStorage.getItem(CONFIG_STORAGE_KEY)
-    state.aiperf.prompts = 'x'.repeat(1024 * 1024 + 1)
-    expect(writeWorkspace(state)).toEqual({ ok: false, error: 'workspaceTooLarge' })
-    expect(localStorage.getItem(CONFIG_STORAGE_KEY)).toBe(before)
-  })
-  it.each(['connection', 'eval', 'perf'] as const)('restores missing %s fields from defaults', (field) => {
-    const expected = emptyWorkspace()
-    for (const key of Object.keys(expected[field])) {
-      const state = emptyWorkspace()
-      delete (state[field] as unknown as Record<string, unknown>)[key]
-      localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(state))
-      expect(readWorkspace()).toEqual({ ok: true, value: expected })
-    }
-  })
-  it('only explicitly saved connection keys survive refresh', () => {
-    const state = savedWorkspace()
-    expect(writeWorkspace(state).ok).toBe(true)
-    expect(readWorkspace()).toMatchObject({
-      ok: true,
-      value: { connection: { apiKey: 'fake-secret' }, eval: { datasets: 'gsm8k' } },
-    })
-    const raw = JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY)!)
-    expect(raw.connection.apiKey).toBe('')
-    expect(raw.connections[0].value.apiKey).toBe('fake-secret')
-  })
-  it('never persists unsaved keys in automatic drafts', () => {
-    const state = savedWorkspace()
-    state.connections = []
-    writeWorkspace(state)
-    expect(localStorage.getItem(CONFIG_STORAGE_KEY)).not.toContain('fake-secret')
-    expect(readWorkspace()).toMatchObject({ ok: true, value: { connection: { apiKey: '' } } })
-  })
-  it('strips keys from records that did not opt in', () => {
-    const state = savedWorkspace()
-    state.connections[0].rememberKey = false
-    writeWorkspace(state)
-    expect(localStorage.getItem(CONFIG_STORAGE_KEY)).not.toContain('fake-secret')
-  })
-  it('does not restore a cleared or unsaved replacement key', () => {
-    const state = savedWorkspace()
-    state.connection.apiKey = 'new-unsaved-key'
-    writeWorkspace(state)
-    expect(readWorkspace()).toMatchObject({ ok: true, value: { connection: { apiKey: '' } } })
-    state.connection.apiKey = ''
-    writeWorkspace(state)
-    expect(storageSnapshot(state).restoreSavedKey).toBe(false)
-  })
-  it('does not restore credentials to another origin or protocol', () => {
-    const state = savedWorkspace()
-    state.connection.url = 'http://server-b:8000/v1'
-    writeWorkspace(state)
-    expect(readWorkspace()).toMatchObject({ ok: true, value: { connection: { apiKey: '' } } })
-    state.connection.api = 'local'
-    expect(storageSnapshot(state).restoreSavedKey).toBe(false)
-  })
-  it.each(['broken-json', '{"version":2}', 'null', '[]'])('rejects damaged storage without overwriting %s', (text) => {
-    localStorage.setItem(CONFIG_STORAGE_KEY, text)
-    expect(readWorkspace()).toEqual({ ok: false, error: 'invalidStorage' })
-    expect(localStorage.getItem(CONFIG_STORAGE_KEY)).toBe(text)
-  })
-  it('reports unavailable storage and write failures', () => {
-    vi.spyOn(Object.getPrototypeOf(localStorage), 'getItem').mockImplementation(() => {
-      throw new Error('Denied')
-    })
-    expect(readWorkspace()).toEqual({ ok: false, error: 'storageFailed' })
-    vi.spyOn(Object.getPrototypeOf(localStorage), 'setItem').mockImplementation(() => {
-      throw new Error('Quota')
-    })
-    expect(writeWorkspace(emptyWorkspace())).toEqual({ ok: false, error: 'storageFailed' })
-  })
-  it('excludes credentials by default and exports them only explicitly', () => {
-    const state = savedWorkspace()
-    expect(exportLibrary(state, false)).not.toContain('fake-secret')
-    expect(parseImport(exportLibrary(state, true)).connections[0].value.apiKey).toBe('fake-secret')
-    expect(parseImport(exportLibrary(state, false)).connections[0].rememberKey).toBe(false)
-  })
-  it('imports older eval templates with missing fields', () => {
-    const state = savedWorkspace()
-    const value = { ...DEFAULT_EVAL, datasets: 'gsm8k' }
-    state.evalTemplates = [{ id: 'old', name: 'Old template', value }]
-    const raw = JSON.parse(exportLibrary(state, false))
-    delete raw.evalTemplates[0].value.reasoningEffort
-    delete raw.evalTemplates[0].value.reasoningTokens
-    delete raw.evalTemplates[0].value.enableThinking
-    expect(parseImport(JSON.stringify(raw)).evalTemplates[0].value).toEqual(value)
-  })
-  it('imports version-1 libraries and round-trips nested version-2 presets without node secrets', () => {
-    const state = savedWorkspace()
-    const old = JSON.parse(exportLibrary(state, false))
-    old.version = 1
-    delete old.aiperfTemplates
-    expect(parseImport(JSON.stringify(old))).toMatchObject({ version: 2, aiperfTemplates: [] })
+function v2Workspace(aiperf: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  return {
+    version: 2,
+    connections: [],
+    evalTemplates: [],
+    perfTemplates: [],
+    aiperfTemplates: [],
+    connection: { ...DEFAULT_CONNECTION },
+    eval: { ...DEFAULT_EVAL },
+    perf: { ...DEFAULT_PERF },
+    engine: 'aiperf',
+    aiperf,
+    selectedConnection: '',
+    selectedEval: '',
+    selectedPerf: '',
+    selectedAIPerf: '',
+    restoreSavedKey: false,
+    ...extra,
+  }
+}
 
-    state.aiperfTemplates = [{ id: 'aiperf', name: 'Cache', value: { ...DEFAULT_AIPERF, runType: 'cache', tokenizer: '/tok', nodes: [
-      { id: 'p', nodeId: 'p', role: 'prefill', engine: 'vllm', url: 'http://p/metrics', labels: '', bearerToken: 'private' },
-    ] } }]
-    const imported = parseImport(exportLibrary(state, true))
-    expect(imported.aiperfTemplates[0].value.nodes[0]).toMatchObject({ nodeId: 'p', bearerToken: '' })
-    const merged = mergeLibrary(emptyWorkspace(), imported)
-    expect(merged.aiperfTemplates[0].value.ratios).toBe('0, 80, 90')
-    expect(merged.aiperfTemplates[0].id).not.toBe('aiperf')
-    state.aiperfTemplates[0].value.nodes[0].nodeId = 'changed'
-    expect(merged.aiperfTemplates[0].value.nodes[0].nodeId).toBe('p')
+function readOk() {
+  const result = readWorkspace()
+  expect(result.ok).toBe(true)
+  if (!result.ok) throw new Error(result.error)
+  return result.value
+}
+
+beforeEach(() => {
+  localStorage.clear()
+})
+
+describe('v2 migration', () => {
+  it('maps a matrix draft, preferring the matrix axes over the shared token fields', () => {
+    localStorage.setItem(LEGACY_V2_CONFIG_STORAGE_KEY, JSON.stringify(v2Workspace({
+      runType: 'matrix',
+      inputTokens: '4096',
+      outputTokens: '256',
+      matrixName: 'nightly',
+      matrixInputLengths: '1024, 2048',
+      matrixOutputLimits: '128, 256',
+      matrixMaxModelLen: '32768',
+      matrixScene: 'cache_comparison',
+      matrixWarmupEnabled: true,
+      loads: '1, 2',
+      requestCount: '20',
+      mode: 'closed_loop',
+    })))
+    const aiperf = readOk().aiperf
+    expect(aiperf.inputSource).toBe('generated')
+    expect(aiperf.name).toBe('nightly')
+    expect(aiperf.generated.inputLengths).toBe('1024, 2048')
+    expect(aiperf.generated.outputLimits).toBe('128, 256')
+    expect(aiperf.generated.maxModelLen).toBe('32768')
+    expect(aiperf.generated.comparePrefix).toBe(true)
+    expect(aiperf.generated.closedLoads).toBe('1, 2')
+    expect(aiperf.generated.openRates).toBe('')
+    expect(aiperf.generated.requestCount).toBe('20')
+    expect(aiperf.generated.warmup.enabled).toBe(true)
   })
-  it('imports as new ids without overwriting existing names and values', () => {
-    const state = savedWorkspace()
-    const merged = mergeLibrary(state, parseImport(exportLibrary(state, true)))
-    expect(merged.connections).toHaveLength(2)
-    expect(merged.connections[0]).toEqual(state.connections[0])
-    expect(merged.connections[1].name).toBe('Server A (2)')
-    expect(merged.connections[1].id).not.toBe('a')
-    expect(state.connections).toHaveLength(1)
+
+  it('falls back to the shared token fields when a matrix draft never had matrix axes', () => {
+    localStorage.setItem(LEGACY_V2_CONFIG_STORAGE_KEY, JSON.stringify(v2Workspace({
+      runType: 'matrix', inputTokens: '4096', outputTokens: '256', mode: 'open_loop', loads: '8',
+    })))
+    const aiperf = readOk().aiperf
+    expect(aiperf.generated.inputLengths).toBe('4096')
+    expect(aiperf.generated.outputLimits).toBe('256')
+    expect(aiperf.generated.openRates).toBe('8')
+    expect(aiperf.generated.closedLoads).toBe('1')
   })
-  it('reads a draft saved before the matrix as a one-point axis and round-trips the matrix fields', () => {
-    const state = savedWorkspace()
-    const old = { ...DEFAULT_AIPERF, runType: 'cache', tokenizer: '/tokenizer',
-      inputTokens: '2048', outputTokens: '64' } as unknown as Record<string, unknown>
-    delete old.matrixInputLengths
-    delete old.matrixOutputLimits
-    state.engine = 'aiperf'
-    state.aiperf = old as unknown as typeof state.aiperf
-    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(state))
-    const migrated = readWorkspace()
-    expect(migrated).toMatchObject({ ok: true, value: { aiperf: {
-      matrixInputLengths: '2048', matrixOutputLimits: '64',
-    } } })
-    if (!migrated.ok) return
-    expect(writeWorkspace(migrated.value).ok).toBe(true)
-    expect(readWorkspace()).toMatchObject({ ok: true, value: { aiperf: {
-      runType: 'cache', matrixInputLengths: '2048',
-    } } })
+
+  it('keeps a cache experiment on its own authoritative sizes and adds no traffic', () => {
+    localStorage.setItem(LEGACY_V2_CONFIG_STORAGE_KEY, JSON.stringify(v2Workspace({
+      runType: 'cache',
+      inputTokens: '2048',
+      outputTokens: '256',
+      matrixInputLengths: '1024, 8192',
+      matrixOutputLimits: '128, 512',
+      matrixMaxModelLen: '32768',
+      matrixWarmupEnabled: true,
+      matrixMonitoringEnabled: false,
+      ratios: '0, 80',
+      nodes: [node],
+    })))
+    const aiperf = readOk().aiperf
+    expect(aiperf.inputSource).toBe('generated')
+    expect(aiperf.generated.inputLengths).toBe('2048')
+    expect(aiperf.generated.outputLimits).toBe('256')
+    expect(aiperf.generated.comparePrefix).toBe(true)
+    expect(aiperf.generated.ratios).toBe('0, 80')
+    // No declared context existed for the cache experiment, and warmup was never
+    // part of it: neither may be invented from the leftover matrix defaults.
+    expect(aiperf.generated.maxModelLen).toBe('')
+    expect(aiperf.generated.warmup.enabled).toBe(false)
+    // The experiment's own metrics nodes still enable monitoring.
+    expect(aiperf.monitoring.enabled).toBe(true)
+    expect(aiperf.monitoring.nodes).toHaveLength(1)
   })
-  it('rejects an unknown matrix workload when reading saved state', () => {
-    const state = savedWorkspace()
-    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(state))
+
+  it('carries a single-run draft into the real-prompt branch with its text verbatim', () => {
+    const text = 'first question \n\n  spaced second question\n'
+    localStorage.setItem(LEGACY_V2_CONFIG_STORAGE_KEY, JSON.stringify(v2Workspace({
+      runType: 'single', prompts: text, outputTokens: '64', loads: '2', mode: 'closed_loop', tokenizer: 'tok',
+    })))
+    const aiperf = readOk().aiperf
+    expect(aiperf.inputSource).toBe('prompts')
+    expect(aiperf.tokenizer).toBe('tok')
+    expect(aiperf.prompts).toEqual({
+      text, outputLimit: '64', mode: 'closed_loop', concurrency: '2', rate: '',
+    })
+  })
+
+  it('moves an open-loop single draft to the rate control instead of concurrency', () => {
+    localStorage.setItem(LEGACY_V2_CONFIG_STORAGE_KEY, JSON.stringify(v2Workspace({
+      runType: 'single', prompts: 'p', loads: '0.5', mode: 'open_loop',
+    })))
+    const { prompts: draft } = readOk().aiperf
+    expect(draft.rate).toBe('0.5')
+    expect(draft.concurrency).toBe('1')
+  })
+
+  it('reads the discriminator before defaults, so a cache draft with untouched matrix axes is not read as a matrix', () => {
+    // V2_AIPERF_DEFAULTS includes matrixInputLengths; a cache draft never sets runType
+    // to matrix, and a missing discriminator must still mean matrix, not cache.
+    localStorage.setItem(LEGACY_V2_CONFIG_STORAGE_KEY, JSON.stringify(v2Workspace({ runType: 'cache' })))
+    expect(readOk().aiperf.generated.comparePrefix).toBe(true)
+    localStorage.setItem(LEGACY_V2_CONFIG_STORAGE_KEY, JSON.stringify(v2Workspace({})))
+    expect(readOk().aiperf.generated.comparePrefix).toBe(false)
+  })
+})
+
+describe('legacy v1 and standalone drafts', () => {
+  it('builds the AIPerf branch from the standalone cache draft when v1 has none', () => {
+    localStorage.setItem(LEGACY_CONFIG_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      connections: [],
+      evalTemplates: [],
+      perfTemplates: [],
+      connection: { ...DEFAULT_CONNECTION },
+      eval: { ...DEFAULT_EVAL },
+      perf: { ...DEFAULT_PERF },
+      selectedConnection: '',
+      selectedEval: '',
+      selectedPerf: '',
+      restoreSavedKey: false,
+    }))
+    localStorage.setItem(LEGACY_AIPERF_STORAGE_KEY, JSON.stringify({
+      tokenizer: 'tok', inputTokens: '512', outputTokens: '64', loads: '2', ratios: '0, 50',
+      prefill: 'http://p:9000/metrics', decode: 'http://d:9000/metrics', server: 'sglang',
+    }))
+    const workspace = readOk()
+    expect(workspace.aiperfTemplates).toEqual([])
+    expect(workspace.aiperf.generated.inputLengths).toBe('512')
+    expect(workspace.aiperf.generated.comparePrefix).toBe(true)
+    expect(workspace.aiperf.deploymentMode).toBe('pd')
+    expect(workspace.aiperf.monitoring.enabled).toBe(true)
+    expect(workspace.aiperf.monitoring.nodes.map((entry) => entry.nodeId)).toEqual(['prefill', 'decode'])
+  })
+
+  it('reads a standalone draft on its own', () => {
+    localStorage.setItem(LEGACY_AIPERF_STORAGE_KEY, JSON.stringify({
+      tokenizer: 'tok', inputTokens: '1024', outputTokens: '128', loads: '1',
+    }))
+    expect(readOk().aiperf.generated.inputLengths).toBe('1024')
+  })
+})
+
+describe('v3 workspace', () => {
+  it('round-trips both input branches and the monitoring switch', () => {
+    const workspace: Workspace = {
+      ...emptyWorkspace(),
+      aiperf: {
+        ...defaultAIPerfDraft(),
+        inputSource: 'prompts',
+        tokenizer: 'tok',
+        prompts: { text: 'line one\n\nline two', outputLimit: '32', mode: 'open_loop', concurrency: '1', rate: '2' },
+        generated: { ...defaultAIPerfDraft().generated, inputLengths: '2048', comparePrefix: true },
+      },
+      engine: 'aiperf',
+      selectedAIPerf: 'tpl',
+    }
+    expect(writeWorkspace(workspace).ok).toBe(true)
+    const restored = readOk()
+    expect(restored.aiperf.inputSource).toBe('prompts')
+    expect(restored.aiperf.prompts.text).toBe('line one\n\nline two')
+    // Switching back keeps the generated branch intact.
+    expect(restored.aiperf.generated.inputLengths).toBe('2048')
+    expect(restored.aiperf.generated.comparePrefix).toBe(true)
+    expect(restored.engine).toBe('aiperf')
+  })
+
+  it('rejects a damaged v3 value instead of silently falling back to v2', () => {
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({ version: 3, connections: [] }))
+    localStorage.setItem(LEGACY_V2_CONFIG_STORAGE_KEY, JSON.stringify(v2Workspace({ runType: 'single', prompts: 'p' })))
+    expect(readWorkspace()).toEqual({ ok: false, error: 'invalidStorage' })
+  })
+
+  it('rejects unknown AIPerf fields', () => {
+    const workspace = emptyWorkspace()
+    expect(writeWorkspace(workspace).ok).toBe(true)
     const raw = JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY)!)
-    raw.aiperf.runType = 'ensemble'
+    raw.aiperf.generated.surprise = 'x'
     localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(raw))
     expect(readWorkspace()).toEqual({ ok: false, error: 'invalidStorage' })
   })
-  it('saves drafts as explicit independent templates', () => {
-    const draft = { ...DEFAULT_EVAL, datasets: 'gsm8k' }
-    const saved = savePreset([], '', 'QA', draft, false)
-    draft.datasets = 'arc'
-    expect(saved.entries[0].value.datasets).toBe('gsm8k')
-    const replaced = savePreset(saved.entries, saved.selectedId, 'QA2', draft, false)
-    expect(replaced.entries).toHaveLength(1)
-    expect(replaced.selectedId).toBe(saved.selectedId)
-    expect(savePreset(replaced.entries, replaced.selectedId, 'Copy', draft, true).entries).toHaveLength(2)
+})
+
+describe('credentials', () => {
+  it('strips node and model credentials from storage, then restores only a chosen remembered key', () => {
+    const workspace: Workspace = {
+      ...emptyWorkspace(),
+      connection: { model: 'm', url: 'http://host:1234/v1', apiKey: 'sk-model-secret', alias: '', api: 'openai' },
+      connections: [{
+        id: 'c1', name: 'prod', rememberKey: true,
+        value: { model: 'm', url: 'http://host:1234/v1', apiKey: 'sk-model-secret', alias: '', api: 'openai' },
+      }],
+      selectedConnection: 'c1',
+      aiperf: {
+        ...defaultAIPerfDraft(),
+        monitoring: { enabled: true, required: false, sampleInterval: '1', maxGap: '', nodes: [node] },
+      },
+      aiperfTemplates: [{
+        id: 't1', name: 'cache', value: {
+          ...defaultAIPerfDraft(),
+          monitoring: { enabled: true, required: false, sampleInterval: '1', maxGap: '', nodes: [node] },
+        },
+      }],
+    }
+    expect(writeWorkspace(workspace).ok).toBe(true)
+    const text = localStorage.getItem(CONFIG_STORAGE_KEY)!
+    expect(text).not.toContain('node-secret')
+    expect(text).not.toContain('user:pass')
+    expect(text).not.toContain('"connection":{"model":"m","url":"http://host:1234/v1","apiKey":"sk-model-secret"')
+
+    const restored = readOk()
+    expect(restored.connection.apiKey).toBe('sk-model-secret')
+    expect(restored.aiperf.monitoring.nodes[0].bearerToken).toBe('')
+    expect(restored.aiperf.monitoring.nodes[0].url).toBe('')
+    expect(restored.aiperfTemplates[0].value.monitoring.nodes[0].bearerToken).toBe('')
   })
-  it.each(['api', 'value', 'id'])('rejects an invalid connection %s', (field) => {
-    const raw = JSON.parse(exportLibrary(savedWorkspace(), true))
-    if (field === 'api') raw.connections[0].value.api = 'unsupported'
-    else raw.connections[0][field] = null
-    expect(() => parseImport(JSON.stringify(raw))).toThrow()
+
+  it('does not restore a remembered key that was edited or points elsewhere', () => {
+    const workspace: Workspace = {
+      ...emptyWorkspace(),
+      connection: { model: 'm', url: 'http://other:1234/v1', apiKey: 'sk-model-secret', alias: '', api: 'openai' },
+      connections: [{
+        id: 'c1', name: 'prod', rememberKey: true,
+        value: { model: 'm', url: 'http://host:1234/v1', apiKey: 'sk-model-secret', alias: '', api: 'openai' },
+      }],
+      selectedConnection: 'c1',
+    }
+    expect(writeWorkspace(workspace).ok).toBe(true)
+    expect(readOk().connection.apiKey).toBe('')
   })
-  it('rejects unexpected fields, dangerous keys and oversized imports', () => {
-    const raw = JSON.parse(exportLibrary(savedWorkspace(), true))
-    raw.connections[0].value.headers = { Authorization: 'secret' }
-    expect(() => parseImport(JSON.stringify(raw))).toThrow()
-    expect(() =>
-      parseImport('{"version":1,"__proto__":{},"connections":[],"evalTemplates":[],"perfTemplates":[]}'),
-    ).toThrow()
-    expect(() => parseImport(' '.repeat(1024 * 1024 + 1))).toThrow()
+
+  it('exports without credentials unless the user opts in', () => {
+    const library = storageSnapshot({
+      ...emptyWorkspace(),
+      connections: [{
+        id: 'c1', name: 'prod', rememberKey: true,
+        value: { model: 'm', url: 'http://host:1234/v1', apiKey: 'sk-model-secret', alias: '', api: 'openai' },
+      }],
+      aiperfTemplates: [{
+        id: 't1', name: 'cache', value: {
+          ...defaultAIPerfDraft(),
+          monitoring: { enabled: true, required: false, sampleInterval: '1', maxGap: '', nodes: [node] },
+        },
+      }],
+    })
+    const plain = exportLibrary(library, false)
+    expect(plain).not.toContain('sk-model-secret')
+    expect(plain).not.toContain('node-secret')
+    const withKeys = exportLibrary(library, true)
+    expect(withKeys).toContain('sk-model-secret')
+    expect(withKeys).not.toContain('node-secret')
   })
 })
 
-describe('Shared connection and template semantics', () => {
-  it('maps the same connection into distinct backend contracts', () => {
-    const connection = savedWorkspace().connection
-    expect(connectionPayload(connection, 'eval')).toMatchObject({ api_url: connection.url, api_key: 'fake-secret' })
-    expect(connectionPayload(connection, 'perf')).toMatchObject({
-      url: connection.url,
-      api: 'openai',
-      api_key: 'fake-secret',
-    })
-    expect(connectionPayload({ ...connection, api: 'local' }, 'perf')).not.toHaveProperty('api_key')
+describe('import and clear', () => {
+  const base = { version: 3, connections: [], evalTemplates: [], perfTemplates: [], aiperfTemplates: [] }
+
+  it('accepts a structurally valid template that still needs execution values', () => {
+    const library = parseImport(JSON.stringify({
+      ...base,
+      aiperfTemplates: [{ id: 'tpl', name: 'draft', value: { schemaVersion: 3 } }],
+    }))
+    expect(library.aiperfTemplates[0].value.tokenizer).toBe('')
+    expect(library.aiperfTemplates[0].value.generated.inputLengths).toBe('1024, 8192')
   })
-  it('clears credentials when switching destinations, but not model or URL path', () => {
-    const connection = savedWorkspace().connection
-    expect(editConnection(connection, { url: 'http://server-b:8000/v1' }).apiKey).toBe('')
-    expect(editConnection(connection, { api: 'local' }).apiKey).toBe('')
-    expect(editConnection(connection, { url: 'http://server-a:8000/v1/chat/completions' }).apiKey).toBe('fake-secret')
-    expect(editConnection(connection, { model: 'other-model' }).apiKey).toBe('fake-secret')
-    expect(connection.apiKey).toBe('fake-secret')
+
+  it('rejects incomplete connections, evaluation and performance templates', () => {
+    expect(() => parseImport(JSON.stringify({
+      ...base,
+      connections: [{ id: 'c', name: 'c', rememberKey: false, value: { ...DEFAULT_CONNECTION } }],
+    }))).toThrow()
+    expect(() => parseImport(JSON.stringify({
+      ...base,
+      evalTemplates: [{ id: 'e', name: 'e', value: { ...DEFAULT_EVAL, sandboxEngine: 'podman' } }],
+    }))).toThrow()
+    expect(() => parseImport(JSON.stringify({
+      ...base,
+      perfTemplates: [{ id: 'p', name: 'p', value: { ...DEFAULT_PERF, parallel: 2 } }],
+    }))).toThrow()
   })
-  it('validates templates without requiring a model connection', () => {
-    expect(validateEvalDraft({ ...DEFAULT_EVAL, datasets: 'gsm8k', limit: '.25', topP: '.95' })).toEqual({})
-    expect(validatePerfDraft({ ...DEFAULT_PERF, parallel: '1,2', number: '4,8', rate: '2.5' })).toEqual({})
-    expect(validatePerfDraft({ ...DEFAULT_PERF, parallel: '1,2' })).toHaveProperty('number')
-    expect(validateEvalDraft({ ...DEFAULT_EVAL, datasets: 'gsm8k', timeout: '0' })).toHaveProperty('timeout')
+
+  it('clears every managed key, so an older draft cannot reappear', () => {
+    localStorage.setItem(LEGACY_V2_CONFIG_STORAGE_KEY, JSON.stringify(v2Workspace({ runType: 'single', prompts: 'p' })))
+    localStorage.setItem(LEGACY_CONFIG_STORAGE_KEY, '{"version":1}')
+    localStorage.setItem(LEGACY_AIPERF_STORAGE_KEY, '{"inputTokens":"1024"}')
+    expect(clearWorkspaceStorage()).toEqual({ ok: true, value: null })
+    expect(localStorage.getItem(LEGACY_V2_CONFIG_STORAGE_KEY)).toBeNull()
+    expect(localStorage.getItem(LEGACY_CONFIG_STORAGE_KEY)).toBeNull()
+    expect(localStorage.getItem(LEGACY_AIPERF_STORAGE_KEY)).toBeNull()
+    expect(readOk().aiperf).toEqual(defaultAIPerfDraft())
   })
 })
