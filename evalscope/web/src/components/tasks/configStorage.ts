@@ -145,6 +145,9 @@ function parseLegacyAIPerf(value: unknown): AIPerfDraft {
     ...DEFAULT_AIPERF, tokenizer: old.tokenizer, ratios: old.ratios, inputTokens: old.inputTokens,
     requestCount: old.requestCount, outputTokens: old.outputTokens, loads: old.loads,
     mode: old.mode as AIPerfDraft['mode'], repetitions: old.repetitions, pool: old.pool,
+    // A version-1 draft only ever had a fixed request count; keep it instead of
+    // inheriting the default concurrency multiplier.
+    requestMultiplier: '',
     deploymentMode: nodes.length ? 'pd' : 'single', nodes,
   })
 }

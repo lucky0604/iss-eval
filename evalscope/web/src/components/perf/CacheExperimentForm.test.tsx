@@ -33,7 +33,7 @@ it('previews and submits actual ratios, loads, labels and independent node crede
   await act(async () => { render(<Harness submit={submit} />) })
   expect(screen.getByText(/AIPerf 0.13.0: Available/)).toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('Tokenizer path or ModelScope model ID'), { target: { value: '/tokenizer' } })
-  fireEvent.change(screen.getByLabelText('Load points (comma-separated)'), { target: { value: '1, 4' } })
+  fireEvent.change(screen.getByLabelText('Concurrency (comma-separated)'), { target: { value: '1, 4' } })
   fireEvent.change(screen.getByLabelText('Deployment'), { target: { value: 'pd' } })
   fireEvent.click(screen.getByRole('button', { name: 'Add node' }))
   fireEvent.click(screen.getByRole('button', { name: 'Add node' }))
@@ -53,7 +53,7 @@ it('previews and submits actual ratios, loads, labels and independent node crede
   const sent = vi.mocked(validatePerfExperiment).mock.calls[0][0]
   expect(sent).toMatchObject({ engine: 'aiperf', aiperf: {
     api_key: 'model-secret', tokenizer_path: '/tokenizer', deployment_mode: 'pd',
-    cache_experiment: { target_ratios: [0, 0.8, 0.9], seed: 42 },
+    cache_experiment: { target_ratios: [0, 0.9], seed: 42 },
     load: { points: [{ concurrency: 1 }, { concurrency: 4 }] },
     telemetry: { required: true, targets: [
       { node_id: 'p', role: 'prefill', engine: 'vllm', url: 'http://p:9000/metrics', labels: { model: 'alpha' }, headers: { Authorization: 'Bearer p-secret' } },
@@ -66,6 +66,36 @@ it('previews and submits actual ratios, loads, labels and independent node crede
   expect(screen.getByRole('button', { name: 'Start experiment' })).toBeDisabled()
   fireEvent.change(within(first).getByLabelText('Prometheus URL'), { target: { value: 'http://other:9000/metrics' } })
   expect(within(first).getByLabelText('Metrics bearer token (not saved)')).toHaveValue('')
+})
+
+it('sweeps every chosen preset length into one subrun per length', async () => {
+  await act(async () => { render(<Harness initial={{ ...DEFAULT_AIPERF, tokenizer: '/tokenizer' }} />) })
+  fireEvent.click(screen.getByRole('button', { name: '32K' }))
+  fireEvent.click(screen.getByRole('button', { name: '128K' }))
+  expect(screen.getByLabelText('Input lengths (tokens, comma-separated)')).toHaveValue('8192, 32768, 131072')
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Preview plan' })) })
+  const sent = vi.mocked(validatePerfExperiment).mock.calls[0][0]
+  expect((sent.aiperf as Record<string, Record<string, unknown>>).cache_experiment).toMatchObject({
+    total_input_tokens: 8192, input_token_values: [8192, 32768, 131072],
+  })
+  fireEvent.click(screen.getByRole('button', { name: '32K' }))
+  expect(screen.getByLabelText('Input lengths (tokens, comma-separated)')).toHaveValue('8192, 131072')
+})
+
+it('collapses concurrency and clears the multiplier when switching to a single run', async () => {
+  await act(async () => { render(<Harness initial={{ ...DEFAULT_AIPERF, tokenizer: '/tokenizer' }} />) })
+  fireEvent.change(screen.getByLabelText('Workload'), { target: { value: 'single' } })
+  expect(screen.getByLabelText('Concurrency (comma-separated)')).toHaveValue('1')
+  expect(screen.queryByLabelText('Requests per concurrency (multiplier)')).not.toBeInTheDocument()
+})
+
+it('keeps a stored fixed request count visible until a multiplier is entered', async () => {
+  await act(async () => {
+    render(<Harness initial={{ ...DEFAULT_AIPERF, tokenizer: '/tokenizer', requestMultiplier: '', requestCount: '10' }} />)
+  })
+  expect(screen.getByLabelText('Requests per load point')).toHaveValue(10)
+  fireEvent.change(screen.getByLabelText('Requests per concurrency (multiplier)'), { target: { value: '3' } })
+  expect(screen.queryByLabelText('Requests per load point')).not.toBeInTheDocument()
 })
 
 it('focuses and describes the first invalid field, including dynamic nodes', async () => {
@@ -102,7 +132,7 @@ it('ignores an out-of-order preview and invalidates it when the draft changes', 
   await act(async () => { render(<Harness initial={{ ...DEFAULT_AIPERF, tokenizer: '/tokenizer' }} />) })
   expect(screen.getByText(/AIPerf 0.13.0: Available/)).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Preview plan' }))
-  fireEvent.change(screen.getByLabelText('Requests per run'), { target: { value: '20' } })
+  fireEvent.change(screen.getByLabelText('Requests per concurrency (multiplier)'), { target: { value: '20' } })
   fireEvent.click(screen.getByRole('button', { name: 'Preview plan' }))
   await act(async () => resolveSecond(plan(60)))
   expect(screen.getByText(/60 profiling requests/)).toBeInTheDocument()

@@ -8,7 +8,9 @@ const node = { id: 'one', nodeId: 'p', role: 'prefill' as const, engine: 'vllm' 
 
 describe('AIPerf experiment configuration', () => {
   it('preserves zero, target ratios, seed and open-loop rates in the backend envelope', () => {
-    const draft = { ...valid, ratios: '0, 80, 90', seed: '0', mode: 'open_loop' as const, loads: '0.5, 3' }
+    const draft = {
+      ...valid, ratios: '0, 80, 90', seed: '0', mode: 'open_loop' as const, loads: '0.5, 3', requestMultiplier: '',
+    }
     expect(validateAIPerfDraft(draft)).toEqual({})
     expect(buildAIPerfPayload(draft, { ...DEFAULT_CONNECTION, model: 'm', url: 'http://host/v1' })).toMatchObject({
       engine: 'aiperf', aiperf: { cache_experiment: { target_ratios: [0, 0.8, 0.9], seed: 0 },
@@ -47,6 +49,38 @@ describe('AIPerf experiment configuration', () => {
       .toHaveProperty('gpuTelemetryUrls')
     expect(validateAIPerfDraft({ ...valid, gpuTelemetryUrls: 'http://user:secret@gpu:9400/metrics' }))
       .toHaveProperty('gpuTelemetryUrls')
+  })
+  it('sweeps every input length as its own subrun', () => {
+    const draft = { ...valid, inputTokens: '8192, 32768, 65536, 131072' }
+    expect(validateAIPerfDraft(draft)).toEqual({})
+    expect(buildAIPerfPayload(draft, { ...DEFAULT_CONNECTION, model: 'm', url: 'http://host/v1' })).toMatchObject({
+      aiperf: { cache_experiment: { total_input_tokens: 8192, input_token_values: [8192, 32768, 65536, 131072] } },
+    })
+  })
+  it('keeps a single length on total_input_tokens so existing plans keep their configuration hash', () => {
+    const request = buildAIPerfPayload({ ...valid, inputTokens: '32768' },
+      { ...DEFAULT_CONNECTION, model: 'm', url: 'http://host/v1' })
+    const cache = (request.aiperf as Record<string, Record<string, unknown>>).cache_experiment
+    expect(cache.total_input_tokens).toBe(32768)
+    expect(cache.input_token_values).toBeUndefined()
+  })
+  it.each(['8192, 8192', '8192,,1', '8k', '-1', ''])('rejects invalid input lengths %s', (inputTokens) => {
+    expect(validateAIPerfDraft({ ...valid, inputTokens })).toHaveProperty('inputTokens')
+  })
+  it('derives the request budget from concurrency times multiplier', () => {
+    const draft = { ...valid, loads: '1, 8, 16', requestMultiplier: '3', requestCount: '' }
+    expect(validateAIPerfDraft(draft)).toEqual({})
+    expect(buildAIPerfPayload(draft, { ...DEFAULT_CONNECTION, model: 'm', url: 'http://host/v1' })).toMatchObject({
+      aiperf: { load: { request_count: 3, request_count_multiplier: 3 } },
+    })
+  })
+  it('requires a fixed request count when open loop has no concurrency to multiply', () => {
+    expect(validateAIPerfDraft({ ...valid, mode: 'open_loop', requestMultiplier: '', requestCount: '' }))
+      .toHaveProperty('requestCount')
+  })
+  it('counts input lengths in the experiment matrix limit', () => {
+    expect(validateAIPerfDraft({ ...valid, inputTokens: '8192, 32768, 65536, 131072', repetitions: '1000' }))
+      .toHaveProperty('repetitions')
   })
   it('sends per-point request multiplier, SLOs and failed threshold', () => {
     const draft = { ...valid, requestMultiplier: '3', slos: 'request_latency:250, inter_token_latency:10', failedThreshold: '0.05' }

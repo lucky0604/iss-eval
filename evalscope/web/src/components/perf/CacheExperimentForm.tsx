@@ -6,7 +6,8 @@ import { useAsyncResource } from '@/hooks/useAsyncResource'
 import { useTaskForm } from '@/components/tasks/useTaskForm'
 import { endpointOrigin, type FieldErrors, type ModelConnection } from '@/components/tasks/taskConfig'
 import {
-  buildAIPerfPayload, newAIPerfNode, validateAIPerfDraft, type AIPerfDraft, type AIPerfNodeDraft,
+  buildAIPerfPayload, DEFAULT_AIPERF, formatTokenCount, INPUT_LENGTH_PRESETS, newAIPerfNode, parseInputLengths,
+  parseNumberList, requestsPerPoint, validateAIPerfDraft, type AIPerfDraft, type AIPerfNodeDraft,
 } from '@/components/tasks/aiperfDraft'
 import Field from '@/components/ui/Field'
 import { FORM_INPUT_CLASS, inputClass } from '@/components/ui/formStyles'
@@ -28,10 +29,10 @@ interface Props {
 type TextField = Exclude<keyof AIPerfDraft, 'nodes' | 'required' | 'mode' | 'deploymentMode' | 'runType' | 'prompts' | 'gpuTelemetry' | 'gpuTelemetryUrls'>
 type Preview = { kind: 'cache'; value: PerfPlanResponse } | { kind: 'single'; value: PerfSinglePlanResponse }
 const FIELD_LABELS: Record<TextField, string> = {
-  tokenizer: 'tasks.aiperf.tokenizer', ratios: 'tasks.aiperf.ratios', inputTokens: 'tasks.aiperf.inputTokens',
+  tokenizer: 'tasks.aiperf.tokenizer', ratios: 'tasks.aiperf.ratios', inputTokens: 'tasks.aiperf.inputLengths',
   requestCount: 'tasks.aiperf.requestCount', requestMultiplier: 'tasks.aiperf.requestMultiplier',
   outputTokens: 'tasks.aiperf.outputTokens', slos: 'tasks.aiperf.slos', failedThreshold: 'tasks.aiperf.failedThreshold',
-  loads: 'tasks.aiperf.loads',
+  loads: 'tasks.aiperf.loadsClosed',
   repetitions: 'tasks.aiperf.repetitions', pool: 'tasks.aiperf.pool', seed: 'tasks.aiperf.seed',
   sampleInterval: 'tasks.aiperf.sampleInterval', maxGap: 'tasks.aiperf.maxGap',
 }
@@ -71,8 +72,8 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
       values[`aiperf-node-${node.id}-${name}`] = node[name]
   }
   const domOrder = ['connection-api', 'connection-model', 'connection-url',
-    ...['prompts', 'tokenizer', 'ratios', 'inputTokens', 'requestCount', 'requestMultiplier', 'outputTokens', 'slos',
-      'failedThreshold', 'loads', 'repetitions', 'pool', 'seed', 'sampleInterval', 'maxGap', 'gpuTelemetry',
+    ...['prompts', 'tokenizer', 'inputTokens', 'ratios', 'outputTokens', 'loads', 'requestMultiplier', 'requestCount',
+      'repetitions', 'pool', 'seed', 'slos', 'failedThreshold', 'sampleInterval', 'maxGap', 'gpuTelemetry',
       'gpuTelemetryUrls'].map((name) => `aiperf-${name}`),
     ...draft.nodes.flatMap((node) => ['nodeId', 'url', 'labels', 'bearerToken'].map((name) => `aiperf-node-${node.id}-${name}`)),
     'aiperf-nodes']
@@ -82,6 +83,35 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
     ...Object.fromEntries(Object.entries(validateAIPerfDraft(draft)).map(([field, message]) => [`aiperf-${field}`, message])),
   })
   const update = <K extends keyof AIPerfDraft>(field: K, value: AIPerfDraft[K]) => onChange({ ...draft, [field]: value })
+  const closedLoop = draft.mode === 'closed_loop'
+  const inputLengths = parseInputLengths(draft.inputTokens) ?? []
+  const perPointRequests = requestsPerPoint(draft)
+  const multiplier = Number(draft.requestMultiplier)
+  const loads = parseNumberList(draft.loads) ?? []
+  const derivedRange = draft.requestMultiplier.trim() && loads.length && Number.isSafeInteger(multiplier) && multiplier > 0
+    ? `${Math.min(...loads) * multiplier}–${Math.max(...loads) * multiplier}`
+    : null
+  // Toggling must not wipe a half-typed list, so it tolerates incomplete entries.
+  const toggleInputLength = (value: number) => {
+    const current = draft.inputTokens.split(',').map((item) => Number(item.trim()))
+      .filter((item) => Number.isSafeInteger(item) && item > 0)
+    const next = current.includes(value)
+      ? current.filter((item) => item !== value)
+      : [...current, value].sort((left, right) => left - right)
+    update('inputTokens', next.join(', '))
+  }
+  // A single run takes exactly one load point, and the multiplier only exists for closed-loop cache runs.
+  const switchRunType = (runType: AIPerfDraft['runType']) => onChange({
+    ...draft,
+    runType,
+    loads: runType === 'single' ? draft.loads.split(',')[0].trim() || '1' : draft.loads,
+    requestMultiplier: runType === 'cache' && closedLoop ? draft.requestMultiplier || DEFAULT_AIPERF.requestMultiplier : '',
+  })
+  const switchMode = (mode: AIPerfDraft['mode']) => onChange({
+    ...draft, mode,
+    requestMultiplier: draft.runType === 'cache' && mode === 'closed_loop'
+      ? draft.requestMultiplier || DEFAULT_AIPERF.requestMultiplier : '',
+  })
   const updateNode = (id: string, patch: Partial<AIPerfNodeDraft>) => update('nodes', draft.nodes.map((node) => {
     if (node.id !== id) return node
     const clearToken = patch.url !== undefined && endpointOrigin(node.url) !== endpointOrigin(patch.url)
@@ -126,6 +156,16 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
         onChange={(event) => updateNode(node.id, { [name]: event.target.value })} />}
     </Field>
   }
+  const inputLengthsField = <Field id="aiperf-inputTokens" name="inputTokens" labelKey={FIELD_LABELS.inputTokens}
+    error={errorFor('aiperf-inputTokens')}>
+    {(aria) => <input {...aria} className={inputClass(errorFor('aiperf-inputTokens'))} value={draft.inputTokens}
+      placeholder="8192, 32768, 65536" onChange={(event) => update('inputTokens', event.target.value)} />}
+  </Field>
+  const loadsField = <Field id="aiperf-loads" name="loads" error={errorFor('aiperf-loads')}
+    labelKey={closedLoop ? FIELD_LABELS.loads : 'tasks.aiperf.loadsOpen'}>
+    {(aria) => <input {...aria} className={inputClass(errorFor('aiperf-loads'))} value={draft.loads}
+      onChange={(event) => update('loads', event.target.value)} />}
+  </Field>
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     submitHandler(validate, () => void previewPlan())(event)
   }
@@ -138,7 +178,7 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
       <fieldset disabled={disabled} className="space-y-4">
         <Field id="aiperf-runType" name="runType" labelKey="tasks.aiperf.runType">
           {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={draft.runType}
-            onChange={(event) => update('runType', event.target.value as AIPerfDraft['runType'])}>
+            onChange={(event) => switchRunType(event.target.value as AIPerfDraft['runType'])}>
             <option value="cache">{t('tasks.aiperf.cacheRun')}</option><option value="single">{t('tasks.aiperf.singleRun')}</option>
           </select>}
         </Field>
@@ -147,22 +187,33 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
             onChange={(event) => update('prompts', event.target.value)} />}
         </Field>}
         <div className="grid min-w-0 gap-3 md:grid-cols-2">
-          {textField('tokenizer')}{draft.runType === 'cache' && <>{textField('ratios')}{textField('inputTokens', 'number')}
-            <Field id="aiperf-contextPreset" name="contextPreset" labelKey="tasks.aiperf.contextPreset">
-              {(aria) => <select {...aria} className={FORM_INPUT_CLASS}
-                value={['8192', '32768', '65536', '131072', '262144', '1048576'].includes(draft.inputTokens) ? draft.inputTokens : ''}
-                onChange={(event) => event.target.value && update('inputTokens', event.target.value)}>
-                <option value="">{t('tasks.aiperf.custom')}</option>
-                {[8192, 32768, 65536, 131072, 262144, 1048576].map((value) => <option key={value} value={value}>
-                  {value >= 1048576 ? '1M' : `${value / 1024}K`}</option>)}
-              </select>}
-            </Field>
-            {textField('requestCount', 'number')}{textField('requestMultiplier', 'number')}</>}
-          {textField('outputTokens', 'number')}{textField('slos')}{textField('failedThreshold', 'number')}{textField('loads')}
-          {draft.runType === 'cache' && <>{textField('repetitions', 'number')}{textField('pool', 'number')}{textField('seed', 'number')}</>}
+          {textField('tokenizer')}
+          {draft.runType === 'cache' && <>
+            <div className="min-w-0 space-y-2">
+              {inputLengthsField}
+              <div className="flex flex-wrap items-center gap-2" role="group"
+                aria-label={t('tasks.aiperf.inputLengthsPresets')}>
+                {INPUT_LENGTH_PRESETS.map((value) => <Button key={value} type="button" size="sm"
+                  variant={inputLengths.includes(value) ? 'primary' : 'outline'}
+                  aria-pressed={inputLengths.includes(value)} onClick={() => toggleInputLength(value)}>
+                  {formatTokenCount(value)}
+                </Button>)}
+              </div>
+            </div>
+            {textField('ratios')}
+            {textField('outputTokens', 'number')}
+            {loadsField}
+            {closedLoop && textField('requestMultiplier', 'number')}
+            {(!closedLoop || !draft.requestMultiplier.trim()) && textField('requestCount', 'number')}
+            {textField('repetitions', 'number')}
+            {textField('pool', 'number')}
+            {textField('seed', 'number')}
+          </>}
+          {draft.runType === 'single' && <>{textField('outputTokens', 'number')}{loadsField}</>}
+          {textField('slos')}{textField('failedThreshold', 'number')}
           <Field id="aiperf-mode" name="mode" labelKey="tasks.aiperf.loadMode">
             {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={draft.mode}
-              onChange={(event) => update('mode', event.target.value as AIPerfDraft['mode'])}>
+              onChange={(event) => switchMode(event.target.value as AIPerfDraft['mode'])}>
               <option value="closed_loop">{t('tasks.aiperf.closed')}</option><option value="open_loop">{t('tasks.aiperf.open')}</option>
             </select>}
           </Field>
@@ -174,6 +225,17 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
           </Field>
           {textField('sampleInterval', 'number')}{textField('maxGap', 'number')}
         </div>
+        {draft.runType === 'cache' && <ul className="space-y-1 text-xs text-[var(--text-muted)]">
+          <li>{t('tasks.aiperf.inputLengthsHint')}</li>
+          <li>{t('tasks.aiperf.loadsHint')}</li>
+          <li>{closedLoop
+            ? (derivedRange
+              ? t('tasks.aiperf.multiplierHint', { range: derivedRange })
+              : t('tasks.aiperf.fixedRequestsHint', { count: String(perPointRequests ?? '—') }))
+            : t('tasks.aiperf.requestCountHint')}</li>
+          <li>{t('tasks.aiperf.repetitionsHint')}</li>
+          <li>{t('tasks.aiperf.poolHint')}</li>
+        </ul>}
         <p className="text-xs text-[var(--text-muted)]">{t('tasks.aiperf.slosHint')}</p>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.required}
           onChange={(event) => update('required', event.target.checked)} />{t('tasks.aiperf.required')}</label>

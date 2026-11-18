@@ -63,6 +63,9 @@ describe('Browser configuration storage', () => {
     expect(result.value.engine).toBe('evalscope')
     expect(result.value.perf).toEqual(DEFAULT_PERF)
     expect(result.value.aiperf.nodes.map((node) => node.role)).toEqual(['prefill', 'decode'])
+    // A version-1 draft only had a fixed request count; migrating must not add a multiplier.
+    expect(result.value.aiperf.requestCount).toBe('6')
+    expect(result.value.aiperf.requestMultiplier).toBe('')
     expect(writeWorkspace(result.value).ok).toBe(true)
     expect(localStorage.getItem(LEGACY_CONFIG_STORAGE_KEY)).toBe(oldText)
     expect(localStorage.getItem(LEGACY_AIPERF_STORAGE_KEY)).toBe(oldDraft)
@@ -196,7 +199,7 @@ describe('Browser configuration storage', () => {
     const imported = parseImport(exportLibrary(state, true))
     expect(imported.aiperfTemplates[0].value.nodes[0]).toMatchObject({ nodeId: 'p', bearerToken: '' })
     const merged = mergeLibrary(emptyWorkspace(), imported)
-    expect(merged.aiperfTemplates[0].value.ratios).toBe('0, 80, 90')
+    expect(merged.aiperfTemplates[0].value.ratios).toBe('0, 90')
     expect(merged.aiperfTemplates[0].id).not.toBe('aiperf')
     state.aiperfTemplates[0].value.nodes[0].nodeId = 'changed'
     expect(merged.aiperfTemplates[0].value.nodes[0].nodeId).toBe('p')
