@@ -109,6 +109,7 @@ export interface WebApiContracts {
   perf_run_summary: PerfRunSummary;
   perf_runs_list_response: PerfRunsListResponse;
   perf_single_plan_response: PerfSinglePlanResponse;
+  perf_telemetry_probe_response: PerfTelemetryProbeResponse;
   performance_result_entry: PerformanceResultEntry;
   plan_config_snapshot: PlanConfigSnapshot;
   plan_diagnostic_view: PlanDiagnosticView;
@@ -2601,6 +2602,12 @@ export interface PerfSinglePlanResponse {
   nodes?: NodePreflight[];
   profiling_requests: number;
   warnings?: string[];
+}
+/**
+ * Explicit Metrics-endpoint probe; no inference or tokenizer work was performed.
+ */
+export interface PerfTelemetryProbeResponse {
+  nodes?: NodePreflight[];
 }
 /**
  * Public identity and mechanics of a portable performance plan.

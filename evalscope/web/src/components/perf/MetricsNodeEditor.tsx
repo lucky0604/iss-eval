@@ -12,9 +12,18 @@ const NODE_LABELS = {
   bearerToken: 'tasks.aiperf.token',
 } as const
 
+const NODE_PARAMS = {
+  nodeId: 'targets[].node_id',
+  url: 'targets[].url',
+  labels: 'targets[].labels',
+  bearerToken: 'targets[].headers.Authorization',
+} as const
+
 interface Props {
   /** Prefix for control ids; node ids must stay unique across sibling forms. */
   idPrefix: string
+  /** Full parameter path of the telemetry block this editor writes. */
+  paramPrefix: string
   nodes: AIPerfNodeDraft[]
   onChange: (nodes: AIPerfNodeDraft[]) => void
   errorFor: (id: string) => string | undefined
@@ -22,12 +31,14 @@ interface Props {
 }
 
 /**
- * Metrics endpoint editor shared by the legacy experiment form and the matrix form.
+ * Metrics endpoint editor shared by both AIPerf input sources.
  *
  * A node's bearer token is cleared whenever its URL moves to another origin: a
  * credential pasted for one endpoint must never be sent to another.
  */
-export default function MetricsNodeEditor({ idPrefix, nodes, onChange, errorFor, disabled = false }: Props) {
+export default function MetricsNodeEditor({
+  idPrefix, paramPrefix, nodes, onChange, errorFor, disabled = false,
+}: Props) {
   const { t } = useLocale()
   const addId = `${idPrefix}-nodes`
   const updateNode = (id: string, patch: Partial<AIPerfNodeDraft>) => onChange(nodes.map((node) => {
@@ -39,7 +50,8 @@ export default function MetricsNodeEditor({ idPrefix, nodes, onChange, errorFor,
     const id = `${idPrefix}-node-${node.id}-${name}`
     const error = errorFor(id)
     return (
-      <Field id={id} name={id} labelKey={NODE_LABELS[name]} error={error}
+      <Field id={id} name={id} labelKey={NODE_LABELS[name]} paramName={`${paramPrefix}.${NODE_PARAMS[name]}`}
+        error={error}
         autoComplete={name === 'bearerToken' ? 'off' : undefined}>
         {(aria) => <input {...aria} type={type} className={inputClass(error)} value={node[name]}
           onChange={(event) => updateNode(node.id, { [name]: event.target.value })} />}
@@ -55,14 +67,16 @@ export default function MetricsNodeEditor({ idPrefix, nodes, onChange, errorFor,
           <legend className="px-1 text-sm">{t('tasks.aiperf.node', { number: index + 1 })}</legend>
           <div className="grid min-w-0 gap-3 md:grid-cols-2">
             {nodeField(node, 'nodeId')}
-            <Field id={`${idPrefix}-node-${node.id}-role`} name={`role-${node.id}`} labelKey="tasks.aiperf.role">
+            <Field id={`${idPrefix}-node-${node.id}-role`} name={`role-${node.id}`} labelKey="tasks.aiperf.role"
+              paramName={`${paramPrefix}.targets[].role`}>
               {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={node.role}
                 onChange={(event) => updateNode(node.id, { role: event.target.value as AIPerfNodeDraft['role'] })}>
                 <option value="prefill">{t('tasks.aiperf.prefill')}</option>
                 <option value="decode">{t('tasks.aiperf.decode')}</option>
               </select>}
             </Field>
-            <Field id={`${idPrefix}-node-${node.id}-engine`} name={`engine-${node.id}`} labelKey="tasks.aiperf.engine">
+            <Field id={`${idPrefix}-node-${node.id}-engine`} name={`engine-${node.id}`} labelKey="tasks.aiperf.engine"
+              paramName={`${paramPrefix}.targets[].engine`}>
               {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={node.engine}
                 onChange={(event) => updateNode(node.id, { engine: event.target.value as AIPerfNodeDraft['engine'] })}>
                 <option value="vllm">vLLM</option><option value="sglang">SGLang</option>

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { exportPerfPlan, previewPerfPlan, submitPerfPlan, type PlanErrorPayload } from '@/api/perfPlans'
 import type { PerfPlanPreviewResponse } from '@/api/generated/contracts'
-import { DomainError } from '@/api/errors'
+import { DomainError, isDefiniteRejection } from '@/api/errors'
 import {
   canSubmitPlan,
   checkPlanFileSize,
@@ -16,16 +16,26 @@ import { FORM_INPUT_CLASS } from '@/components/ui/formStyles'
 
 interface Props {
   disabled?: boolean
+  pendingTaskId?: string
+  /**
+   * Claims the shared submission lock. Returns false when another entry point
+   * (the form's own Start, or a second import) already owns it.
+   */
+  beginSubmit?: () => boolean
+  /** Releases the shared submission lock once this attempt has settled. */
+  endSubmit?: () => void
+  /** The original task id of an attempt whose outcome is unknown, so it can be queried. */
+  onAttempt?: (taskId: string) => void
   onSubmitted?: (taskId: string) => void
 }
 
 /**
  * The submission attempt this panel is currently bound to.
  *
- * One accepted plan keeps one task id: an uncertain network failure must retry
- * the *same* task instead of creating a second model run, and a retry after a
- * definite rejection stays on the same id because the server's reservation is
- * the authority. Only an explicit new submission after success rotates the id.
+ * One accepted plan keeps one task id: an uncertain failure (network, 5xx, or
+ * a 4xx such as 409 that does not prove validation ran) must retry the *same*
+ * task instead of creating a second model run. A definite rejection (400/422)
+ * or an explicit new submission after success rotates the id.
  */
 interface PlanAttempt {
   planHash: string
@@ -49,7 +59,9 @@ function errorDiagnostics(error: unknown): PlanErrorPayload | null {
  * The textarea holds the original file text; it is never re-serialized locally
  * so a duplicate key or an unknown field reaches the server unchanged.
  */
-export default function PerfPlanImportPanel({ disabled = false, onSubmitted }: Props) {
+export default function PerfPlanImportPanel({
+  disabled = false, pendingTaskId, beginSubmit, endSubmit, onAttempt, onSubmitted,
+}: Props) {
   const { t } = useLocale()
   const [text, setText] = useState('')
   const [fileName, setFileName] = useState('')
@@ -132,7 +144,11 @@ export default function PerfPlanImportPanel({ disabled = false, onSubmitted }: P
   }
 
   const runSubmit = async () => {
-    if (!preview) return
+    if (!preview || busy || disabled) return
+    if (pendingTaskId && (attempt?.taskId !== pendingTaskId || attempt.planHash !== preview.plan_hash)) return
+    // The lock is shared with the form's Start button: an imported plan and a
+    // form submission must never reach the service together.
+    if (beginSubmit && !beginSubmit()) return
     const current = planAttempt()
     setAttempt(current)
     setBusy(true)
@@ -150,10 +166,11 @@ export default function PerfPlanImportPanel({ disabled = false, onSubmitted }: P
       }
       onSubmitted?.(accepted.task_id || current.taskId)
     } catch (error) {
-      // A definite 4xx rejection is the user's to fix; an unknown outcome keeps
-      // the same id so the retry cannot start a second model run.
-      const definite = error instanceof DomainError && error.kind === 'http-4xx'
+      // Only 400/422 are definite refusals. Any other failure leaves the
+      // outcome unknown: keep the same task id and let the monitor query it.
+      const definite = isDefiniteRejection(error)
       if (definite) setAttempt(null)
+      else onAttempt?.(current.taskId)
       setDiagnostics(errorDiagnostics(error))
       setMessage(
         definite
@@ -162,6 +179,7 @@ export default function PerfPlanImportPanel({ disabled = false, onSubmitted }: P
       )
     } finally {
       setBusy(false)
+      endSubmit?.()
     }
   }
 
@@ -190,7 +208,7 @@ export default function PerfPlanImportPanel({ disabled = false, onSubmitted }: P
             type="file"
             accept="application/json,.json"
             aria-label={t('tasks.aiperf.planImport.chooseFile')}
-            disabled={disabled || busy}
+            disabled={disabled || busy || Boolean(pendingTaskId)}
             onChange={(event) => void loadFile(event.target.files?.[0])}
           />
           <Button type="button" variant="outline" disabled={disabled || busy || !text} onClick={() => void runPreview()}>
@@ -202,7 +220,7 @@ export default function PerfPlanImportPanel({ disabled = false, onSubmitted }: P
           <Button type="button" disabled={disabled || busy || !submitState.allowed} onClick={() => void runSubmit()}>
             {t('tasks.aiperf.planImport.submit')}
           </Button>
-          <Button type="button" variant="outline" disabled={busy || !text} onClick={reset}>
+          <Button type="button" variant="outline" disabled={disabled || busy || !text || Boolean(pendingTaskId)} onClick={reset}>
             {t('tasks.aiperf.planImport.clear')}
           </Button>
         </div>
@@ -214,7 +232,7 @@ export default function PerfPlanImportPanel({ disabled = false, onSubmitted }: P
           aria-label={t('tasks.aiperf.planImport.paste')}
           value={text}
           placeholder={t('tasks.aiperf.planImport.paste')}
-          disabled={disabled || busy}
+          disabled={disabled || busy || Boolean(pendingTaskId)}
           onChange={(event) => {
             setText(event.target.value)
             setPreview(null)

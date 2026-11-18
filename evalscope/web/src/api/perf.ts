@@ -1,5 +1,5 @@
 import { apiDeleteValidated, apiPostValidated, apiValidated } from './client'
-import type { PerfEnginesResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, CacheExperimentResponse, CacheExperimentSummaryResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse, CacheRepetitionsResponse, CacheNodeSeriesResponse, PerfEntryListResponse } from './generated/contracts'
+import type { PerfEnginesResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, PerfTelemetryProbeResponse, CacheExperimentResponse, CacheExperimentSummaryResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse, CacheRepetitionsResponse, CacheNodeSeriesResponse, PerfEntryListResponse } from './generated/contracts'
 import type {
   DeletePerfRunResponse,
   ListPerfRunsResponse,
@@ -53,6 +53,26 @@ export async function submitPerfSingle(payload: Record<string, unknown>, taskId:
     headers: { 'EvalScope-Task-Id': taskId },
     params: { async: 1 },
   })
+}
+
+/**
+ * Check Metrics endpoints only. The service fetches each target's Prometheus
+ * text and never loads a tokenizer or sends an inference request.
+ */
+export function probePerfTelemetry(telemetry: {
+  required: boolean
+  sample_interval_seconds: number
+  max_scrape_gap_seconds?: number
+  targets: Array<{
+    node_id: string
+    role: 'prefill' | 'decode'
+    engine: 'vllm' | 'sglang'
+    url: string
+    labels: Record<string, string>
+    headers?: Record<string, string>
+  }>
+}, signal?: AbortSignal): Promise<PerfTelemetryProbeResponse> {
+  return apiPostValidated('/api/v1/perf/telemetry/probe', { telemetry }, { signal })
 }
 
 export function getCacheExperiment(taskId: string, signal?: AbortSignal, rootPath?: string): Promise<CacheExperimentResponse> {

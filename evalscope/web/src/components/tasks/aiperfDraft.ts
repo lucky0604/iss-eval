@@ -5,7 +5,6 @@ import {
   parseIntegerList,
   parseRatioList,
   parseRateList,
-  type MatrixScene,
   type PlanMatrixInput,
 } from '@/domain/perf/planDraft'
 import { connectionPayload, type FieldErrors, type ModelConnection } from './taskConfig'
@@ -21,48 +20,103 @@ export interface AIPerfNodeDraft {
   bearerToken: string
 }
 
-export interface AIPerfDraft {
-  runType: 'matrix' | 'cache' | 'single'
-  prompts: string
-  tokenizer: string
-  ratios: string
-  inputTokens: string
+export type AIPerfInputSource = 'generated' | 'prompts'
+export type AIPerfLoadMode = 'closed_loop' | 'open_loop'
+
+/** Generated-input branch: token-generated managed workload, one tier or a matrix. */
+export interface AIPerfGeneratedDraft {
+  inputLengths: string
+  outputLimits: string
+  mode: AIPerfLoadMode
+  /** Values used while {@link AIPerfGeneratedDraft.mode} is `closed_loop`. */
+  closedLoads: string
+  /** Values used while {@link AIPerfGeneratedDraft.mode} is `open_loop`; empty until filled. */
+  openRates: string
   requestCount: string
-  outputTokens: string
-  loads: string
-  mode: 'closed_loop' | 'open_loop'
-  deploymentMode: 'single' | 'pd'
-  repetitions: string
+  /** Optional prefix-reuse comparison; not a separate execution mode. */
+  comparePrefix: boolean
+  ratios: string
   pool: string
   seed: string
+  repetitions: string
+  order: 'seeded_shuffle' | 'load_then_input'
+  maxModelLen: string
+  warmup: {
+    enabled: boolean
+    requests: string
+    inputTokens: string
+    outputTokens: string
+    concurrency: string
+  }
+}
+
+/** Real-prompt branch: one request per non-blank line, one load point, one output limit. */
+export interface AIPerfPromptsDraft {
+  text: string
+  outputLimit: string
+  mode: AIPerfLoadMode
+  concurrency: string
+  rate: string
+}
+
+/** Optional server metrics, shared by both input sources. */
+export interface AIPerfMonitoringDraft {
+  enabled: boolean
   required: boolean
   sampleInterval: string
   maxGap: string
   nodes: AIPerfNodeDraft[]
-  /** Matrix-only: ordinary performance or a cache-on/cache-off comparison. */
-  matrixScene: MatrixScene
-  matrixName: string
-  matrixInputLengths: string
-  matrixOutputLimits: string
-  matrixOrder: 'seeded_shuffle' | 'load_then_input'
-  matrixMaxModelLen: string
-  matrixWarmupEnabled: boolean
-  matrixWarmupRequests: string
-  matrixWarmupInput: string
-  matrixWarmupOutput: string
-  matrixWarmupConcurrency: string
-  /** Matrix-only: whether node metrics are configured at all. */
-  matrixMonitoringEnabled: boolean
 }
 
-export const DEFAULT_AIPERF: AIPerfDraft = {
-  runType: 'matrix', prompts: '', tokenizer: '', ratios: '0, 80, 90', inputTokens: '1024', requestCount: '10',
-  outputTokens: '128', loads: '1', mode: 'closed_loop', deploymentMode: 'single', repetitions: '1', pool: '1',
-  seed: '42', required: false, sampleInterval: '1', maxGap: '', nodes: [],
-  matrixScene: 'performance', matrixName: '', matrixInputLengths: '1024, 8192', matrixOutputLimits: '128, 512',
-  matrixOrder: 'seeded_shuffle', matrixMaxModelLen: '', matrixWarmupEnabled: true, matrixWarmupRequests: '2',
-  matrixWarmupInput: '1024', matrixWarmupOutput: '128', matrixWarmupConcurrency: '1',
-  matrixMonitoringEnabled: false,
+/**
+ * Frontend workspace draft (schemaVersion 3).
+ *
+ * Inactive branches keep their edited values so switching the input source never
+ * resets work or leaks one branch's units into the other. Only the active branch
+ * plus the explicit monitoring switch take part in validation, budgets and
+ * submission.
+ */
+export interface AIPerfTaskDraft {
+  schemaVersion: 3
+  inputSource: AIPerfInputSource
+  tokenizer: string
+  name: string
+  deploymentMode: 'single' | 'pd'
+  generated: AIPerfGeneratedDraft
+  prompts: AIPerfPromptsDraft
+  monitoring: AIPerfMonitoringDraft
+}
+
+/** Limits shared with the single-run API; the server re-checks both. */
+export const PROMPT_MAX_LINES = 10000
+export const PROMPT_MAX_BYTES = 512 * 1024
+
+export function defaultAIPerfDraft(): AIPerfTaskDraft {
+  return {
+    schemaVersion: 3,
+    inputSource: 'generated',
+    tokenizer: '',
+    name: '',
+    deploymentMode: 'single',
+    generated: {
+      inputLengths: '1024, 8192',
+      outputLimits: '128, 512',
+      mode: 'closed_loop',
+      closedLoads: '1',
+      openRates: '',
+      requestCount: '10',
+      comparePrefix: false,
+      ratios: '0, 80, 90',
+      pool: '1',
+      seed: '42',
+      repetitions: '1',
+      order: 'seeded_shuffle',
+      maxModelLen: '',
+      warmup: { enabled: true, requests: '2', inputTokens: '1024', outputTokens: '128', concurrency: '1' },
+    },
+    prompts: { text: '', outputLimit: '128', mode: 'closed_loop', concurrency: '1', rate: '' },
+    monitoring: { enabled: false, required: false, sampleInterval: '1', maxGap: '', nodes: [] },
+  }
 }
 
 export function newAIPerfNode(): AIPerfNodeDraft {
@@ -70,28 +124,35 @@ export function newAIPerfNode(): AIPerfNodeDraft {
   return { id, nodeId: '', role: 'prefill', engine: 'vllm', url: '', labels: '', bearerToken: '' }
 }
 
-/** Strip all Metrics credentials before persistence or export. */
-export function sanitizedAIPerfDraft(draft: AIPerfDraft): AIPerfDraft {
-  return { ...draft, nodes: draft.nodes.map((node) => {
-    let url = node.url
-    try {
-      const parsed = new URL(url)
-      if (parsed.username || parsed.password || parsed.search || parsed.hash) url = ''
-    } catch {
-      // Do not persist an incomplete URL that may already contain credentials.
-      if (url.includes('@') || url.includes('?') || url.includes('#')) url = ''
-    }
-    return { ...node, url, bearerToken: '' }
-  }) }
+/**
+ * Split prompt text into the exact request strings.
+ *
+ * A line is a request; blank lines (whitespace only) are dropped, but a kept line
+ * is never trimmed — spaces and Unicode are the user's payload, not formatting.
+ */
+export function promptLines(text: string): string[] {
+  return text.split(/\r?\n/).filter((line) => line.trim())
 }
 
-/** List control parser shared by the matrix axes and the legacy load/ratio fields. */
-function parseList(value: string): number[] | null {
-  const text = value.trim()
-  if (!text) return null
-  const parts = text.split(/[,，;；\s]+/)
-  if (parts.some((part) => !part || !Number.isFinite(Number(part)))) return null
-  return parts.map(Number)
+/** Strip all node credentials before persistence or export, in every branch. */
+export function sanitizedAIPerfTaskDraft(draft: AIPerfTaskDraft): AIPerfTaskDraft {
+  return {
+    ...draft,
+    monitoring: {
+      ...draft.monitoring,
+      nodes: draft.monitoring.nodes.map((node) => {
+        let url = node.url
+        try {
+          const parsed = new URL(url)
+          if (parsed.username || parsed.password || parsed.search || parsed.hash) url = ''
+        } catch {
+          // Do not persist an incomplete URL that may already contain credentials.
+          if (url.includes('@') || url.includes('?') || url.includes('#')) url = ''
+        }
+        return { ...node, url, bearerToken: '' }
+      }),
+    },
+  }
 }
 
 function parseLabels(value: string): Record<string, string> | null {
@@ -108,7 +169,6 @@ function parseLabels(value: string): Record<string, string> | null {
   return result
 }
 
-/** Positive integer text field check shared by the draft validators. */
 function positiveInteger(value: string): boolean {
   const text = value.trim()
   return Boolean(text) && Number.isSafeInteger(Number(text)) && Number(text) > 0
@@ -119,76 +179,106 @@ function integer(value: string): boolean {
   return Boolean(text) && Number.isSafeInteger(Number(text))
 }
 
-function matrixErrors(draft: AIPerfDraft): FieldErrors {
-  const errors: FieldErrors = {}
-  const invalid = 'tasks.aiperf.invalid'
-  const inputs = parseIntegerList(draft.matrixInputLengths)
-  if (!inputs.values) errors.matrixInputLengths = listErrorKey(inputs.error)
-  const outputs = parseIntegerList(draft.matrixOutputLimits)
-  if (!outputs.values) errors.matrixOutputLimits = listErrorKey(outputs.error)
-  if (draft.matrixScene === 'cache_comparison') {
-    const ratios = parseRatioList(draft.ratios)
-    if (!ratios.values) errors.ratios = listErrorKey(ratios.error)
-  }
-  if (!positiveInteger(draft.matrixMaxModelLen)) errors.matrixMaxModelLen = invalid
-  if (!integer(draft.seed)) errors.seed = invalid
-  if (draft.matrixWarmupEnabled) {
-    if (!positiveInteger(draft.matrixWarmupRequests)) errors.matrixWarmupRequests = invalid
-    if (!positiveInteger(draft.matrixWarmupInput)) errors.matrixWarmupInput = invalid
-    if (!positiveInteger(draft.matrixWarmupOutput)) errors.matrixWarmupOutput = invalid
-    if (!positiveInteger(draft.matrixWarmupConcurrency)) errors.matrixWarmupConcurrency = invalid
-  }
-  const points = draft.mode === 'closed_loop' ? parseIntegerList(draft.loads, 32) : parseRateList(draft.loads, 32)
-  if (points.values && inputs.values && outputs.values && positiveInteger(draft.repetitions)) {
-    // The count mirrors the compiler's own axis product; the server re-checks it.
+/** A single positive integer control; lists are an explicit error, never truncated. */
+function singleInteger(value: string): number | null {
+  const text = value.trim()
+  if (!text || /[,，;；\s]/.test(text) || !Number.isSafeInteger(Number(text)) || Number(text) <= 0) return null
+  return Number(text)
+}
 
-    const input = matrixInputFromDraft(draft)
-    if (matrixRunCount(input) > 10000) errors.repetitions = 'tasks.aiperf.matrixTooLarge'
+/** A single positive rate control; lists are an explicit error, never truncated. */
+function singleRate(value: string): number | null {
+  const text = value.trim()
+  if (!text || /[,，;；\s]/.test(text)) return null
+  const rate = Number(text)
+  return Number.isFinite(rate) && rate > 0 ? rate : null
+}
+
+function activePoints(generated: AIPerfGeneratedDraft) {
+  return generated.mode === 'closed_loop'
+    ? parseIntegerList(generated.closedLoads, 32)
+    : parseRateList(generated.openRates, 32)
+}
+
+/** Ratios that would actually be sent; compare off always measures the 0 % baseline. */
+function effectiveRatios(generated: AIPerfGeneratedDraft): number[] | null {
+  if (!generated.comparePrefix) return [0]
+  return parseRatioList(generated.ratios).values ?? null
+}
+
+function generatedErrors(draft: AIPerfTaskDraft): FieldErrors {
+  const errors: FieldErrors = {}
+  const generated = draft.generated
+  const invalid = 'tasks.aiperf.invalid'
+  const inputs = parseIntegerList(generated.inputLengths, 64)
+  if (!inputs.values) errors.inputLengths = listErrorKey(inputs.error)
+  const outputs = parseIntegerList(generated.outputLimits, 64)
+  if (!outputs.values) errors.outputLimits = listErrorKey(outputs.error)
+  const points = activePoints(generated)
+  if (!points.values) errors[generated.mode === 'closed_loop' ? 'closedLoads' : 'openRates'] = listErrorKey(points.error)
+  if (!positiveInteger(generated.requestCount)) errors.requestCount = invalid
+  if (!positiveInteger(generated.repetitions)) errors.repetitions = invalid
+  if (!integer(generated.seed)) errors.seed = invalid
+  if (!positiveInteger(generated.maxModelLen)) errors.maxModelLen = invalid
+  else if (inputs.values && outputs.values &&
+           Math.max(...inputs.values) + Math.max(...outputs.values) > Number(generated.maxModelLen))
+    errors.maxModelLen = 'tasks.aiperf.contextTooSmall'
+  if (generated.comparePrefix) {
+    const ratios = parseRatioList(generated.ratios)
+    if (!ratios.values) errors.ratios = listErrorKey(ratios.error)
+    // The shared-prefix pool only constrains non-zero ratios; with a 0 %-only list
+    // it is irrelevant and must not block the run.
+    else if (ratios.values.some((value) => value > 0)) {
+      if (!positiveInteger(generated.pool)) errors.pool = invalid
+      else if (positiveInteger(generated.requestCount) && Number(generated.pool) > Number(generated.requestCount))
+        errors.pool = 'tasks.aiperf.poolTooLarge'
+    }
+  }
+  if (generated.warmup.enabled) {
+    if (!positiveInteger(generated.warmup.requests)) errors.warmupRequests = invalid
+    if (!positiveInteger(generated.warmup.inputTokens)) errors.warmupInput = invalid
+    if (!positiveInteger(generated.warmup.outputTokens)) errors.warmupOutput = invalid
+    if (!positiveInteger(generated.warmup.concurrency)) errors.warmupConcurrency = invalid
+  }
+  if (inputs.values && outputs.values && points.values && positiveInteger(generated.repetitions) &&
+      positiveInteger(generated.requestCount)) {
+    const ratios = effectiveRatios(generated)
+    if (ratios && matrixRunCount(generatedPlanInput(draft)) > 10000) errors.repetitions = 'tasks.aiperf.matrixTooLarge'
   }
   return errors
 }
 
-export function validateAIPerfDraft(draft: AIPerfDraft): FieldErrors {
+function promptErrors(draft: AIPerfTaskDraft): FieldErrors {
   const errors: FieldErrors = {}
-  const required = FORM_MESSAGE_KEYS.required
+  const prompts = draft.prompts
+  const lines = promptLines(prompts.text)
+  if (!lines.length || lines.length > PROMPT_MAX_LINES ||
+      new TextEncoder().encode(prompts.text).length > PROMPT_MAX_BYTES)
+    errors.prompts = 'tasks.aiperf.invalidPrompts'
+  if (!positiveInteger(prompts.outputLimit)) errors.promptOutputLimit = 'tasks.aiperf.singleOutputLimit'
+  if (prompts.mode === 'closed_loop') {
+    const concurrency = singleInteger(prompts.concurrency)
+    if (concurrency === null) errors.promptConcurrency = 'tasks.aiperf.singleLoad'
+    else if (lines.length > 0 && lines.length < concurrency) errors.promptConcurrency = 'tasks.aiperf.promptConcurrencyTooHigh'
+  } else if (singleRate(prompts.rate) === null) errors.promptRate = 'tasks.aiperf.singleLoad'
+  return errors
+}
+
+function monitoringErrors(draft: AIPerfTaskDraft): FieldErrors {
+  const errors: FieldErrors = {}
+  if (!draft.monitoring.enabled) return errors
   const invalid = 'tasks.aiperf.invalid'
-  if (!draft.tokenizer.trim()) errors.tokenizer = required
-  const ratios = parseList(draft.ratios)
-  if (draft.runType === 'cache' && (!ratios || ratios.some((value) => value < 0 || value >= 100) || new Set(ratios).size !== ratios.length))
-    errors.ratios = 'tasks.aiperf.invalidRatios'
-  const integers = draft.runType === 'cache' ? ['inputTokens', 'requestCount', 'outputTokens', 'repetitions', 'pool'] as const
-    : draft.runType === 'matrix' ? ['requestCount', 'repetitions', 'pool'] as const : ['outputTokens'] as const
-  for (const field of integers) {
-    const value = draft[field].trim()
-    if (!value || !Number.isSafeInteger(Number(value)) || Number(value) <= 0) errors[field] = invalid
-  }
-  if (draft.runType === 'cache' && (!draft.seed.trim() || !Number.isSafeInteger(Number(draft.seed)))) errors.seed = invalid
-  const loads = parseList(draft.loads)
-  if (!loads || loads.some((value) => value <= 0 || (draft.mode === 'closed_loop' && !Number.isSafeInteger(value))) ||
-      new Set(loads).size !== loads.length) errors.loads = invalid
-  if (draft.runType === 'single') {
-    const prompts = draft.prompts.split(/\r?\n/).filter((value) => value.trim())
-    if (!prompts.length || prompts.length > 10000 || new TextEncoder().encode(draft.prompts).length > 512 * 1024)
-      errors.prompts = 'tasks.aiperf.invalidPrompts'
-    if (loads?.length !== 1) errors.loads = 'tasks.aiperf.singleLoad'
-  }
-  if (draft.runType !== 'single' && ratios && ratios.some((value) => value > 0) && Number(draft.pool) > Number(draft.requestCount))
-    errors.pool = 'tasks.aiperf.poolTooLarge'
-  if (draft.runType === 'cache' && ratios && loads && ratios.length * loads.length * Number(draft.repetitions) > 10000)
-    errors.repetitions = 'tasks.aiperf.matrixTooLarge'
-  if (draft.runType === 'matrix') Object.assign(errors, matrixErrors(draft))
-  // Monitoring is optional in the matrix: hidden controls must not block a
-  // submission with errors the user cannot see.
-  if (!monitoringEnabled(draft)) return errors
-  const interval = Number(draft.sampleInterval)
-  if (!draft.sampleInterval.trim() || !Number.isFinite(interval) || interval < 0.001 || interval > 300)
+  const monitoring = draft.monitoring
+  const interval = Number(monitoring.sampleInterval)
+  if (!monitoring.sampleInterval.trim() || !Number.isFinite(interval) || interval < 0.001 || interval > 300)
     errors.sampleInterval = invalid
-  if (draft.maxGap.trim() && (!Number.isFinite(Number(draft.maxGap)) || Number(draft.maxGap) < 1e-9 || Number(draft.maxGap) > 86400))
+  if (monitoring.maxGap.trim() &&
+      (!Number.isFinite(Number(monitoring.maxGap)) || Number(monitoring.maxGap) < 1e-9 || Number(monitoring.maxGap) > 86400))
     errors.maxGap = invalid
-  if (draft.nodes.length > 64) errors.nodes = invalid
+  if (monitoring.nodes.length > 64) errors.nodes = invalid
   const ids = new Set<string>()
   const endpoints = new Set<string>()
-  for (const node of draft.nodes) {
+  for (const node of monitoring.nodes) {
     const prefix = `node-${node.id}-`
     if (!node.nodeId.trim() || ids.has(node.nodeId.trim())) errors[`${prefix}nodeId`] = invalid
     ids.add(node.nodeId.trim())
@@ -205,97 +295,140 @@ export function validateAIPerfDraft(draft: AIPerfDraft): FieldErrors {
     if (/[\r\n]/.test(node.bearerToken) || new TextEncoder().encode(node.bearerToken).length > 4000)
       errors[`${prefix}bearerToken`] = invalid
   }
-  if (draft.required && (draft.nodes.length === 0 || (draft.deploymentMode === 'pd' &&
-      (!draft.nodes.some((node) => node.role === 'prefill') || !draft.nodes.some((node) => node.role === 'decode')))))
+  if (monitoring.required && (monitoring.nodes.length === 0 || (draft.deploymentMode === 'pd' &&
+      (!monitoring.nodes.some((node) => node.role === 'prefill') ||
+       !monitoring.nodes.some((node) => node.role === 'decode')))))
     errors.nodes = 'tasks.aiperf.requiredRoles'
   return errors
 }
 
-/** Whether the draft's monitoring inputs are part of the submitted configuration. */
-export function monitoringEnabled(draft: AIPerfDraft): boolean {
-  return draft.runType !== 'matrix' || draft.matrixMonitoringEnabled
+/**
+ * Validate the active input source plus the explicit monitoring switch.
+ *
+ * Inactive branch values (hidden ratios/pool, the other load mode, disabled
+ * warmup or monitoring sub-fields) never participate: a stale value in a hidden
+ * control cannot block the task the user is actually assembling.
+ */
+export function validateAIPerfTask(draft: AIPerfTaskDraft): FieldErrors {
+  const errors: FieldErrors = {}
+  if (!draft.tokenizer.trim()) errors.tokenizer = FORM_MESSAGE_KEYS.required
+  Object.assign(errors, draft.inputSource === 'generated' ? generatedErrors(draft) : promptErrors(draft))
+  Object.assign(errors, monitoringErrors(draft))
+  return errors
 }
 
-/** Construct the exact backend envelope; target ratios and node values affect actual requests. */
-export function buildAIPerfPayload(draft: AIPerfDraft, connection: ModelConnection): Record<string, unknown> {
-  const targets = draft.nodes.map((node) => ({
-    node_id: node.nodeId.trim(), role: node.role, engine: node.engine, url: node.url.trim(),
-    labels: parseLabels(node.labels) ?? {},
-    ...(node.bearerToken ? { headers: { Authorization: `Bearer ${node.bearerToken}` } } : {}),
-  }))
+/** Whether a stored template still needs execution-required values (migrated drafts). */
+export function aiperfTaskNeedsCompletion(draft: AIPerfTaskDraft): boolean {
+  return Object.keys(validateAIPerfTask(draft)).length > 0
+}
+
+function planInteger(value: string, fallback: number): number {
+  return positiveInteger(value) ? Number(value) : fallback
+}
+
+/**
+ * Typed matrix input for the generated branch, using only effective values.
+ *
+ * Invalid text can only produce an empty axis, never a silent default; the
+ * server remains authoritative for anything the browser accepts.
+ */
+export function generatedPlanInput(draft: AIPerfTaskDraft): PlanMatrixInput {
+  const generated = draft.generated
+  const points = activePoints(generated)
+  const ratios = effectiveRatios(generated) ?? []
   return {
-    engine: 'aiperf',
-    aiperf: {
-      ...connectionPayload(connection, 'perf'), tokenizer_path: draft.tokenizer.trim(), stream: true,
-      deployment_mode: draft.deploymentMode,
-      ...(draft.runType === 'single' ? { input_prompts: draft.prompts.split(/\r?\n/).filter((value) => value.trim()) } : { cache_experiment: {
-        target_ratios: (parseList(draft.ratios) ?? []).map((value) => value / 100),
-        total_input_tokens: Number(draft.inputTokens), prefix_pool_size: Number(draft.pool), seed: Number(draft.seed),
-      } }),
-      load: {
-        mode: draft.mode,
-        points: (parseList(draft.loads) ?? []).map((value) => draft.mode === 'closed_loop' ? { concurrency: value } : { rate: value }),
-        request_count: draft.runType === 'single' ? draft.prompts.split(/\r?\n/).filter((value) => value.trim()).length : Number(draft.requestCount),
-        output_token_limit: Number(draft.outputTokens),
-        repetitions: draft.runType === 'single' ? 1 : Number(draft.repetitions),
-      },
-      telemetry: {
-        required: draft.required, sample_interval_seconds: Number(draft.sampleInterval), targets,
-        ...(draft.maxGap.trim() ? { max_scrape_gap_seconds: Number(draft.maxGap) } : {}),
-      },
+    scene: generated.comparePrefix ? 'cache_comparison' : 'performance',
+    name: draft.name,
+    tokenizer: draft.tokenizer,
+    inputLengths: parseIntegerList(generated.inputLengths, 64).values ?? [],
+    outputLimits: parseIntegerList(generated.outputLimits, 64).values ?? [],
+    ratios: generated.comparePrefix ? ratios : [],
+    // Off, or a 0 %-only comparison: the plan still needs a positive pool but no
+    // pool ≤ N constraint applies.
+    pool: generated.comparePrefix && positiveInteger(generated.pool) ? Number(generated.pool) : 1,
+    seed: integer(generated.seed) ? Number(generated.seed) : 0,
+    mode: generated.mode,
+    points: points.values ?? [],
+    requestCount: planInteger(generated.requestCount, 0),
+    repetitions: planInteger(generated.repetitions, 0),
+    order: generated.order,
+    deploymentMode: draft.deploymentMode === 'pd' ? 'disaggregated' : 'aggregated',
+    maxModelLen: planInteger(generated.maxModelLen, 0),
+    // A disabled warmup uses the document's own public defaults so the plan stays
+    // schema-valid; the compiler sends nothing because enabled is false.
+    warmup: {
+      enabled: generated.warmup.enabled,
+      requestCount: planInteger(generated.warmup.requests, 3),
+      inputTokens: planInteger(generated.warmup.inputTokens, 16000),
+      outputTokenLimit: planInteger(generated.warmup.outputTokens, 1000),
+      concurrency: planInteger(generated.warmup.concurrency, 1),
     },
   }
 }
 
-/**
- * Typed matrix input from a draft that already passed {@link validateAIPerfDraft}.
- *
- * Invalid text falls back to an empty axis instead of `NaN`, so a stale build can
- * only produce a plan the server rejects — never one with a silent default.
- */
-export function matrixInputFromDraft(draft: AIPerfDraft): PlanMatrixInput {
+/** Metrics targets for the runtime binding; credentials never enter a plan. */
+export function monitoringTargets(draft: AIPerfTaskDraft) {
+  return draft.monitoring.nodes.map((node) => ({
+    node_id: node.nodeId.trim(),
+    role: node.role,
+    engine: node.engine,
+    url: node.url.trim(),
+    labels: parseLabels(node.labels) ?? {},
+    ...(node.bearerToken ? { headers: { Authorization: `Bearer ${node.bearerToken}` } } : {}),
+  }))
+}
+
+/** Telemetry body for runtime-only submission or an explicit endpoint probe. */
+export function telemetryConfiguration(draft: AIPerfTaskDraft) {
+  const interval = Number(draft.monitoring.sampleInterval)
   return {
-    scene: draft.matrixScene,
-    name: draft.matrixName,
-    tokenizer: draft.tokenizer,
-    inputLengths: parseIntegerList(draft.matrixInputLengths).values ?? [],
-    outputLimits: parseIntegerList(draft.matrixOutputLimits).values ?? [],
-    ratios: parseRatioList(draft.ratios).values ?? [],
-    pool: positiveInteger(draft.pool) ? Number(draft.pool) : 1,
-    seed: integer(draft.seed) ? Number(draft.seed) : 0,
-    mode: draft.mode,
-    points: (draft.mode === 'closed_loop' ? parseIntegerList(draft.loads, 32) : parseRateList(draft.loads, 32)).values ?? [],
-    requestCount: positiveInteger(draft.requestCount) ? Number(draft.requestCount) : 0,
-    repetitions: positiveInteger(draft.repetitions) ? Number(draft.repetitions) : 0,
-    order: draft.matrixOrder,
-    deploymentMode: draft.deploymentMode === 'pd' ? 'disaggregated' : 'aggregated',
-    maxModelLen: positiveInteger(draft.matrixMaxModelLen) ? Number(draft.matrixMaxModelLen) : 0,
-    warmup: {
-      enabled: draft.matrixWarmupEnabled,
-      requestCount: positiveInteger(draft.matrixWarmupRequests) ? Number(draft.matrixWarmupRequests) : 0,
-      inputTokens: positiveInteger(draft.matrixWarmupInput) ? Number(draft.matrixWarmupInput) : 0,
-      outputTokenLimit: positiveInteger(draft.matrixWarmupOutput) ? Number(draft.matrixWarmupOutput) : 0,
-      concurrency: positiveInteger(draft.matrixWarmupConcurrency) ? Number(draft.matrixWarmupConcurrency) : 0,
-    },
+    required: draft.monitoring.required,
+    sample_interval_seconds: Number.isFinite(interval) && interval > 0 ? interval : 1,
+    targets: monitoringTargets(draft),
+    ...(draft.monitoring.maxGap.trim() && Number.isFinite(Number(draft.monitoring.maxGap))
+      ? { max_scrape_gap_seconds: Number(draft.monitoring.maxGap) } : {}),
   }
 }
 
 /** Metrics targets and the model key as worker-only runtime input, never plan fields. */
-export function buildPlanRuntime(draft: AIPerfDraft, connection: ModelConnection): PlanRuntimeBinding {
+export function buildPlanRuntime(draft: AIPerfTaskDraft, connection: ModelConnection): PlanRuntimeBinding {
   const runtime: PlanRuntimeBinding = {}
   if (connection.api === 'openai' && connection.apiKey) runtime.api_key = connection.apiKey
-  const targets = draft.nodes.map((node) => ({
-    node_id: node.nodeId.trim(), role: node.role, engine: node.engine, url: node.url.trim(),
-    labels: parseLabels(node.labels) ?? {},
-    ...(node.bearerToken ? { headers: { Authorization: `Bearer ${node.bearerToken}` } } : {}),
-  }))
-  if (monitoringEnabled(draft) && (targets.length || draft.required)) {
-    runtime.telemetry = {
-      required: draft.required,
-      sample_interval_seconds: Number(draft.sampleInterval),
-      targets,
-      ...(draft.maxGap.trim() ? { max_scrape_gap_seconds: Number(draft.maxGap) } : {}),
-    }
+  if (draft.monitoring.enabled) {
+    const targets = monitoringTargets(draft)
+    if (targets.length || draft.monitoring.required) runtime.telemetry = telemetryConfiguration(draft)
   }
   return runtime
+}
+
+/**
+ * Legacy single-run envelope for the real-prompt branch.
+ *
+ * The prompt strings are sent verbatim (no trim/truncate/copy), N is derived from
+ * the non-blank lines, and repetitions stay at 1. This path never uses the cache
+ * experiment block or a generated plan.
+ */
+export function buildAIPerfPromptPayload(draft: AIPerfTaskDraft, connection: ModelConnection): Record<string, unknown> {
+  const lines = promptLines(draft.prompts.text)
+  const point = draft.prompts.mode === 'closed_loop'
+    ? { concurrency: singleInteger(draft.prompts.concurrency) ?? 0 }
+    : { rate: singleRate(draft.prompts.rate) ?? 0 }
+  return {
+    engine: 'aiperf',
+    aiperf: {
+      ...connectionPayload(connection, 'perf'),
+      tokenizer_path: draft.tokenizer.trim(),
+      stream: true,
+      deployment_mode: draft.deploymentMode,
+      input_prompts: lines,
+      load: {
+        mode: draft.prompts.mode,
+        points: [point],
+        request_count: lines.length,
+        output_token_limit: planInteger(draft.prompts.outputLimit, 0),
+        repetitions: 1,
+      },
+      ...(draft.monitoring.enabled ? { telemetry: telemetryConfiguration(draft) } : {}),
+    },
+  }
 }

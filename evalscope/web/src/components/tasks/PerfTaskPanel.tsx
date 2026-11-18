@@ -1,11 +1,11 @@
-import { type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useLocale } from '@/contexts/LocaleContext'
 import { connectionPayload, type ModelConnection, type PerfDraft, type FieldErrors } from './taskConfig'
 import PerfConfigForm from '@/components/perf/PerfConfigForm'
-import CacheExperimentForm from '@/components/perf/CacheExperimentForm'
+import AIPerfTaskForm from '@/components/perf/AIPerfTaskForm'
 import TaskRunnerShell, { type TaskSelectionProps } from '@/components/tasks/TaskRunnerShell'
 import { submitPerfTask, submitPerfExperiment, submitPerfSingle, stopPerfTask, getPerfLog } from '@/api/perf'
-import type { AIPerfDraft } from './aiperfDraft'
+import type { AIPerfTaskDraft } from './aiperfDraft'
 
 interface Props extends TaskSelectionProps {
   connection: ModelConnection
@@ -14,11 +14,13 @@ interface Props extends TaskSelectionProps {
   toolbar: ReactNode
   aiperfToolbar: ReactNode
   engine: 'evalscope' | 'aiperf'
-  aiperfDraft: AIPerfDraft
+  aiperfDraft: AIPerfTaskDraft
   onEngineChange: (engine: 'evalscope' | 'aiperf') => void
-  onAIPerfChange: (draft: AIPerfDraft) => void
+  onAIPerfChange: (draft: AIPerfTaskDraft) => void
   onValidateConnection: () => FieldErrors
   onValidateAIPerfConnection: () => FieldErrors
+  /** Raised while the AIPerf form owns a submission, so shared controls can lock. */
+  onSubmittingChange?: (submitting: boolean) => void
 }
 
 export default function PerfTaskPanel({
@@ -33,9 +35,11 @@ export default function PerfTaskPanel({
   onAIPerfChange,
   onValidateConnection,
   onValidateAIPerfConnection,
+  onSubmittingChange,
   ...selection
 }: Props) {
   const { t, locale } = useLocale()
+  const [formSubmitting, setFormSubmitting] = useState(false)
   return (
     <TaskRunnerShell
       {...selection}
@@ -53,11 +57,16 @@ export default function PerfTaskPanel({
       getLog={getPerfLog}
       renderForm={({ onSubmit, disabled }) => (
         <><label className="mb-4 block text-sm">{locale === 'zh' ? '执行器' : 'Executor'}
-          <select className="ml-2" value={engine} disabled={disabled} onChange={(event) => onEngineChange(event.target.value as 'evalscope' | 'aiperf')}>
+          <select className="ml-2" value={engine} disabled={disabled || formSubmitting} onChange={(event) => onEngineChange(event.target.value as 'evalscope' | 'aiperf')}>
             <option value="evalscope">EvalScope</option><option value="aiperf">AIPerf</option>
           </select>
-        </label>{engine === 'aiperf' ? <CacheExperimentForm connection={connection} onSubmit={onSubmit} disabled={disabled}
+        </label>{engine === 'aiperf' ? <AIPerfTaskForm connection={connection} onSubmit={onSubmit} disabled={disabled}
           draft={aiperfDraft} onChange={onAIPerfChange} toolbar={aiperfToolbar} onValidateConnection={onValidateAIPerfConnection}
+          onAttemptTask={(taskId) => selection.onSelect(taskId)}
+          onSubmittingChange={(value) => {
+            setFormSubmitting(value)
+            onSubmittingChange?.(value)
+          }}
           onPlanSubmitted={(taskId) => { selection.onSelect(taskId); selection.onAccepted?.(taskId) }} /> : <PerfConfigForm
           onSubmit={onSubmit}
           disabled={disabled}

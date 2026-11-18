@@ -190,6 +190,12 @@ class PerfSinglePlanResponse(ApiResponseModel):
     nodes: List[NodePreflight] = Field(default_factory=list)
 
 
+class PerfTelemetryProbeResponse(ApiResponseModel):
+    """Explicit Metrics-endpoint probe; no inference or tokenizer work was performed."""
+
+    nodes: List[NodePreflight] = Field(default_factory=list)
+
+
 class PerfLiveResponse(ApiResponseModel):
     """Bounded last node scrapes and the current planned scenario, when available."""
 

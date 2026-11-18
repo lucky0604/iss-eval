@@ -8617,6 +8617,19 @@
       ],
       "type": "object"
     },
+    "PerfTelemetryProbeResponse": {
+      "additionalProperties": false,
+      "description": "Explicit Metrics-endpoint probe; no inference or tokenizer work was performed.",
+      "properties": {
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/NodePreflight"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "PerformanceResultEntry": {
       "additionalProperties": false,
       "description": "One row of the unified performance result list.",
@@ -14656,6 +14669,9 @@
     "perf_single_plan_response": {
       "$ref": "#/$defs/PerfSinglePlanResponse"
     },
+    "perf_telemetry_probe_response": {
+      "$ref": "#/$defs/PerfTelemetryProbeResponse"
+    },
     "performance_result_entry": {
       "$ref": "#/$defs/PerformanceResultEntry"
     },
@@ -14759,6 +14775,7 @@
     "perf_live_response",
     "perf_plan_response",
     "perf_single_plan_response",
+    "perf_telemetry_probe_response",
     "cache_experiment_response",
     "cache_experiment_list_response",
     "cache_scenario_response",

@@ -4,12 +4,22 @@ import { useLocale } from '@/contexts/LocaleContext'
 import Button from '@/components/ui/Button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { exportLibrary, MAX_IMPORT_BYTES, parseImport, type ConfigLibrary } from './configStorage'
+import { aiperfTaskNeedsCompletion } from './aiperfDraft'
 import Switch from '@/components/ui/Switch'
 
 interface Props {
   library: ConfigLibrary
   onImport: (library: ConfigLibrary) => boolean
   onClear: () => void
+}
+
+/**
+ * Imported AIPerf templates may be saved before they are runnable; flag how
+ * many need completion instead of silently defaulting their values.
+ */
+function needsCompletionCount(library: ConfigLibrary): number[] {
+  const count = library.aiperfTemplates.filter((entry) => aiperfTaskNeedsCompletion(entry.value)).length
+  return count > 0 ? [count] : []
 }
 
 export default function ConfigLibraryTools({ library, onImport, onClear }: Props) {
@@ -49,6 +59,9 @@ export default function ConfigLibraryTools({ library, onImport, onClear }: Props
         t('tasks.library.importEval', { count: incoming.evalTemplates.length }),
         t('tasks.library.importPerf', { count: incoming.perfTemplates.length }),
         t('tasks.library.importAIPerf', { count: incoming.aiperfTemplates.length }),
+        ...needsCompletionCount(incoming).map((count) =>
+          t('tasks.library.importAIPerfNeedsCompletion', { count }),
+        ),
       ]
     : []
   const hasKeys = incoming?.connections.some((entry) => Boolean(entry.value.apiKey))

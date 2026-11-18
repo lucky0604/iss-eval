@@ -10,6 +10,7 @@ import {
   writeWorkspace,
 } from '@/components/tasks/configStorage'
 import TasksPage from './TasksPage'
+import { defaultAIPerfDraft } from '@/components/tasks/aiperfDraft'
 
 vi.mock('@/api/eval', () => ({
   listBenchmarks: vi.fn(() => new Promise(() => {})),
@@ -149,17 +150,17 @@ describe('Task workspace', () => {
     tab('perf')
     change('perf-number', '16')
     fireEvent.change(screen.getByLabelText('Executor'), { target: { value: 'aiperf' } })
-    change('matrix-tokenizer', '/tokenizer')
-    change('matrix-matrixInputLengths', '2048')
+    change('aiperf-tokenizer', '/tokenizer')
+    change('aiperf-inputLengths', '2048')
     fireEvent.change(screen.getByLabelText('Executor'), { target: { value: 'evalscope' } })
     expect(document.getElementById('perf-number')).toHaveValue('16')
     fireEvent.change(screen.getByLabelText('Executor'), { target: { value: 'aiperf' } })
-    expect(document.getElementById('matrix-matrixInputLengths')).toHaveValue('2048')
+    expect(document.getElementById('aiperf-inputLengths')).toHaveValue('2048')
     await flushDraft()
     view.unmount()
     mount()
     tab('perf')
-    expect(document.getElementById('matrix-tokenizer')).toHaveValue('/tokenizer')
+    expect(document.getElementById('aiperf-tokenizer')).toHaveValue('/tokenizer')
     fireEvent.change(screen.getByLabelText('Executor'), { target: { value: 'evalscope' } })
     expect(document.getElementById('perf-number')).toHaveValue('16')
   })
@@ -281,5 +282,44 @@ describe('Task workspace', () => {
     expect(screen.getByRole('alertdialog')).not.toHaveTextContent('fake-imported-key')
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
     expect(readWorkspace()).toMatchObject({ ok: true, value: { connections: [{ name: 'Imported' }] } })
+  })
+  it('marks saved AIPerf templates that still need completion', () => {
+    const state = emptyWorkspace()
+    state.aiperfTemplates = [
+      { id: 'incomplete', name: 'Half done', value: defaultAIPerfDraft() },
+      {
+        id: 'ready',
+        name: 'Ready',
+        value: {
+          ...defaultAIPerfDraft(),
+          tokenizer: 'tok',
+          generated: { ...defaultAIPerfDraft().generated, maxModelLen: '32768' },
+        },
+      },
+    ]
+    writeWorkspace(state)
+    mount('?tab=perf', false)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Executor' }), { target: { value: 'aiperf' } })
+
+    const group = within(screen.getByRole('group', { name: 'AIPerf template' }))
+    const select = group.getByRole('combobox')
+    expect(within(select).getAllByRole('option').map((option) => option.textContent))
+      .toContain('Half done · needs completion')
+    fireEvent.change(select, { target: { value: 'incomplete' } })
+    expect(group.getByRole('status')).toHaveTextContent('Needs completion before running')
+    fireEvent.change(select, { target: { value: 'ready' } })
+    expect(group.getByRole('status')).not.toHaveTextContent('Needs completion')
+  })
+  it('flags imported AIPerf templates that need completion', async () => {
+    mount()
+    const state = emptyWorkspace()
+    state.aiperfTemplates = [{ id: 'x', name: 'Half', value: defaultAIPerfDraft() }]
+    const file = { size: 500, text: () => Promise.resolve(exportLibrary(state, false)) }
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Import', { selector: 'input' }), { target: { files: [file] } })
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('alertdialog'))
+      .toHaveTextContent('1 AIPerf templates need completion before they can run')
   })
 })

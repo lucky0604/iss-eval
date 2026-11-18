@@ -21,7 +21,7 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.resetAllMocks(); sessionStorage.clear(); localStorage.clear() })
 
-function Form({ onSubmit, disabled }: { onSubmit: (config: Record<string, unknown>) => Promise<void>; disabled: boolean }) {
+function Form({ onSubmit, disabled }: { onSubmit: (config: Record<string, unknown>) => Promise<unknown>; disabled: boolean }) {
   const [draft, setDraft] = useState('')
   return <><input aria-label="Draft" value={draft} onChange={(e) => setDraft(e.target.value)} /><button disabled={disabled} onClick={() => onSubmit({ model: draft })}>Submit</button></>
 }
