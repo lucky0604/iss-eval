@@ -25,11 +25,13 @@ interface Props {
   onPlanSubmitted?: (taskId: string) => void
 }
 
-type TextField = Exclude<keyof AIPerfDraft, 'nodes' | 'required' | 'mode' | 'deploymentMode' | 'runType' | 'prompts'>
+type TextField = Exclude<keyof AIPerfDraft, 'nodes' | 'required' | 'mode' | 'deploymentMode' | 'runType' | 'prompts' | 'gpuTelemetry' | 'gpuTelemetryUrls'>
 type Preview = { kind: 'cache'; value: PerfPlanResponse } | { kind: 'single'; value: PerfSinglePlanResponse }
 const FIELD_LABELS: Record<TextField, string> = {
   tokenizer: 'tasks.aiperf.tokenizer', ratios: 'tasks.aiperf.ratios', inputTokens: 'tasks.aiperf.inputTokens',
-  requestCount: 'tasks.aiperf.requestCount', outputTokens: 'tasks.aiperf.outputTokens', loads: 'tasks.aiperf.loads',
+  requestCount: 'tasks.aiperf.requestCount', requestMultiplier: 'tasks.aiperf.requestMultiplier',
+  outputTokens: 'tasks.aiperf.outputTokens', slos: 'tasks.aiperf.slos', failedThreshold: 'tasks.aiperf.failedThreshold',
+  loads: 'tasks.aiperf.loads',
   repetitions: 'tasks.aiperf.repetitions', pool: 'tasks.aiperf.pool', seed: 'tasks.aiperf.seed',
   sampleInterval: 'tasks.aiperf.sampleInterval', maxGap: 'tasks.aiperf.maxGap',
 }
@@ -69,8 +71,9 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
       values[`aiperf-node-${node.id}-${name}`] = node[name]
   }
   const domOrder = ['connection-api', 'connection-model', 'connection-url',
-    ...['prompts', 'tokenizer', 'ratios', 'inputTokens', 'requestCount', 'outputTokens', 'loads', 'repetitions', 'pool',
-      'seed', 'sampleInterval', 'maxGap'].map((name) => `aiperf-${name}`),
+    ...['prompts', 'tokenizer', 'ratios', 'inputTokens', 'requestCount', 'requestMultiplier', 'outputTokens', 'slos',
+      'failedThreshold', 'loads', 'repetitions', 'pool', 'seed', 'sampleInterval', 'maxGap', 'gpuTelemetry',
+      'gpuTelemetryUrls'].map((name) => `aiperf-${name}`),
     ...draft.nodes.flatMap((node) => ['nodeId', 'url', 'labels', 'bearerToken'].map((name) => `aiperf-node-${node.id}-${name}`)),
     'aiperf-nodes']
   const { errorFor, submitHandler } = useTaskForm({ domOrder, values })
@@ -145,7 +148,17 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
         </Field>}
         <div className="grid min-w-0 gap-3 md:grid-cols-2">
           {textField('tokenizer')}{draft.runType === 'cache' && <>{textField('ratios')}{textField('inputTokens', 'number')}
-            {textField('requestCount', 'number')}</>}{textField('outputTokens', 'number')}{textField('loads')}
+            <Field id="aiperf-contextPreset" name="contextPreset" labelKey="tasks.aiperf.contextPreset">
+              {(aria) => <select {...aria} className={FORM_INPUT_CLASS}
+                value={['8192', '32768', '65536', '131072', '262144', '1048576'].includes(draft.inputTokens) ? draft.inputTokens : ''}
+                onChange={(event) => event.target.value && update('inputTokens', event.target.value)}>
+                <option value="">{t('tasks.aiperf.custom')}</option>
+                {[8192, 32768, 65536, 131072, 262144, 1048576].map((value) => <option key={value} value={value}>
+                  {value >= 1048576 ? '1M' : `${value / 1024}K`}</option>)}
+              </select>}
+            </Field>
+            {textField('requestCount', 'number')}{textField('requestMultiplier', 'number')}</>}
+          {textField('outputTokens', 'number')}{textField('slos')}{textField('failedThreshold', 'number')}{textField('loads')}
           {draft.runType === 'cache' && <>{textField('repetitions', 'number')}{textField('pool', 'number')}{textField('seed', 'number')}</>}
           <Field id="aiperf-mode" name="mode" labelKey="tasks.aiperf.loadMode">
             {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={draft.mode}
@@ -161,8 +174,22 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
           </Field>
           {textField('sampleInterval', 'number')}{textField('maxGap', 'number')}
         </div>
+        <p className="text-xs text-[var(--text-muted)]">{t('tasks.aiperf.slosHint')}</p>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.required}
           onChange={(event) => update('required', event.target.checked)} />{t('tasks.aiperf.required')}</label>
+        <section className="space-y-3" aria-labelledby="aiperf-gpu-title">
+          <h3 id="aiperf-gpu-title" className="text-sm font-semibold">{t('tasks.aiperf.gpuTelemetry')}</h3>
+          <label className="flex items-center gap-2 text-sm"><input id="aiperf-gpuTelemetry" type="checkbox"
+            checked={draft.gpuTelemetry} onChange={(event) => update('gpuTelemetry', event.target.checked)} />
+            {t('tasks.aiperf.gpuTelemetryEnable')}</label>
+          <Field id="aiperf-gpuTelemetryUrls" name="gpuTelemetryUrls" labelKey="tasks.aiperf.gpuTelemetryUrls"
+            error={errorFor('aiperf-gpuTelemetryUrls')}>
+            {(aria) => <textarea {...aria} rows={3} disabled={!draft.gpuTelemetry}
+              className={inputClass(errorFor('aiperf-gpuTelemetryUrls'))} value={draft.gpuTelemetryUrls}
+              placeholder="http://10.0.0.1:9400/metrics" onChange={(event) => update('gpuTelemetryUrls', event.target.value)} />}
+          </Field>
+          <p className="text-xs text-[var(--text-muted)]">{t('tasks.aiperf.gpuTelemetryHint')}</p>
+        </section>
         <section className="space-y-3" aria-labelledby="aiperf-nodes-title">
           <h3 id="aiperf-nodes-title" className="text-sm font-semibold">{t('tasks.aiperf.nodes')}</h3>
           <p className="text-xs text-[var(--text-muted)]">{t('tasks.aiperf.nodesHint')}</p>
@@ -174,12 +201,13 @@ export default function CacheExperimentForm({ connection, onSubmit, disabled, dr
                 {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={node.role}
                   onChange={(event) => updateNode(node.id, { role: event.target.value as AIPerfNodeDraft['role'] })}>
                   <option value="prefill">{t('tasks.aiperf.prefill')}</option><option value="decode">{t('tasks.aiperf.decode')}</option>
+                  <option value="frontend">{t('tasks.aiperf.frontend')}</option>
                 </select>}
               </Field>
               <Field id={`aiperf-node-${node.id}-engine`} name={`engine-${node.id}`} labelKey="tasks.aiperf.engine">
                 {(aria) => <select {...aria} className={FORM_INPUT_CLASS} value={node.engine}
                   onChange={(event) => updateNode(node.id, { engine: event.target.value as AIPerfNodeDraft['engine'] })}>
-                  <option value="vllm">vLLM</option><option value="sglang">SGLang</option>
+                  <option value="vllm">vLLM</option><option value="sglang">SGLang</option><option value="dynamo">Dynamo</option>
                 </select>}
               </Field>
               {nodeField(node, 'url')}{nodeField(node, 'labels')}{nodeField(node, 'bearerToken', 'password')}

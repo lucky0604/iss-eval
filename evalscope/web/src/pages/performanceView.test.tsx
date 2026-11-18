@@ -485,7 +485,12 @@ describe('PerfReportsPage', () => {
     await settle()
 
     expect(screen.getByText('test-model-a')).toBeInTheDocument()
-    expect(screen.getByRole('alert')).toHaveTextContent('Performance response did not match its schema')
+    // The import panel's fields keep empty `role="alert"` slots for aria-live announcements;
+    // jsdom applies no Tailwind, so their `empty:hidden` class does not remove them here.
+    const failureAlert = screen
+      .getAllByRole('alert')
+      .find((alert) => alert.textContent?.includes('Performance response did not match its schema'))
+    expect(failureAlert).toBeDefined()
   })
 })
 

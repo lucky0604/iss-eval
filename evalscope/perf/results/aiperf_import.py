@@ -34,7 +34,7 @@ from evalscope.perf.results.models import (
 )
 from evalscope.utils.uri_utils import sanitize_endpoint
 
-_PARSER = 'aiperf-0.13.0-v4'
+_PARSER = 'aiperf-0.13.0-v5'
 _FILES = (
     'profile_export_aiperf.json',
     'profile_export.jsonl',
@@ -43,6 +43,51 @@ _FILES = (
     'phase_manifest.json',
     'metrics_target_map.json',
 )
+_GPU_TELEMETRY = 'gpu_telemetry_export.jsonl'
+_DCGM_DIRECTORY = 'dcgm_prometheus'
+
+# AIPerf GPU telemetry fields are normalized to the DCGM exporter family names so
+# offline AIPerf samples and Prometheus DCGM snapshots share one metric mapping.
+# value = (canonical DCGM family, scale)
+_GPU_FIELDS = {
+    # Namespaced names written by AIPerf after AIP-905.
+    'nvidia_gpu_utilization': ('DCGM_FI_DEV_GPU_UTIL', 1.0),
+    'nvidia_memory_utilization': ('DCGM_FI_DEV_MEM_COPY_UTIL', 1.0),
+    'nvidia_memory_used': ('DCGM_FI_DEV_FB_USED', 1024.0),
+    'nvidia_memory_free': ('DCGM_FI_DEV_FB_FREE', 1024.0),
+    'nvidia_memory_total': ('DCGM_FI_DEV_FB_TOTAL', 1024.0),
+    'nvidia_power_usage': ('DCGM_FI_DEV_POWER_USAGE', 1.0),
+    'nvidia_temperature': ('DCGM_FI_DEV_GPU_TEMP', 1.0),
+    'nvidia_memory_temperature': ('DCGM_FI_DEV_MEMORY_TEMP', 1.0),
+    'nvidia_encoder_utilization': ('DCGM_FI_DEV_ENC_UTIL', 1.0),
+    'nvidia_decoder_utilization': ('DCGM_FI_DEV_DEC_UTIL', 1.0),
+    'nvidia_sm_utilization': ('DCGM_FI_PROF_SM_ACTIVE', 0.01),
+    'nvidia_xid_errors': ('DCGM_FI_DEV_XID_ERRORS', 1.0),
+    'nvidia_energy_consumption': ('DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION', 1_000_000.0),
+    'nvidia_power_violation': ('DCGM_FI_DEV_POWER_VIOLATION', 1.0),
+    # Legacy flat names emitted by AIPerf 0.13.0 before namespacing.
+    'gpu_utilization': ('DCGM_FI_DEV_GPU_UTIL', 1.0),
+    'memory_copy_utilization': ('DCGM_FI_DEV_MEM_COPY_UTIL', 1.0),
+    'gpu_memory_used': ('DCGM_FI_DEV_FB_USED', 1024.0),
+    'gpu_memory_free': ('DCGM_FI_DEV_FB_FREE', 1024.0),
+    'gpu_memory_total': ('DCGM_FI_DEV_FB_TOTAL', 1024.0),
+    'gpu_power_usage': ('DCGM_FI_DEV_POWER_USAGE', 1.0),
+    'gpu_temperature': ('DCGM_FI_DEV_GPU_TEMP', 1.0),
+    'memory_temperature': ('DCGM_FI_DEV_MEMORY_TEMP', 1.0),
+    'encoder_utilization': ('DCGM_FI_DEV_ENC_UTIL', 1.0),
+    'decoder_utilization': ('DCGM_FI_DEV_DEC_UTIL', 1.0),
+    'xid_errors': ('DCGM_FI_DEV_XID_ERRORS', 1.0),
+    'energy_consumption': ('DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION', 1_000_000.0),
+    'power_violation': ('DCGM_FI_DEV_POWER_VIOLATION', 1.0),
+    'thermal_violation': ('DCGM_FI_DEV_THERMAL_VIOLATION', 1.0),
+    'sm_clock_frequency': ('DCGM_FI_DEV_SM_CLOCK', 1.0),
+    'memory_clock_frequency': ('DCGM_FI_DEV_MEM_CLOCK', 1.0),
+    'power_management_limit': ('DCGM_FI_DEV_POWER_MGMT_LIMIT', 1.0),
+    'nvidia_thermal_violation': ('DCGM_FI_DEV_THERMAL_VIOLATION', 1.0),
+}
+_DCGM_COUNTERS = frozenset({'DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION'})
+_GPU_SOURCE = 'aiperf_gpu_telemetry'
+_DCGM_SOURCE = 'dcgm_prometheus'
 _METRICS = {
     'request_latency': ('seconds', 'ms', 0.001),
     'time_to_first_token': ('seconds', 'ms', 0.001),
@@ -61,17 +106,49 @@ class ImportCancelled(Exception):
     """An import stopped without publishing an incomplete generation."""
 
 
+def _owned(raw: Path, path: Path) -> Path:
+    """Resolve one artifact path and reject symlinks escaping the run directory."""
+    resolved = path.resolve(strict=True)
+    if not resolved.is_relative_to(raw) or not resolved.is_file():
+        raise ValueError('Raw artifact path escapes the run directory')
+    return resolved
+
+
+def _discover(raw: Path, name: str) -> Optional[Path]:
+    """Find one required artifact, allowing a flat or a run-scoped artifact layout."""
+    direct = raw / name
+    if direct.exists():
+        return _owned(raw, direct)
+    matches = sorted({_owned(raw, path) for path in raw.rglob(name) if path.is_file()})
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise ValueError(f'Multiple {name} artifacts found; pass the specific run directory')
+    return matches[0]
+
+
 def _files(raw: Path) -> Dict[str, Path]:
     result = {}
     for name in _FILES:
-        path = raw / name
-        if path.exists():
-            resolved = path.resolve(strict=True)
-            if not resolved.is_relative_to(raw) or not resolved.is_file():
-                raise ValueError('Raw artifact path escapes the run directory')
-            result[name] = resolved
+        path = _discover(raw, name)
+        if path is not None:
+            result[name] = path
     if 'profile_export.jsonl' not in result:
         raise ValueError('AIPerf request records are missing')
+    return result
+
+
+def _gpu_files(raw: Path) -> Dict[str, Path]:
+    """Discover optional GPU telemetry and DCGM Prometheus snapshots.
+
+    Keys are relative to the artifact root so nested concurrency exports and
+    DCGM metric files cannot collide in the content hash or import manifest.
+    """
+    result: Dict[str, Path] = {}
+    for path in sorted({_owned(raw, item) for item in raw.rglob(_GPU_TELEMETRY) if item.is_file()}):
+        result[f'gpu_telemetry/{path.relative_to(raw).as_posix()}'] = path
+    for path in sorted({_owned(raw, item) for item in raw.rglob(f'{_DCGM_DIRECTORY}/*.json') if item.is_file()}):
+        result[f'prometheus/{path.relative_to(raw).as_posix()}'] = path
     return result
 
 
@@ -347,6 +424,156 @@ def _node_samples(
                     )
 
 
+_LOOPBACK = frozenset({'localhost', '127.0.0.1', '::1'})
+
+
+def _gpu_node_id(hostname: Optional[str], source: Optional[str]) -> str:
+    """Prefer a real host name, then a non-loopback exporter host.
+
+    AIPerf's pynvml collector reports ``localhost``; DCGM exporter targets keep
+    the exporter host in ``telemetry_source_url`` and must not collapse into one
+    node when several nodes are scraped.
+    """
+    if isinstance(hostname, str) and hostname.strip() and hostname.strip().lower() not in _LOOPBACK:
+        return hostname.strip()
+    if isinstance(source, str):
+        parsed = urlsplit(source)
+        if parsed.hostname and parsed.hostname.lower() not in _LOOPBACK:
+            return parsed.hostname
+    if isinstance(hostname, str) and hostname.strip():
+        return hostname.strip()
+    return 'gpu'
+
+
+def _gpu_labels(value: Any) -> Dict[str, str]:
+    if not isinstance(value, dict):
+        raise ValueError('Invalid GPU labels')
+    labels = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key or '\x00' in key:
+            raise ValueError('Invalid GPU label name')
+        if item is None:
+            continue
+        if isinstance(item, bool) or not isinstance(item, (str, int, float)):
+            raise ValueError('Invalid GPU label value')
+        text = str(item)
+        if '\x00' in text:
+            raise ValueError('Invalid GPU label value')
+        labels[key] = text
+    return labels
+
+
+def _gpu_telemetry_samples(path: Path, cancel_event: Optional[Cancellation]) -> Iterator[NodeMetricSample]:
+    """Convert AIPerf's per-GPU telemetry JSONL into DCGM-family node samples."""
+    with path.open(encoding='utf-8') as file:
+        while line := file.readline(16 * 1024 * 1024 + 1):
+            if cancel_event is not None and cancel_event.is_set():
+                raise ImportCancelled()
+            if len(line) > 16 * 1024 * 1024:
+                raise ValueError('GPU telemetry record exceeds size limit')
+            try:
+                record = json.loads(line)
+            except ValueError:
+                raise ValueError('Invalid GPU telemetry record') from None
+            if not isinstance(record, dict):
+                raise ValueError('Invalid GPU telemetry record')
+            timestamp = record.get('timestamp_ns')
+            index = record.get('gpu_index')
+            telemetry = record.get('telemetry_data')
+            if type(timestamp) is not int or timestamp < 0:
+                raise ValueError('GPU telemetry timestamp is missing')
+            if type(index) is not int or index < 0:
+                raise ValueError('GPU telemetry index is missing')
+            if not isinstance(telemetry, dict):
+                raise ValueError('GPU telemetry data is missing')
+            source = record.get('telemetry_source_url')
+            if source is not None and not isinstance(source, str):
+                raise ValueError('Invalid GPU telemetry source')
+            labels = {'gpu': str(index), 'source': _GPU_SOURCE}
+            if isinstance(source, str) and source:
+                labels['source_url'] = source
+            for label, field in (
+                ('UUID', 'gpu_uuid'),
+                ('device', 'device'),
+                ('modelName', 'gpu_model_name'),
+                ('hostname', 'hostname'),
+                ('pci_bus_id', 'pci_bus_id'),
+            ):
+                value = record.get(field)
+                if isinstance(value, str) and value:
+                    labels[label] = value
+            node_id = _gpu_node_id(record.get('hostname'), source)
+            endpoint = sanitize_endpoint(source) if source else ''
+            for field, raw in telemetry.items():
+                mapping = _GPU_FIELDS.get(field)
+                if mapping is None:
+                    continue
+                if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                    continue
+                value = float(raw)
+                if not math.isfinite(value) or value < 0:
+                    continue
+                name, scale = mapping
+                yield NodeMetricSample(
+                    timestamp_ns=timestamp,
+                    node_id=node_id,
+                    role='gpu',
+                    engine='dcgm',
+                    endpoint=endpoint or '',
+                    metric_name=f'dcgm:{name}',
+                    metric_type='counter' if name in _DCGM_COUNTERS else 'gauge',
+                    labels=dict(labels),
+                    observation={'value': value * scale},
+                )
+
+
+def _dcgm_prom_samples(
+    path: Path, metric_name: str, cancel_event: Optional[Cancellation]
+) -> Iterator[NodeMetricSample]:
+    """Convert one Prometheus query_range response into raw DCGM node samples."""
+    if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', metric_name) is None:
+        raise ValueError('Invalid DCGM metric file name')
+    payload = _json(path)
+    if payload.get('status') != 'success':
+        raise ValueError('DCGM Prometheus query did not succeed')
+    data = payload.get('data')
+    if not isinstance(data, dict) or not isinstance(data.get('result'), list):
+        raise ValueError('Invalid DCGM Prometheus payload')
+    metric_type = 'counter' if metric_name in _DCGM_COUNTERS else 'gauge'
+    for series in data['result']:
+        if not isinstance(series, dict):
+            raise ValueError('Invalid DCGM Prometheus series')
+        labels = _gpu_labels(series.get('metric', {}))
+        labels.setdefault('source', _DCGM_SOURCE)
+        values = series.get('values')
+        if not isinstance(values, list):
+            raise ValueError('Invalid DCGM Prometheus values')
+        node_id = _gpu_node_id(labels.get('hostname') or labels.get('node') or labels.get('instance'), None)
+        for pair in values:
+            if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+                raise ValueError('Invalid DCGM Prometheus sample')
+            if cancel_event is not None and cancel_event.is_set():
+                raise ImportCancelled()
+            try:
+                epoch = float(pair[0])
+                raw = float(pair[1])
+            except (TypeError, ValueError):
+                raise ValueError('Invalid DCGM Prometheus sample') from None
+            if not math.isfinite(epoch) or epoch < 0 or not math.isfinite(raw) or raw < 0:
+                continue
+            yield NodeMetricSample(
+                timestamp_ns=int(epoch * 1_000_000_000),
+                node_id=node_id,
+                role='gpu',
+                engine='dcgm',
+                endpoint='prometheus://dcgm-exporter',
+                metric_name=f'dcgm:{metric_name}',
+                metric_type=metric_type,
+                labels=dict(labels),
+                observation={'value': raw},
+            )
+
+
 def _statistics(summary: dict) -> list[MetricStatistics]:
     results = []
     for key, (output_unit, input_unit, scale) in _METRICS.items():
@@ -412,8 +639,10 @@ def import_aiperf_run(arguments: AIPerfImportArguments, cancel_event: Optional[C
     if not raw.is_dir() or destination == raw or destination.is_relative_to(raw):
         raise ValueError('Invalid normalized result directory')
     files = _files(raw)
+    gpu_files = _gpu_files(raw)
+    hashed_files = {**files, **gpu_files}
     targets, target_identity = _targets(arguments, files)
-    identity, hashes = _hash_files(files, arguments.allow_partial_tail, target_identity, cancel_event)
+    identity, hashes = _hash_files(hashed_files, arguments.allow_partial_tail, target_identity, cancel_event)
     summary = _json(files['profile_export_aiperf.json']) if 'profile_export_aiperf.json' in files else None
     if summary is not None and (
         summary.get('aiperf_version') != arguments.executor_version or summary.get('schema_version') != '1.4'
@@ -443,7 +672,11 @@ def import_aiperf_run(arguments: AIPerfImportArguments, cancel_event: Optional[C
             database = sqlite3.connect(temporary / 'requests.db')
             successes = errors = cancelled = incomplete = profiling = invalid_cache = outside_window = 0
             matched_nodes: set[str] = set()
+            gpu_nodes: set[str] = set()
             telemetry_invalid = False
+            gpu_invalid = False
+            gpu_samples = 0
+            node_index = 0
             state = _ImportState()
             try:
                 database.execute(
@@ -493,20 +726,21 @@ def import_aiperf_run(arguments: AIPerfImportArguments, cancel_event: Optional[C
                     database.execute('SAVEPOINT telemetry')
                     try:
                         node_batch = []
-                        for index, sample in enumerate(
-                            _node_samples(files['server_metrics_export.jsonl'], targets, server, cancel_event)
+                        for sample in _node_samples(
+                            files['server_metrics_export.jsonl'], targets, server, cancel_event
                         ):
                             if sample.node_id is not None:
                                 matched_nodes.add(sample.node_id)
                             node_batch.append(
                                 (
-                                    index,
+                                    node_index,
                                     sample.node_id,
                                     sample.metric_name,
                                     sample.timestamp_ns,
                                     sample.model_dump_json(),
                                 )
                             )
+                            node_index += 1
                             if len(node_batch) >= 500:
                                 database.executemany('INSERT INTO node_samples VALUES (?, ?, ?, ?, ?)', node_batch)
                                 node_batch.clear()
@@ -518,6 +752,46 @@ def import_aiperf_run(arguments: AIPerfImportArguments, cancel_event: Optional[C
                         database.execute('RELEASE telemetry')
                         matched_nodes.clear()
                         telemetry_invalid = True
+                        node_index = 0
+                if gpu_files:
+                    server_node_count = node_index
+                    database.execute('SAVEPOINT gpu_telemetry')
+                    try:
+                        node_batch = []
+                        for key in sorted(gpu_files):
+                            path = gpu_files[key]
+                            samples = (
+                                _gpu_telemetry_samples(path, cancel_event)
+                                if key.startswith('gpu_telemetry/')
+                                else _dcgm_prom_samples(path, path.stem, cancel_event)
+                            )
+                            for sample in samples:
+                                if sample.node_id is not None:
+                                    gpu_nodes.add(sample.node_id)
+                                node_batch.append(
+                                    (
+                                        node_index,
+                                        sample.node_id,
+                                        sample.metric_name,
+                                        sample.timestamp_ns,
+                                        sample.model_dump_json(),
+                                    )
+                                )
+                                node_index += 1
+                                gpu_samples += 1
+                                if len(node_batch) >= 500:
+                                    database.executemany('INSERT INTO node_samples VALUES (?, ?, ?, ?, ?)', node_batch)
+                                    node_batch.clear()
+                        if node_batch:
+                            database.executemany('INSERT INTO node_samples VALUES (?, ?, ?, ?, ?)', node_batch)
+                        database.execute('RELEASE gpu_telemetry')
+                    except (ValueError, UnicodeError):
+                        database.execute('ROLLBACK TO gpu_telemetry')
+                        database.execute('RELEASE gpu_telemetry')
+                        gpu_nodes.clear()
+                        gpu_samples = 0
+                        gpu_invalid = True
+                        node_index = server_node_count
                 database.commit()
             finally:
                 database.close()
@@ -551,6 +825,10 @@ def import_aiperf_run(arguments: AIPerfImportArguments, cancel_event: Optional[C
             )
             if telemetry_invalid:
                 reasons.append('telemetry_invalid')
+            if gpu_invalid:
+                reasons.append('gpu_telemetry_invalid')
+            elif gpu_files and not gpu_samples:
+                reasons.append('gpu_telemetry_unmapped')
             if 'server_metrics_export.jsonl' in files and server is None:
                 reasons.append('telemetry_schema_unverified')
             if missing_nodes:
@@ -590,7 +868,7 @@ def import_aiperf_run(arguments: AIPerfImportArguments, cancel_event: Optional[C
                 profiling_end_ns=end,
                 metrics=metrics,
             )
-            if _hash_files(files, arguments.allow_partial_tail, target_identity, cancel_event)[1] != hashes:
+            if _hash_files(hashed_files, arguments.allow_partial_tail, target_identity, cancel_event)[1] != hashes:
                 raise ValueError('Raw artifacts changed during import')
             _atomic_json(temporary / 'run.json', run.model_dump(mode='json'))
             _atomic_json(
@@ -623,7 +901,7 @@ def import_aiperf_run(arguments: AIPerfImportArguments, cancel_event: Optional[C
     run = PerfRunResult.model_validate(_json(_owned_file(generation, 'run.json')))
     if (
         reused_generation
-        and _hash_files(files, arguments.allow_partial_tail, target_identity, cancel_event)[1] != hashes
+        and _hash_files(hashed_files, arguments.allow_partial_tail, target_identity, cancel_event)[1] != hashes
     ):
         raise ValueError('Raw artifacts changed during import')
     if cancel_event is not None and cancel_event.is_set():
@@ -719,7 +997,12 @@ def observed_cache_usage(normalized_dir: str) -> CacheObservation:
     """Aggregate only successful requests with valid server-reported cache usage."""
     generation = _generation(normalized_dir)
     manifest = ImportManifest.model_validate(_json(_owned_file(generation, 'import.json')))
-    if manifest.parser_version not in (_PARSER, 'aiperf-0.13.0-v2', 'aiperf-0.13.0-v3'):
+    if manifest.parser_version not in (
+        _PARSER,
+        'aiperf-0.13.0-v2',
+        'aiperf-0.13.0-v3',
+        'aiperf-0.13.0-v4',
+    ):
         return CacheObservation(
             observed_requests=0,
             successful_requests=None,

@@ -25,6 +25,7 @@ import SegmentedControl from '@/components/ui/SegmentedControl'
 import ErrorAlert from '@/components/ui/ErrorAlert'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import SelectionTray from '@/components/reports/SelectionTray'
+import PerfArtifactImportPanel from '@/components/perf/PerfArtifactImportPanel'
 import { formatMetric } from '@/domain/metric'
 import { formatTimestamp } from '@/utils/formatUtils'
 import { experimentIdOf, isEntryOpenable, selectionSupport } from '@/domain/perf/entries'
@@ -337,6 +338,8 @@ export default function PerfReportsPage() {
       {error && (
         <ErrorAlert>{error}</ErrorAlert>
       )}
+
+      <PerfArtifactImportPanel onImported={() => { reload() }} />
 
       {page?.completeness === 'partial' && (
         <p role="status" className="rounded-[var(--radius-sm)] border border-[var(--warning-bg)] bg-[var(--warning-bg)] px-4 py-3 type-body-sm text-[var(--yellow)]">

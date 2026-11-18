@@ -59,6 +59,7 @@ def test_prepared_config_preserves_inputs_without_secret(tmp_path: Path) -> None
         assert config['phases'][0]['concurrency'] == 1
         assert config['phases'][0]['requests'] == 2
         assert config['server_metrics']['enabled'] is False and config['server_metrics']['urls'] == []
+        assert config['gpu_telemetry'] == {'enabled': True, 'collector': 'pynvml', 'mode': 'summary'}
         assert config_path.stat().st_mode & 0o077 == 0
         assert Path(prepared.artifact_dir).stat().st_mode & 0o077 == 0
         assert prepared.invocation.log_file == str(tmp_path / 'benchmark.log')
@@ -67,6 +68,33 @@ def test_prepared_config_preserves_inputs_without_secret(tmp_path: Path) -> None
             prepare_single_run(args, context, str(tmp_path / 'input.jsonl'))
     finally:
         config_path.unlink()
+
+
+def test_gpu_telemetry_dcgm_urls_are_normalized_and_unique(tmp_path: Path) -> None:
+    context = ExecutionContext(task_id='task', output_dir=str(tmp_path), runtime=ExternalRuntime(executable='/aiperf'))
+    tokenizer = _tokenizer(tmp_path)
+    arguments = AIPerfArguments(
+        model='mock-model', url='http://localhost:8000/v1', tokenizer_path=str(tokenizer),
+        load={'points': [{'concurrency': 1}], 'request_count': 2, 'output_token_limit': 2},
+        gpu_telemetry_urls=['http://10.0.0.1:9400', 'http://10.0.0.2:9400/metrics'],
+    )
+    prepared = prepare_single_run(arguments, context, str(_dataset(tmp_path)))
+    try:
+        config = json.loads(Path(prepared.config_file).read_text())['benchmark']
+        assert config['gpu_telemetry'] == {
+            'enabled': True,
+            'collector': 'dcgm',
+            'mode': 'summary',
+            'urls': ['http://10.0.0.1:9400/metrics', 'http://10.0.0.2:9400/metrics'],
+        }
+    finally:
+        Path(prepared.config_file).unlink()
+    with pytest.raises(ValueError, match='unique'):
+        AIPerfArguments(
+            model='mock-model', url='http://localhost:8000/v1', tokenizer_path=str(tokenizer),
+            load={'points': [{'concurrency': 1}], 'request_count': 2, 'output_token_limit': 2},
+            gpu_telemetry_urls=['http://10.0.0.1:9400', 'http://10.0.0.1:9400/metrics'],
+        )
 
 
 def test_modelscope_id_is_downloaded_before_aiperf_resolves_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -237,3 +265,35 @@ def test_pinned_aiperf_can_be_cancelled_during_request(tmp_path: Path) -> None:
         server.wait(timeout=5)
         if server.stdout:
             server.stdout.close()
+
+
+def test_request_multiplier_slo_and_failed_threshold_reach_the_config(tmp_path: Path) -> None:
+    context = ExecutionContext(task_id='task', output_dir=str(tmp_path), runtime=ExternalRuntime(executable='/aiperf'))
+    tokenizer = _tokenizer(tmp_path)
+    dataset = tmp_path / 'multiplier.jsonl'
+    dataset.write_text(
+        ''.join(json.dumps({'text': f'token{index}', 'output_length': 2}) + '\n' for index in range(8)),
+        encoding='utf-8',
+    )
+    arguments = AIPerfArguments(
+        model='mock-model',
+        url='http://localhost:8000/v1',
+        tokenizer_path=str(tokenizer),
+        load={
+            'points': [{'concurrency': 4}],
+            'request_count': 100,
+            'request_count_multiplier': 2,
+            'output_token_limit': 2,
+        },
+        slos={'request_latency': 250, 'inter_token_latency': 10},
+        failed_request_threshold=0.05,
+    )
+    prepared = prepare_single_run(arguments, context, str(dataset))
+    try:
+        config = json.loads(Path(prepared.config_file).read_text())['benchmark']
+        assert config['phases'][0]['requests'] == 8
+        assert config['datasets'][0]['entries'] == 8
+        assert config['slos'] == {'request_latency': 250, 'inter_token_latency': 10}
+        assert config['phases'][0]['failed_request_threshold'] == 0.05
+    finally:
+        Path(prepared.config_file).unlink()

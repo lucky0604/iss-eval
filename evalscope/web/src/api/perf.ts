@@ -1,5 +1,5 @@
 import { apiDeleteValidated, apiPostValidated, apiValidated } from './client'
-import type { PerfEnginesResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, CacheExperimentResponse, CacheExperimentSummaryResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse, CacheRepetitionsResponse, CacheNodeSeriesResponse, PerfEntryListResponse } from './generated/contracts'
+import type { PerfEnginesResponse, PerfLiveResponse, PerfPlanResponse, PerfSinglePlanResponse, CacheExperimentResponse, CacheExperimentSummaryResponse, CacheExperimentListResponse, CacheScenarioResponse, CacheNodeMetricsResponse, CacheRequestsResponse, CacheRequestGroupsResponse, CacheRepetitionsResponse, CacheNodeSeriesResponse, PerfEntryListResponse, PerfImportRequest, PerfImportResponse, PerfRawArtifactsResponse } from './generated/contracts'
 import type {
   DeletePerfRunResponse,
   ListPerfRunsResponse,
@@ -17,6 +17,10 @@ export const getPerfProgress = perfTaskApi.progress
 export const getPerfLog = perfTaskApi.log
 export const getPerfReportUrl = perfTaskApi.reportUrl
 export const stopPerfTask = perfTaskApi.stop
+
+export function importPerfArtifact(payload: PerfImportRequest, signal?: AbortSignal): Promise<PerfImportResponse> {
+  return apiPostValidated<PerfImportResponse>('/api/v1/perf/import', payload, { signal })
+}
 
 export function getPerfEngines(signal?: AbortSignal): Promise<PerfEnginesResponse> {
   return apiValidated('/api/v1/perf/engines', { signal })
@@ -247,6 +251,16 @@ export function getPerfChartUrl(
   if (opts.run) params.set('run', opts.run)
   if (opts.theme) params.set('theme', opts.theme)
   return `/api/v1/perf/chart?${params.toString()}`
+}
+
+export function getPerfRawArtifacts(rootPath: string, path: string, signal?: AbortSignal): Promise<PerfRawArtifactsResponse> {
+  const query = new URLSearchParams({ root_path: rootPath, path }).toString()
+  return apiValidated<PerfRawArtifactsResponse>(`/api/v1/perf/raw?${query}`, { signal })
+}
+
+export function getPerfRawArtifactUrl(rootPath: string, path: string, name: string): string {
+  const query = new URLSearchParams({ root_path: rootPath, path, name }).toString()
+  return `/api/v1/perf/raw/download?${query}`
 }
 
 export function getPerfHistoryReportUrl(rootPath: string, path: string): string {

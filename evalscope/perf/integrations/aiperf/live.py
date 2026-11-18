@@ -8,7 +8,7 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import Field
 
-from evalscope.perf.executors.arguments import TelemetryTarget
+from evalscope.perf.executors.arguments import TelemetryTarget, TelemetryTargetEngine, TelemetryTargetRole
 from evalscope.perf.experiments.storage import write_experiment_json
 from evalscope.perf.integrations.aiperf.metrics import MAPPINGS
 from evalscope.utils import BaseArgument
@@ -26,8 +26,8 @@ class LiveGauge(BaseArgument):
 
 class LiveNode(BaseArgument):
     node_id: str
-    role: Literal['prefill', 'decode']
-    engine: Literal['vllm', 'sglang']
+    role: TelemetryTargetRole
+    engine: TelemetryTargetEngine
     status: Literal['waiting', 'available', 'unavailable'] = 'waiting'
     sampled_at_ns: Optional[int] = None
     attempted_at_ns: Optional[int] = None

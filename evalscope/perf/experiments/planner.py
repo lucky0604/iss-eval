@@ -12,6 +12,8 @@ from evalscope.perf.executors.arguments import (
     CacheExperiment,
     LoadConfiguration,
     LoadPoint,
+    TelemetryTargetEngine,
+    TelemetryTargetRole,
     cache_identity_payload,
 )
 from evalscope.perf.executors.urls import normalize_chat_url
@@ -40,8 +42,8 @@ class PlannedMetricNode(BaseArgument):
     """Credential-free identity of a configured telemetry node."""
 
     node_id: str
-    role: Literal['prefill', 'decode']
-    engine: Literal['vllm', 'sglang']
+    role: TelemetryTargetRole
+    engine: TelemetryTargetEngine
     url: str
     labels: Dict[str, str]
 
@@ -107,7 +109,8 @@ def plan_cache_experiment(
     size = len(input_lengths) * len(cache.target_ratios) * len(arguments.load.points) * arguments.load.repetitions
     if size > 10000:
         raise ValueError('Experiment exceeds the maximum of 10000 subruns')
-    if any(ratio > 0 for ratio in cache.target_ratios) and cache.prefix_pool_size > arguments.load.request_count:
+    minimum_requests = min(arguments.load.effective_request_count(point) for point in arguments.load.points)
+    if any(ratio > 0 for ratio in cache.target_ratios) and cache.prefix_pool_size > minimum_requests:
         raise ValueError('Every shared prefix requires a profiling request')
     base_url, endpoint = normalize_chat_url(arguments.url)
     identity = {
@@ -143,7 +146,7 @@ def plan_cache_experiment(
                             repetition=repetition,
                             seed=cache.seed,
                             namespace=namespace,
-                            request_count=arguments.load.request_count,
+                            request_count=arguments.load.effective_request_count(point),
                             primer_requests=cache.prefix_pool_size if ratio else 0,
                             output_token_limit=arguments.load.output_token_limit,
                             input_tokens=input_tokens,

@@ -149,17 +149,19 @@ def run_cache_scenario(
             on_phase(state['status'])
 
     def publish_node_analysis(normalized: Path) -> Optional[NodeMetricsAnalysis]:
-        if not arguments.telemetry.targets:
-            return None
         gap = arguments.telemetry.max_scrape_gap_seconds or 2 * arguments.telemetry.sample_interval_seconds
         try:
             analysis = analyze_node_metrics(str(normalized), max_gap_ns=max(1, int(gap * 1_000_000_000)))
-            write_experiment_json(root / 'node_analysis.json', analysis.model_dump(mode='json'))
-            state['node_analysis'] = 'node_analysis.json'
-            return analysis
         except (OSError, ValueError):
             state['node_analysis_reason'] = 'node_analysis_failed'
             return None
+        # GPU telemetry is discovered from AIPerf artifacts even when no engine
+        # Prometheus target was configured, so publish any non-empty analysis.
+        if not arguments.telemetry.targets and analysis.availability == 'missing':
+            return None
+        write_experiment_json(root / 'node_analysis.json', analysis.model_dump(mode='json'))
+        state['node_analysis'] = 'node_analysis.json'
+        return analysis
 
     def missing_required_nodes(analysis: Optional[NodeMetricsAnalysis]) -> bool:
         if not arguments.telemetry.required:
@@ -179,7 +181,7 @@ def run_cache_scenario(
         plan = PrefixWorkloadArguments(
             target_ratio=scenario.target_ratio,
             total_input_tokens=input_tokens,
-            request_count=arguments.load.request_count,
+            request_count=arguments.load.active_request_count,
             prefix_pool_size=cache_config.prefix_pool_size,
             seed=cache_config.seed,
             namespace=scenario.namespace,
@@ -339,7 +341,7 @@ def run_cache_scenario(
         quality_reasons = [*result.quality_reasons, 'template_match_unverified']
         if cache_config.mode == 'token_prefix_ratio':
             quality_reasons.append('routing_coverage_unknown')
-        if result.profiling_requests != arguments.load.request_count:
+        if result.profiling_requests != arguments.load.active_request_count:
             quality_reasons.append('planned_request_count_mismatch')
         quality_reasons.append(
             'telemetry_mapping_unverified' if arguments.telemetry.targets else 'telemetry_not_configured'

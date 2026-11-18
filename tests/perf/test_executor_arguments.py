@@ -9,6 +9,10 @@ from pydantic import ValidationError
 from evalscope.perf.executors.arguments import parse_perf_task_arguments
 from evalscope.perf.executors.dispatch import run_perf_task
 from evalscope.perf.executors.models import ExecutionContext
+from evalscope.perf.experiments.planner import PlannedMetricNode
+from evalscope.perf.integrations.aiperf.live import LiveNode
+from evalscope.perf.integrations.aiperf.preflight import NodePreflight
+from evalscope.perf.results.models import MetricTargetReference
 
 
 @pytest.fixture
@@ -160,4 +164,58 @@ def test_single_run_inline_prompts_must_match_the_request_budget(payload: dict) 
     config['input_prompts'] = ['first', 'second']
     config['cache_experiment'] = {'target_ratios': [0.8], 'total_input_tokens': 100}
     with pytest.raises(ValueError, match='cannot be combined'):
+        parse_perf_task_arguments(payload)
+
+
+def test_request_multiplier_expands_each_closed_loop_point(payload: dict) -> None:
+    payload['aiperf']['load']['request_count_multiplier'] = 3
+    parsed = parse_perf_task_arguments(payload)
+    assert parsed.aiperf is not None
+    assert parsed.aiperf.load.active_request_count == 6
+    assert parsed.aiperf.load.effective_request_count(parsed.aiperf.load.points[0]) == 6
+
+
+def test_request_multiplier_is_rejected_for_open_loop_and_inline_prompts(payload: dict) -> None:
+    payload['aiperf']['load']['request_count_multiplier'] = 3
+    payload['aiperf']['load'].update({'mode': 'open_loop', 'points': [{'rate': 1}]})
+    with pytest.raises(ValidationError):
+        parse_perf_task_arguments(payload)
+
+    payload['aiperf']['load'] = {'points': [{'concurrency': 2}], 'request_count': 2, 'output_token_limit': 8,
+                                 'request_count_multiplier': 3}
+    payload['aiperf']['cache_experiment'] = None
+    payload['aiperf']['input_prompts'] = ['one', 'two']
+    with pytest.raises(ValidationError):
+        parse_perf_task_arguments(payload)
+
+
+def test_frontend_dynamo_target_is_accepted_by_every_telemetry_contract(payload: dict) -> None:
+    """A target the UI can configure must survive preflight, live and plan models."""
+    payload['aiperf']['telemetry']['targets'].append(
+        {'node_id': 'dynamo-frontend', 'role': 'frontend', 'engine': 'dynamo', 'url': 'http://f:8000/metrics'}
+    )
+    target = parse_perf_task_arguments(payload).aiperf.telemetry.targets[-1]
+    identity = {'node_id': target.node_id, 'role': target.role, 'engine': target.engine, 'url': target.url, 'labels': {}}
+    assert MetricTargetReference(**identity).role == 'frontend'
+    assert PlannedMetricNode(**identity).engine == 'dynamo'
+    assert LiveNode(node_id=target.node_id, role=target.role, engine=target.engine).role == 'frontend'
+    assert NodePreflight(
+        node_id=target.node_id, role=target.role, engine=target.engine, status='available', elapsed_ms=1.0
+    ).engine == 'dynamo'
+
+
+def test_slos_and_failed_threshold_are_typed(payload: dict) -> None:
+    payload['aiperf']['slos'] = {'request_latency': 250, 'inter_token_latency': 10}
+    payload['aiperf']['failed_request_threshold'] = 0.05
+    parsed = parse_perf_task_arguments(payload)
+    assert parsed.aiperf is not None
+    assert parsed.aiperf.slos['request_latency'] == 250
+
+    payload['aiperf']['slos'] = {'Bad Key': 1}
+    with pytest.raises(ValidationError):
+        parse_perf_task_arguments(payload)
+
+    payload['aiperf']['slos'] = {'request_latency': 250}
+    payload['aiperf']['failed_request_threshold'] = 1.5
+    with pytest.raises(ValidationError):
         parse_perf_task_arguments(payload)

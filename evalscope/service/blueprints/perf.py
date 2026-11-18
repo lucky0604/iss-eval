@@ -73,6 +73,8 @@ from evalscope.service.api_models import (
     PerfDetailResponse,
     PerfEnginesResponse,
     PerfEntryListResponse,
+    PerfImportRequest,
+    PerfImportResponse,
     PerfInvokeResponse,
     PerfLiveResponse,
     PerfPlanArchiveResponse,
@@ -81,6 +83,8 @@ from evalscope.service.api_models import (
     PerfPlanPreviewResponse,
     PerfPlanResponse,
     PerfPlanSubmitResponse,
+    PerfRawArtifactFile,
+    PerfRawArtifactsResponse,
     PerfRequestsResponse,
     PerfRunsListResponse,
     PerfSinglePlanResponse,
@@ -721,7 +725,9 @@ def _validate_cache_geometry(arguments: AIPerfArguments, tokenizer: HuggingFaceP
                     PrefixWorkloadArguments(
                         target_ratio=ratio,
                         total_input_tokens=input_tokens,
-                        request_count=arguments.load.request_count,
+                        request_count=min(
+                            arguments.load.effective_request_count(point) for point in arguments.load.points
+                        ),
                         prefix_pool_size=cache.prefix_pool_size,
                         seed=cache.seed,
                         namespace='preflight',
@@ -848,7 +854,7 @@ def validate_single_aiperf():
     return json_response(
         PerfSinglePlanResponse,
         {
-            'profiling_requests': task.aiperf.load.request_count,
+            'profiling_requests': task.aiperf.load.active_request_count,
             'engine_available': available,
             'metrics_probe': 'completed' if flag == '1' else 'not_requested',
             'nodes': nodes,
@@ -1473,7 +1479,7 @@ def _prepare_single_aiperf(
             load_mode=arguments.load.mode,
             concurrency=point.concurrency,
             rate=point.rate,
-            planned_requests=arguments.load.request_count,
+            planned_requests=arguments.load.active_request_count,
             output_token_limit=arguments.load.output_token_limit,
             input_sha256=input_hash.hexdigest(),
             telemetry_sample_interval_seconds=arguments.telemetry.sample_interval_seconds
@@ -1533,9 +1539,12 @@ def _run_single_aiperf(prepared: dict, arguments: AIPerfArguments, task_id: str,
                     )
                 )
                 normalized, quality, quality_reasons = 'normalized', result.quality, result.quality_reasons
-                if arguments.telemetry.targets:
-                    gap = arguments.telemetry.max_scrape_gap_seconds or 2 * arguments.telemetry.sample_interval_seconds
+                gap = arguments.telemetry.max_scrape_gap_seconds or 2 * arguments.telemetry.sample_interval_seconds
+                try:
                     analysis = analyze_node_metrics(os.path.join(output_dir, 'normalized'), max(1, int(gap * 1e9)))
+                except (OSError, ValueError):
+                    analysis = None
+                if analysis is not None and (arguments.telemetry.targets or analysis.availability != 'missing'):
                     write_experiment_json(Path(output_dir) / 'node_analysis.json', analysis.model_dump(mode='json'))
                     if quality == 'complete':
                         quality = 'partial'
@@ -1596,6 +1605,145 @@ def _invoke_single_aiperf(arguments: AIPerfArguments, task_id: str, runtime: Ext
     except Exception as error:
         return jsonify(_perf_crash_payload(task_id, error)), 500
     return json_response(PerfInvokeResponse, payload)
+
+
+def _artifact_digest(root: Path) -> str:
+    """Stable input identity for an immutable AIPerf artifact snapshot."""
+    digest = hashlib.sha256()
+    for path in sorted(item for item in root.rglob('*') if item.is_file()):
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(str(path.stat().st_size).encode())
+    return digest.hexdigest()
+
+
+@bp_perf.route('/import', methods=['POST'])
+def import_perf_archive():
+    """Import a server-local AIPerf artifact directory without re-running it.
+
+    The archive is written under ``<outputs>/imports/<task_id>/perf`` so the
+    existing run list, report detail and node-metrics views can discover it.
+    """
+    from ..utils import log
+
+    try:
+        settings = PerfImportRequest.model_validate(request.get_json(silent=True))
+    except ValidationError as error:
+        detail = [{'loc': list(item['loc']), 'msg': item['msg'], 'type': item['type']} for item in error.errors()]
+        return jsonify({'error': 'Invalid import request', 'detail': detail}), 400
+
+    raw = Path(settings.raw_dir).expanduser().resolve()
+    if not raw.is_dir():
+        return jsonify({'error': 'raw_dir must be an existing directory'}), 400
+    digest = _artifact_digest(raw)
+    task_id = settings.task_id or f'import_{time.strftime("%Y%m%d_%H%M%S")}_{digest[:8]}'
+    root = Path(log.OUTPUT_DIR) / 'imports' / task_id
+    perf = root / 'perf'
+    if perf.exists():
+        return jsonify({'error': 'Import task already exists'}), 409
+    try:
+        perf.mkdir(parents=True, exist_ok=False, mode=0o700)
+        # Keep the auditable JSON/JSONL artifacts inside the archive so raw
+        # downloads do not depend on the external source directory surviving.
+        raw_archive = perf / 'raw' / 'aiperf'
+        for source in raw.rglob('*'):
+            if (
+                source.is_file()
+                and not source.is_symlink()
+                and source.suffix in {'.json', '.jsonl'}
+                and source.stat().st_size <= 512 * 1024 * 1024
+            ):
+                target = raw_archive / source.relative_to(raw)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+        normalized = perf / 'normalized'
+        result = import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(normalized)))
+        manifest = SingleRunManifest(
+            task_id=task_id,
+            model=settings.model,
+            alias=settings.alias,
+            endpoint=settings.endpoint,
+            load_mode=settings.load_mode,
+            concurrency=settings.concurrency,
+            rate=settings.rate,
+            planned_requests=settings.planned_requests or result.profiling_requests,
+            output_token_limit=settings.output_token_limit,
+            input_sha256=digest,
+            status='completed',
+            artifact_status='available',
+            normalized='normalized',
+            quality=result.quality,
+            quality_reasons=result.quality_reasons,
+        )
+        write_single_manifest(str(perf), manifest)
+        # Imported archives carry no telemetry interval, so 5 s is the fallback
+        # scrape gap used to decide whether a GPU timeline is still contiguous.
+        analysis = analyze_node_metrics(str(normalized), 5_000_000_000)
+        if analysis.availability != 'missing':
+            write_experiment_json(perf / 'node_analysis.json', analysis.model_dump(mode='json'))
+    except (OSError, ValueError) as error:
+        # Roll back only what this request created: the task root may predate it.
+        shutil.rmtree(perf, ignore_errors=True)
+        try:
+            root.rmdir()
+        except OSError:
+            pass
+        return jsonify({'error': str(error)}), 400
+    return json_response(
+        PerfImportResponse,
+        {
+            'task_id': task_id,
+            'subrun_id': 'single',
+            'root_path': str(log.OUTPUT_DIR),
+            'path': f'imports/{task_id}/perf',
+            'quality': result.quality,
+            'quality_reasons': result.quality_reasons,
+            'profiling_requests': result.profiling_requests,
+            'metric_count': len(result.metrics),
+        },
+        status=201,
+    )
+
+
+@bp_perf.route('/raw', methods=['GET'])
+def list_perf_raw_artifacts():
+    """List immutable raw AIPerf files for one archive without exposing paths."""
+    root = _root_path()
+    run_dir = perf_archive.resolve_run_dir(root, request.args.get('path', ''))
+    if run_dir is None:
+        return jsonify({'error': 'Run directory not found'}), 404
+    raw = os.path.realpath(os.path.join(run_dir, 'raw', 'aiperf'))
+    if not os.path.isdir(raw):
+        return json_response(PerfRawArtifactsResponse, {'files': []})
+    files: list[dict] = []
+    for directory, subdirectories, names in os.walk(raw):
+        subdirectories.sort()
+        for name in sorted(names):
+            target = os.path.join(directory, name)
+            if os.path.islink(target) or not os.path.isfile(target):
+                continue
+            files.append({'name': os.path.relpath(target, raw), 'size': os.path.getsize(target)})
+            if len(files) >= 5000:
+                break
+        if len(files) >= 5000:
+            break
+    return json_response(PerfRawArtifactsResponse, {'files': files})
+
+
+@bp_perf.route('/raw/download', methods=['GET'])
+def download_perf_raw_artifact():
+    """Stream one raw artifact; names are resolved under the run's raw root."""
+    root = _root_path()
+    run_dir = perf_archive.resolve_run_dir(root, request.args.get('path', ''))
+    if run_dir is None:
+        return jsonify({'error': 'Run directory not found'}), 404
+    raw = os.path.realpath(os.path.join(run_dir, 'raw', 'aiperf'))
+    name = request.args.get('name', '')
+    target = os.path.realpath(os.path.join(raw, name))
+    if not name or not os.path.isfile(target) or os.path.islink(target):
+        return jsonify({'error': 'Artifact not found'}), 404
+    if target != raw and not target.startswith(raw + os.sep):
+        return jsonify({'error': 'Artifact not found'}), 404
+    return send_file(target, as_attachment=True, download_name=os.path.basename(target), conditional=True)
 
 
 @bp_perf.route('/invoke', methods=['POST'])

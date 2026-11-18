@@ -3,10 +3,18 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict
 
 
-class ApiResponseModel(BaseModel):
-    """Strict base model for JSON responses consumed by the bundled Web UI."""
+class _StrictApiModel(BaseModel):
+    """Reject unknown fields: Web UI traffic never relies on extra payload keys."""
 
     model_config = ConfigDict(extra='forbid', populate_by_name=True)
+
+
+class ApiResponseModel(_StrictApiModel):
+    """Strict base model for JSON responses consumed by the bundled Web UI."""
+
+
+class ApiRequestModel(_StrictApiModel):
+    """Strict base model for JSON request bodies sent by the bundled Web UI."""
 
 
 class ConfigResponse(ApiResponseModel):

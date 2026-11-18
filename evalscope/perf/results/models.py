@@ -4,6 +4,12 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import Field, StrictInt, field_validator, model_validator
 
+from evalscope.perf.executors.arguments import (
+    TelemetrySampleEngine,
+    TelemetrySampleRole,
+    TelemetryTargetEngine,
+    TelemetryTargetRole,
+)
 from evalscope.utils import BaseArgument
 
 
@@ -69,9 +75,13 @@ class ImportManifest(BaseArgument):
     """Input and parser identity for an atomically published import."""
 
     schema_version: Literal['1.0'] = '1.0'
-    parser_version: Literal['aiperf-0.13.0-v1', 'aiperf-0.13.0-v2', 'aiperf-0.13.0-v3', 'aiperf-0.13.0-v4'] = (
-        'aiperf-0.13.0-v4'
-    )
+    parser_version: Literal[
+        'aiperf-0.13.0-v1',
+        'aiperf-0.13.0-v2',
+        'aiperf-0.13.0-v3',
+        'aiperf-0.13.0-v4',
+        'aiperf-0.13.0-v5',
+    ] = 'aiperf-0.13.0-v5'
     input_hash: str
     files: Dict[str, str]
     allow_partial_tail: bool = False
@@ -84,8 +94,8 @@ class MetricTargetReference(BaseArgument):
     """Explicit node attribution for one configured metrics endpoint."""
 
     node_id: str = Field(min_length=1)
-    role: Literal['prefill', 'decode']
-    engine: Literal['vllm', 'sglang']
+    role: TelemetryTargetRole
+    engine: TelemetryTargetEngine
     url: str
     labels: Dict[str, str] = Field(default_factory=dict)
 
@@ -106,8 +116,8 @@ class NodeMetricSample(BaseArgument):
 
     timestamp_ns: int
     node_id: Optional[str] = None
-    role: Optional[Literal['prefill', 'decode']] = None
-    engine: Optional[Literal['vllm', 'sglang']] = None
+    role: Optional[TelemetrySampleRole] = None
+    engine: Optional[TelemetrySampleEngine] = None
     endpoint: str
     metric_name: str
     metric_type: Literal['counter', 'gauge', 'histogram', 'unknown']

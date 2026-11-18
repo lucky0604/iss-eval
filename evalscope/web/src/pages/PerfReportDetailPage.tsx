@@ -14,6 +14,8 @@ import ErrorAlert from '@/components/ui/ErrorAlert'
 import PerfChartGroup from '@/components/perf/PerfChartGroup'
 import PerfRunsTab from '@/components/perf/PerfRunsTab'
 import NodeWindowPanel from '@/components/perf/NodeWindowPanel'
+import GpuTelemetryPanel from '@/components/perf/GpuTelemetryPanel'
+import RawArtifactsPanel from '@/components/perf/RawArtifactsPanel'
 import { CapabilityNotice, PerformanceQualityBanner, PerformanceResultHeader } from '@/components/perf/PerformanceResultShell'
 import { capabilityState, isCapabilityAvailable, resultTabLabelKey } from '@/domain/perf/capabilities'
 import { LATENCY_CHARTS, THROUGHPUT_CHARTS, perfRunMode } from '@/domain/perf/charts'
@@ -23,7 +25,7 @@ import { formatMetric } from '@/domain/metric'
 import { Lightbulb } from 'lucide-react'
 import type { PerfDetailResponse } from '@/api/types'
 
-type TabKey = 'overview' | 'charts' | 'runs' | 'nodes'
+type TabKey = 'overview' | 'charts' | 'runs' | 'nodes' | 'raw'
 
 /** Return a shallow copy of `info` with the given keys removed. */
 function omitKeys(info: Record<string, string>, keys: string[]): Record<string, string> {
@@ -190,6 +192,7 @@ export default function PerfReportDetailPage() {
   const showNodes = data.engine === 'aiperf' || isCapabilityAvailable(data.capabilities, 'node_metrics')
     || nodeState.availability === 'pending'
   if (showNodes) tabs.push({ key: 'nodes', label: t('perf.archive.nodeMetrics'), panelId: 'perf-nodes-panel' })
+  if (data.engine === 'aiperf') tabs.push({ key: 'raw', label: t('perf.archive.rawArtifacts'), panelId: 'perf-raw-panel' })
 
   const requestsState = capabilityState(data.capabilities, 'requests')
   const runsPanel = requestsState.availability === 'available' || requestsState.availability === 'pending'
@@ -305,8 +308,10 @@ export default function PerfReportDetailPage() {
           'perf-overview-panel': overviewPanel,
           ...(!singleRun ? { 'perf-charts-panel': chartsPanel } : {}),
           'perf-runs-panel': runsPanel,
+          ...(data.engine === 'aiperf' ? { 'perf-raw-panel': <RawArtifactsPanel rootPath={rootPath} path={path} /> } : {}),
           ...(showNodes ? { 'perf-nodes-panel': <div className="space-y-2">
             {data.quality_reasons?.length ? <p>{data.quality_reasons.join(', ')}</p> : null}
+            <GpuTelemetryPanel key={`gpu-${rootPath}\0${path}`} analysis={data.node_analysis} archive={{ rootPath, path }} />
             <NodeWindowPanel key={`${rootPath}\0${path}`} analysis={data.node_analysis} archive={{ rootPath, path }} />
           </div> } : {}),
         }}

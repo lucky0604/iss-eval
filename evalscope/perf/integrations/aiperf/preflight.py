@@ -7,7 +7,7 @@ from typing import List, Literal, Sequence
 import aiohttp
 from pydantic import Field
 
-from evalscope.perf.executors.arguments import TelemetryTarget
+from evalscope.perf.executors.arguments import TelemetryTarget, TelemetryTargetEngine, TelemetryTargetRole
 from evalscope.perf.integrations.aiperf.metrics import MAPPINGS
 from evalscope.perf.integrations.aiperf.metrics_relay import _fetch
 from evalscope.utils import BaseArgument
@@ -17,8 +17,8 @@ class NodePreflight(BaseArgument):
     """A single endpoint's reachability and documented matching families."""
 
     node_id: str
-    role: Literal['prefill', 'decode']
-    engine: Literal['vllm', 'sglang']
+    role: TelemetryTargetRole
+    engine: TelemetryTargetEngine
     status: Literal['available', 'missing', 'unreachable', 'invalid']
     metric_names: List[str] = Field(default_factory=list)
     elapsed_ms: float = Field(ge=0)

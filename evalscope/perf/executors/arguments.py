@@ -7,8 +7,17 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import Field, SecretStr, StrictInt, field_validator, model_validator
 
 from evalscope.perf.arguments import Arguments
+from evalscope.perf.executors.urls import normalize_metrics_url
 from evalscope.utils import BaseArgument
 from evalscope.utils.uri_utils import validate_http_endpoint
+
+# Telemetry vocabularies shared by every contract, so a configured target cannot be
+# accepted here and rejected downstream. A scrape target is an inference deployment:
+# the GPU families only ever appear on normalized samples produced by an import.
+TelemetryTargetRole = Literal['prefill', 'decode', 'frontend']
+TelemetryTargetEngine = Literal['vllm', 'sglang', 'dynamo']
+TelemetrySampleRole = Literal['prefill', 'decode', 'frontend', 'gpu']
+TelemetrySampleEngine = Literal['vllm', 'sglang', 'dcgm', 'dynamo']
 
 
 class LoadPoint(BaseArgument):
@@ -31,6 +40,7 @@ class LoadConfiguration(BaseArgument):
     mode: Literal['closed_loop', 'open_loop'] = 'closed_loop'
     points: List[LoadPoint] = Field(min_length=1)
     request_count: StrictInt = Field(gt=0)
+    request_count_multiplier: Optional[StrictInt] = Field(default=None, gt=0, le=1000)
     output_token_limit: StrictInt = Field(gt=0)
     repetitions: StrictInt = Field(default=1, gt=0)
 
@@ -41,7 +51,27 @@ class LoadConfiguration(BaseArgument):
                 raise ValueError('closed-loop points require only concurrency')
             if self.mode == 'open_loop' and (point.rate is None or point.concurrency is not None):
                 raise ValueError('open-loop points require only rate')
+        if self.request_count_multiplier is not None and self.mode != 'closed_loop':
+            raise ValueError('request count multiplier requires closed-loop load')
         return self
+
+    def effective_request_count(self, point: LoadPoint) -> int:
+        """Return the profiling request budget for one load point.
+
+        A multiplier expresses the common ``concurrency * N`` budget without
+        duplicating a scalar count for every point; a fixed count remains the
+        default for plans authored before multipliers existed.
+        """
+        if self.request_count_multiplier is None:
+            return self.request_count
+        if point.concurrency is None:
+            raise ValueError('request count multiplier requires a concurrency point')
+        return point.concurrency * self.request_count_multiplier
+
+    @property
+    def active_request_count(self) -> int:
+        """Request budget of the single point used by the synchronous executor."""
+        return self.effective_request_count(self.points[0])
 
 
 class WarmupConfiguration(BaseArgument):
@@ -108,8 +138,8 @@ class TelemetryTarget(BaseArgument):
     """One Prometheus endpoint with its own role, labels, and credentials."""
 
     node_id: str = Field(min_length=1)
-    role: Literal['prefill', 'decode']
-    engine: Literal['vllm', 'sglang']
+    role: TelemetryTargetRole
+    engine: TelemetryTargetEngine
     url: str
     labels: Dict[str, str] = Field(default_factory=dict)
     headers: Dict[str, SecretStr] = Field(default_factory=dict)
@@ -181,6 +211,30 @@ class AIPerfArguments(BaseArgument):
     cache_experiment: Optional[CacheExperiment] = None
     load: LoadConfiguration
     telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
+    gpu_telemetry: bool = True
+    gpu_telemetry_urls: List[str] = Field(default_factory=list)
+    slos: Dict[str, float] = Field(default_factory=dict)
+    failed_request_threshold: Optional[float] = Field(default=None, ge=0, le=1)
+
+    @field_validator('slos')
+    @classmethod
+    def validate_slos(cls, values: Dict[str, float]) -> Dict[str, float]:
+        if len(values) > 16:
+            raise ValueError('at most 16 SLO constraints are supported')
+        for key, value in values.items():
+            if not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', key):
+                raise ValueError('invalid SLO metric name')
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError('SLO thresholds must be finite positive numbers')
+        return values
+
+    @field_validator('gpu_telemetry_urls')
+    @classmethod
+    def validate_gpu_telemetry_urls(cls, values: List[str]) -> List[str]:
+        normalized = [normalize_metrics_url(value) for value in values]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError('GPU telemetry URLs must be unique')
+        return normalized
 
     @field_validator('model', 'tokenizer_path')
     @classmethod
@@ -198,11 +252,16 @@ class AIPerfArguments(BaseArgument):
     @model_validator(mode='after')
     def validate_pd_targets(self) -> 'AIPerfArguments':
         if self.deployment_mode == 'pd' and self.telemetry.required:
-            if {target.role for target in self.telemetry.targets} != {'prefill', 'decode'}:
+            # A frontend or DCGM target may sit next to the PD pair; only the
+            # absence of a prefill or decode node is rejected.
+            roles = {target.role for target in self.telemetry.targets}
+            if not {'prefill', 'decode'}.issubset(roles):
                 raise ValueError('required PD telemetry needs both prefill and decode targets')
         if self.input_prompts is not None:
             if self.cache_experiment is not None:
                 raise ValueError('inline inputs and a cache experiment cannot be combined')
+            if self.load.request_count_multiplier is not None:
+                raise ValueError('inline prompts require a fixed request count')
             if len(self.input_prompts) != self.load.request_count:
                 raise ValueError('inline input count must match the request count')
             if any(not value.strip() for value in self.input_prompts):

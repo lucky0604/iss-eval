@@ -32,4 +32,59 @@ describe('AIPerf experiment configuration', () => {
     expect(sanitizedAIPerfDraft(draft).nodes[0]).toMatchObject({ url: '', bearerToken: '' })
     expect(draft.nodes[0].bearerToken).toBe('secret')
   })
+  it('sends GPU telemetry switches and DCGM URLs to the backend envelope', () => {
+    const draft = { ...valid, gpuTelemetryUrls: 'http://10.0.0.1:9400\nhttp://10.0.0.2:9400/metrics' }
+    expect(validateAIPerfDraft(draft)).toEqual({})
+    expect(buildAIPerfPayload(draft, { ...DEFAULT_CONNECTION, model: 'm', url: 'http://host/v1' })).toMatchObject({
+      engine: 'aiperf',
+      aiperf: { gpu_telemetry: true, gpu_telemetry_urls: ['http://10.0.0.1:9400', 'http://10.0.0.2:9400/metrics'] },
+    })
+    expect(buildAIPerfPayload({ ...draft, gpuTelemetry: false }, { ...DEFAULT_CONNECTION, model: 'm', url: 'http://host/v1' }))
+      .toMatchObject({ aiperf: { gpu_telemetry: false } })
+  })
+  it('rejects duplicate and credential-bearing GPU DCGM URLs', () => {
+    expect(validateAIPerfDraft({ ...valid, gpuTelemetryUrls: 'http://gpu:9400\nhttp://gpu:9400/metrics' }))
+      .toHaveProperty('gpuTelemetryUrls')
+    expect(validateAIPerfDraft({ ...valid, gpuTelemetryUrls: 'http://user:secret@gpu:9400/metrics' }))
+      .toHaveProperty('gpuTelemetryUrls')
+  })
+  it('sends per-point request multiplier, SLOs and failed threshold', () => {
+    const draft = { ...valid, requestMultiplier: '3', slos: 'request_latency:250, inter_token_latency:10', failedThreshold: '0.05' }
+    expect(validateAIPerfDraft(draft)).toEqual({})
+    expect(buildAIPerfPayload(draft, { ...DEFAULT_CONNECTION, model: 'm', url: 'http://host/v1' })).toMatchObject({
+      aiperf: {
+        load: { request_count_multiplier: 3 },
+        slos: { request_latency: 250, inter_token_latency: 10 },
+        failed_request_threshold: 0.05,
+      },
+    })
+  })
+  it.each(['abc', '1.5', '0', '1001'])('rejects invalid request multiplier %s', (requestMultiplier) => {
+    expect(validateAIPerfDraft({ ...valid, requestMultiplier })).toHaveProperty('requestMultiplier')
+  })
+  it('checks the shared prefix pool against the multiplied request budget', () => {
+    const draft = { ...valid, requestCount: '10', loads: '8', pool: '12', requestMultiplier: '2' }
+    expect(validateAIPerfDraft(draft)).toEqual({})
+    expect(validateAIPerfDraft({ ...draft, requestMultiplier: '' })).toHaveProperty('pool')
+  })
+  it('rejects a request multiplier outside closed-loop multi-run mode', () => {
+    expect(validateAIPerfDraft({ ...valid, requestMultiplier: '3', mode: 'open_loop' })).toHaveProperty('requestMultiplier')
+    expect(validateAIPerfDraft({ ...valid, requestMultiplier: '3', runType: 'single', prompts: 'one' }))
+      .toHaveProperty('requestMultiplier')
+  })
+  it.each(['request_latency', 'request_latency:0', 'Bad Key:1', 'request_latency:1,request_latency:2'])(
+    'rejects malformed SLOs %s',
+    (slos) => {
+      expect(validateAIPerfDraft({ ...valid, slos })).not.toEqual({})
+    },
+  )
+  it('rejects out-of-range failed thresholds and contexts above 1M', () => {
+    expect(validateAIPerfDraft({ ...valid, slos: 'request_latency:250', failedThreshold: '1.5' }))
+      .toHaveProperty('failedThreshold')
+    expect(validateAIPerfDraft({ ...valid, inputTokens: '1048576' })).toHaveProperty('inputTokens')
+  })
+  it('strips credentials from persisted GPU DCGM URLs', () => {
+    const sanitized = sanitizedAIPerfDraft({ ...valid, gpuTelemetryUrls: 'http://gpu:9400/metrics\nhttps://u:p@gpu2:9400/metrics' })
+    expect(sanitized.gpuTelemetryUrls).toBe('http://gpu:9400/metrics')
+  })
 })

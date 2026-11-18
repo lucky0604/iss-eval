@@ -84,6 +84,8 @@ export interface WebApiContracts {
   perf_detail_response: PerfDetailResponse;
   perf_engines_response: PerfEnginesResponse;
   perf_entry_list_response: PerfEntryListResponse;
+  perf_import_request: PerfImportRequest;
+  perf_import_response: PerfImportResponse;
   perf_invoke_response: PerfInvokeResponse;
   perf_live_response: PerfLiveResponse;
   perf_metrics: PerfMetrics;
@@ -94,6 +96,7 @@ export interface WebApiContracts {
   perf_plan_response: PerfPlanResponse;
   perf_plan_run_view: PerfPlanRunView;
   perf_plan_submit_response: PerfPlanSubmitResponse;
+  perf_raw_artifacts_response: PerfRawArtifactsResponse;
   perf_requests_response: PerfRequestsResponse;
   perf_run_item: PerfRunItem;
   perf_run_summary: PerfRunSummary;
@@ -346,6 +349,7 @@ export interface LoadConfiguration {
   points: [LoadPoint, ...LoadPoint[]];
   repetitions?: number;
   request_count: number;
+  request_count_multiplier?: number | null;
 }
 /**
  * One closed-loop concurrency or open-loop request rate.
@@ -364,12 +368,12 @@ export interface PlannedTelemetry {
  * Credential-free identity of a configured telemetry node.
  */
 export interface PlannedMetricNode {
-  engine: "vllm" | "sglang";
+  engine: "vllm" | "sglang" | "dynamo";
   labels: {
     [k: string]: string;
   };
   node_id: string;
-  role: "prefill" | "decode";
+  role: "prefill" | "decode" | "frontend";
   url: string;
 }
 /**
@@ -488,7 +492,7 @@ export interface CacheNodeMetricsResponse {
  */
 export interface NodeMetricSample {
   endpoint: string;
-  engine?: ("vllm" | "sglang") | null;
+  engine?: ("vllm" | "sglang" | "dcgm" | "dynamo") | null;
   labels: {
     [k: string]: string;
   };
@@ -500,7 +504,7 @@ export interface NodeMetricSample {
   };
   phase_kind?: ("warmup" | "profiling") | null;
   request_sent_ns?: number | null;
-  role?: ("prefill" | "decode") | null;
+  role?: ("prefill" | "decode" | "frontend" | "gpu") | null;
   scope?: "node_window";
   scrape_latency_ns?: number | null;
   semantics?: "unverified";
@@ -688,7 +692,7 @@ export interface NodeScrapeSummary {
  */
 export interface NodeMetricWindow {
   attribution?: "node_window_shared_traffic";
-  engine: "vllm" | "sglang";
+  engine: "vllm" | "sglang" | "dcgm" | "dynamo";
   histogram?: HistogramWindow | null;
   labels: {
     [k: string]: string;
@@ -696,7 +700,7 @@ export interface NodeMetricWindow {
   metric: MetricMapping;
   node_id: string;
   reason?: string | null;
-  role: "prefill" | "decode";
+  role: "prefill" | "decode" | "frontend" | "gpu";
   statistic?: WindowStatistic | null;
   verification?: "deployment_unverified";
   window_source: "aiperf_phase" | "observed_request_bounds";
@@ -728,7 +732,7 @@ export interface HistogramWindow {
  * One exact upstream metric family and its non-aggregated semantics.
  */
 export interface MetricMapping {
-  engine: "vllm" | "sglang";
+  engine: "vllm" | "sglang" | "dcgm" | "dynamo";
   key: string;
   kind: "gauge" | "counter" | "histogram";
   name: string;
@@ -1298,6 +1302,34 @@ export interface PerformanceResultEntry {
   unreadable_reason?: string | null;
 }
 /**
+ * Import a server-local AIPerf artifact directory as a read-only archive.
+ */
+export interface PerfImportRequest {
+  alias?: string | null;
+  concurrency?: number | null;
+  endpoint?: string | null;
+  load_mode?: "closed_loop" | "open_loop";
+  model: string;
+  output_token_limit: number;
+  planned_requests?: number | null;
+  rate?: number | null;
+  raw_dir: string;
+  task_id?: string | null;
+}
+/**
+ * Archive coordinates for one imported AIPerf run.
+ */
+export interface PerfImportResponse {
+  metric_count: number;
+  path: string;
+  profiling_requests: number;
+  quality: "complete" | "partial" | "invalid";
+  quality_reasons?: string[];
+  root_path: string;
+  subrun_id: string;
+  task_id: string;
+}
+/**
  * Typed AIPerf task result, compatible with the shared task monitor.
  */
 export interface PerfInvokeResponse {
@@ -1358,7 +1390,7 @@ export interface ClientProgress {
 }
 export interface LiveNode {
   attempted_at_ns?: number | null;
-  engine: "vllm" | "sglang";
+  engine: "vllm" | "sglang" | "dynamo";
   /**
    * @maxItems 16
    */
@@ -1468,7 +1500,7 @@ export interface LiveNode {
         LiveGauge
       ];
   node_id: string;
-  role: "prefill" | "decode";
+  role: "prefill" | "decode" | "frontend";
   sampled_at_ns?: number | null;
   status?: "waiting" | "available" | "unavailable";
   truncated?: boolean;
@@ -1973,11 +2005,11 @@ export interface PerfPlanResponse {
  */
 export interface NodePreflight {
   elapsed_ms: number;
-  engine: "vllm" | "sglang";
+  engine: "vllm" | "sglang" | "dynamo";
   metric_names?: string[];
   node_id: string;
   reason?: string | null;
-  role: "prefill" | "decode";
+  role: "prefill" | "decode" | "frontend";
   status: "available" | "missing" | "unreachable" | "invalid";
   verification?: "deployment_unverified";
 }
@@ -1994,6 +2026,19 @@ export interface PerfPlanSubmitResponse {
   queue_position?: number | null;
   state: "reserved" | "queued" | "running" | "completed" | "stopped" | "error" | "lost";
   task_id: string;
+}
+/**
+ * Bounded listing of raw AIPerf artifacts for one run directory.
+ */
+export interface PerfRawArtifactsResponse {
+  files?: PerfRawArtifactFile[];
+}
+/**
+ * One immutable raw AIPerf artifact file.
+ */
+export interface PerfRawArtifactFile {
+  name: string;
+  size: number;
 }
 export interface PerfRequestsResponse {
   columns: string[];

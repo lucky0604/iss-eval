@@ -11,6 +11,7 @@ from typing import Dict, List, Literal, Optional, Sequence
 
 from pydantic import Field
 
+from evalscope.perf.executors.arguments import TelemetrySampleEngine, TelemetrySampleRole
 from evalscope.perf.results.models import NodeMetricSample
 from evalscope.perf.results.telemetry import (
     HistogramSample,
@@ -28,7 +29,7 @@ from evalscope.utils import BaseArgument
 class MetricMapping(BaseArgument):
     """One exact upstream metric family and its non-aggregated semantics."""
 
-    engine: Literal['vllm', 'sglang']
+    engine: TelemetrySampleEngine
     upstream_version: str
     name: str
     key: str
@@ -42,6 +43,8 @@ class MetricMapping(BaseArgument):
 _VLLM = 'https://github.com/vllm-project/vllm/blob/v0.10.2/vllm/v1/metrics/loggers.py'
 _SGLANG = 'https://github.com/sgl-project/sglang/blob/v0.5.2/python/sglang/srt/metrics/collector.py'
 _SGLANG_NEW = 'https://github.com/sgl-project/sglang/blob/v0.5.23/python/sglang/srt/observability/metrics_collector.py'
+_DCGM = 'https://github.com/NVIDIA/dcgm-exporter/blob/main/etc/default-counters.csv'
+_DYNAMO = 'https://github.com/ai-dynamo/dynamo/blob/main/lib/llm/src/kv_router/metrics.rs'
 
 
 def _mapping(
@@ -54,17 +57,32 @@ def _mapping(
     scale: float = 1,
     version: Optional[str] = None,
 ) -> MetricMapping:
-    selected = version or ('0.10.2' if engine == 'vllm' else '0.5.2')
+    selected = version or (
+        '0.10.2'
+        if engine == 'vllm'
+        else ('dcgm-exporter' if engine == 'dcgm' else ('dynamo' if engine == 'dynamo' else '0.5.2'))
+    )
+    source_url = (
+        _VLLM
+        if engine == 'vllm'
+        else (
+            _DCGM
+            if engine == 'dcgm'
+            else (_DYNAMO if engine == 'dynamo' else (_SGLANG_NEW if selected == '0.5.23' else _SGLANG))
+        )
+    )
     return MetricMapping(
         engine=engine,
         upstream_version=selected,
-        name=f'{engine}:{name}',
+        # Prometheus families for vLLM/SGLang already carry an engine prefix;
+        # Dynamo names are unprefixed and must stay byte-identical to samples.
+        name=name if engine == 'dynamo' else f'{engine}:{name}',
         key=key,
         kind=kind,
         unit=unit,
         source_unit=source_unit or unit,
         scale=scale,
-        source_url=_VLLM if engine == 'vllm' else (_SGLANG_NEW if selected == '0.5.23' else _SGLANG),
+        source_url=source_url,
     )
 
 
@@ -105,6 +123,54 @@ MAPPINGS = (
         '0.5.23',
     ),
     _mapping('sglang', 'kv_transfer_speed_gb_s', 'kv_transfer_speed', 'histogram', 'GB/s', version='0.5.23'),
+    # DCGM exporter families. AIPerf GPU telemetry is normalized to these names
+    # during import so exporter snapshots and AIPerf samples share one mapping.
+    _mapping('dcgm', 'DCGM_FI_DEV_GPU_UTIL', 'gpu_utilization', 'gauge', 'percent'),
+    _mapping('dcgm', 'DCGM_FI_DEV_FB_USED', 'gpu_memory_used', 'gauge', 'MiB'),
+    _mapping('dcgm', 'DCGM_FI_DEV_FB_FREE', 'gpu_memory_free', 'gauge', 'MiB'),
+    _mapping('dcgm', 'DCGM_FI_DEV_FB_TOTAL', 'gpu_memory_total', 'gauge', 'MiB'),
+    _mapping('dcgm', 'DCGM_FI_DEV_POWER_USAGE', 'gpu_power_usage', 'gauge', 'W'),
+    _mapping('dcgm', 'DCGM_FI_DEV_GPU_TEMP', 'gpu_temperature', 'gauge', 'celsius'),
+    _mapping('dcgm', 'DCGM_FI_DEV_MEMORY_TEMP', 'gpu_memory_temperature', 'gauge', 'celsius'),
+    _mapping('dcgm', 'DCGM_FI_DEV_MEM_COPY_UTIL', 'gpu_memory_utilization', 'gauge', 'percent'),
+    _mapping('dcgm', 'DCGM_FI_DEV_ENC_UTIL', 'gpu_encoder_utilization', 'gauge', 'percent'),
+    _mapping('dcgm', 'DCGM_FI_DEV_DEC_UTIL', 'gpu_decoder_utilization', 'gauge', 'percent'),
+    _mapping('dcgm', 'DCGM_FI_DEV_XID_ERRORS', 'gpu_xid_errors', 'gauge', 'count'),
+    _mapping('dcgm', 'DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION', 'gpu_energy_consumption', 'counter', 'mJ'),
+    _mapping('dcgm', 'DCGM_FI_DEV_SM_CLOCK', 'gpu_sm_clock', 'gauge', 'MHz'),
+    _mapping('dcgm', 'DCGM_FI_DEV_MEM_CLOCK', 'gpu_memory_clock', 'gauge', 'MHz'),
+    _mapping('dcgm', 'DCGM_FI_PROF_DRAM_ACTIVE', 'gpu_dram_active', 'gauge', 'ratio'),
+    _mapping('dcgm', 'DCGM_FI_PROF_SM_ACTIVE', 'gpu_sm_active', 'gauge', 'ratio'),
+    _mapping('dcgm', 'DCGM_FI_DEV_POWER_VIOLATION', 'gpu_power_violation', 'gauge', 'microseconds'),
+    _mapping('dcgm', 'DCGM_FI_DEV_THERMAL_VIOLATION', 'gpu_thermal_violation', 'gauge', 'microseconds'),
+    # Dynamo PD frontend and KV router families. AIPerf strips the _total
+    # suffix from counters, so both spellings map to one canonical metric.
+    _mapping('dynamo', 'dynamo_frontend_active_requests', 'active_requests', 'gauge', 'requests'),
+    _mapping('dynamo', 'dynamo_frontend_inflight_requests', 'inflight_requests', 'gauge', 'requests'),
+    _mapping('dynamo', 'dynamo_frontend_queued_requests', 'waiting_requests', 'gauge', 'requests'),
+    _mapping('dynamo', 'dynamo_frontend_time_to_first_token_seconds', 'ttft', 'histogram', 'seconds'),
+    _mapping('dynamo', 'dynamo_frontend_inter_token_latency_seconds', 'itl', 'histogram', 'seconds'),
+    _mapping('dynamo', 'dynamo_frontend_request_duration_seconds', 'e2e_latency', 'histogram', 'seconds'),
+    _mapping('dynamo', 'dynamo_frontend_cached_tokens', 'cached_prompt_tokens', 'histogram', 'tokens'),
+    _mapping('dynamo', 'dynamo_frontend_input_sequence_tokens', 'input_tokens', 'histogram', 'tokens'),
+    _mapping('dynamo', 'dynamo_frontend_output_sequence_tokens', 'output_tokens', 'histogram', 'tokens'),
+    _mapping('dynamo', 'dynamo_frontend_model_total_kv_blocks', 'total_kv_blocks', 'gauge', 'blocks'),
+    _mapping('dynamo', 'dynamo_frontend_model_ready', 'model_ready', 'gauge', 'boolean'),
+    _mapping('dynamo', 'dynamo_frontend_requests_total', 'requests_total', 'counter', 'requests'),
+    _mapping('dynamo', 'dynamo_frontend_requests', 'requests_total', 'counter', 'requests'),
+    _mapping('dynamo', 'dynamo_frontend_failures_total', 'request_failures', 'counter', 'requests'),
+    _mapping('dynamo', 'dynamo_frontend_failures', 'request_failures', 'counter', 'requests'),
+    _mapping('dynamo', 'dynamo_component_router_kv_hit_rate', 'router_kv_hit_rate', 'histogram', 'ratio'),
+    _mapping('dynamo', 'dynamo_component_router_shared_cache_hit_rate', 'shared_cache_hit_rate', 'histogram', 'ratio'),
+    _mapping('dynamo', 'dynamo_component_router_time_to_first_token_seconds', 'router_ttft', 'histogram', 'seconds'),
+    _mapping('dynamo', 'dynamo_component_router_inter_token_latency_seconds', 'router_itl', 'histogram', 'seconds'),
+    _mapping(
+        'dynamo',
+        'dynamo_component_router_kv_transfer_estimated_latency_seconds',
+        'kv_transfer_latency',
+        'histogram',
+        'seconds',
+    ),
 )
 _INDEX = {(item.engine, item.name, item.kind): item for item in MAPPINGS}
 _NAMES = {(item.engine, item.name): item for item in MAPPINGS}
@@ -114,8 +180,8 @@ class NodeMetricWindow(BaseArgument):
     """A single node/label series with upstream definition and measured window."""
 
     node_id: str
-    role: Literal['prefill', 'decode']
-    engine: Literal['vllm', 'sglang']
+    role: TelemetrySampleRole
+    engine: TelemetrySampleEngine
     labels: Dict[str, str]
     metric: MetricMapping
     verification: Literal['deployment_unverified'] = 'deployment_unverified'
@@ -307,6 +373,8 @@ def analyze_node_metrics(normalized_dir: str, max_gap_ns: int, limit: int = 1000
         for item in series
     )
     quality_reasons = ['deployment_version_unverified', 'node_window_shared_traffic']
+    if any(item.engine == 'dcgm' for item in series):
+        quality_reasons.append('gpu_telemetry_source_unverified')
     if source == 'observed_request_bounds':
         quality_reasons.append('observed_request_bounds_not_phase_window')
     if bounds.timed_requests != bounds.total_requests:
@@ -328,7 +396,7 @@ def summarize_scrapes(samples: Sequence[NodeMetricSample]) -> List[NodeScrapeSum
     """Deduplicate metric families within each observed endpoint scrape."""
     nodes: dict[str, dict[int, Optional[int]]] = defaultdict(dict)
     for sample in samples:
-        if sample.node_id is not None:
+        if sample.node_id is not None and sample.role != 'gpu':
             nodes[sample.node_id][sample.timestamp_ns] = sample.scrape_latency_ns
     results = []
     for node_id, scrapes in sorted(nodes.items()):

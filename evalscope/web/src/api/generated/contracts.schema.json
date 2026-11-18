@@ -3892,7 +3892,8 @@
         "engine": {
           "enum": [
             "vllm",
-            "sglang"
+            "sglang",
+            "dynamo"
           ],
           "type": "string"
         },
@@ -3909,7 +3910,8 @@
         "role": {
           "enum": [
             "prefill",
-            "decode"
+            "decode",
+            "frontend"
           ],
           "type": "string"
         },
@@ -3976,6 +3978,19 @@
         "request_count": {
           "exclusiveMinimum": 0,
           "type": "integer"
+        },
+        "request_count_multiplier": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 1000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -4135,7 +4150,9 @@
         "engine": {
           "enum": [
             "vllm",
-            "sglang"
+            "sglang",
+            "dcgm",
+            "dynamo"
           ],
           "type": "string"
         },
@@ -4650,7 +4667,9 @@
             {
               "enum": [
                 "vllm",
-                "sglang"
+                "sglang",
+                "dcgm",
+                "dynamo"
               ],
               "type": "string"
             },
@@ -4725,7 +4744,9 @@
             {
               "enum": [
                 "prefill",
-                "decode"
+                "decode",
+                "frontend",
+                "gpu"
               ],
               "type": "string"
             },
@@ -4823,7 +4844,9 @@
         "engine": {
           "enum": [
             "vllm",
-            "sglang"
+            "sglang",
+            "dcgm",
+            "dynamo"
           ],
           "type": "string"
         },
@@ -4864,7 +4887,9 @@
         "role": {
           "enum": [
             "prefill",
-            "decode"
+            "decode",
+            "frontend",
+            "gpu"
           ],
           "type": "string"
         },
@@ -5008,7 +5033,8 @@
         "engine": {
           "enum": [
             "vllm",
-            "sglang"
+            "sglang",
+            "dynamo"
           ],
           "type": "string"
         },
@@ -5035,7 +5061,8 @@
         "role": {
           "enum": [
             "prefill",
-            "decode"
+            "decode",
+            "frontend"
           ],
           "type": "string"
         },
@@ -5475,6 +5502,156 @@
         "limit",
         "observed_at",
         "root_path"
+      ],
+      "type": "object"
+    },
+    "PerfImportRequest": {
+      "additionalProperties": false,
+      "description": "Import a server-local AIPerf artifact directory as a read-only archive.",
+      "properties": {
+        "alias": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "concurrency": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "load_mode": {
+          "default": "closed_loop",
+          "enum": [
+            "closed_loop",
+            "open_loop"
+          ],
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "output_token_limit": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "planned_requests": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "raw_dir": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "raw_dir",
+        "model",
+        "output_token_limit"
+      ],
+      "type": "object"
+    },
+    "PerfImportResponse": {
+      "additionalProperties": false,
+      "description": "Archive coordinates for one imported AIPerf run.",
+      "properties": {
+        "metric_count": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "profiling_requests": {
+          "type": "integer"
+        },
+        "quality": {
+          "enum": [
+            "complete",
+            "partial",
+            "invalid"
+          ],
+          "type": "string"
+        },
+        "quality_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "root_path": {
+          "type": "string"
+        },
+        "subrun_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "subrun_id",
+        "root_path",
+        "path",
+        "quality",
+        "profiling_requests",
+        "metric_count"
       ],
       "type": "object"
     },
@@ -6602,6 +6779,37 @@
         "task_id",
         "state"
       ],
+      "type": "object"
+    },
+    "PerfRawArtifactFile": {
+      "additionalProperties": false,
+      "description": "One immutable raw AIPerf artifact file.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "size"
+      ],
+      "type": "object"
+    },
+    "PerfRawArtifactsResponse": {
+      "additionalProperties": false,
+      "description": "Bounded listing of raw AIPerf artifacts for one run directory.",
+      "properties": {
+        "files": {
+          "items": {
+            "$ref": "#/$defs/PerfRawArtifactFile"
+          },
+          "type": "array"
+        }
+      },
       "type": "object"
     },
     "PerfRequestRecord": {
@@ -8586,7 +8794,8 @@
         "engine": {
           "enum": [
             "vllm",
-            "sglang"
+            "sglang",
+            "dynamo"
           ],
           "type": "string"
         },
@@ -8602,7 +8811,8 @@
         "role": {
           "enum": [
             "prefill",
-            "decode"
+            "decode",
+            "frontend"
           ],
           "type": "string"
         },
@@ -11294,6 +11504,12 @@
     "perf_entry_list_response": {
       "$ref": "#/$defs/PerfEntryListResponse"
     },
+    "perf_import_request": {
+      "$ref": "#/$defs/PerfImportRequest"
+    },
+    "perf_import_response": {
+      "$ref": "#/$defs/PerfImportResponse"
+    },
     "perf_invoke_response": {
       "$ref": "#/$defs/PerfInvokeResponse"
     },
@@ -11323,6 +11539,9 @@
     },
     "perf_plan_submit_response": {
       "$ref": "#/$defs/PerfPlanSubmitResponse"
+    },
+    "perf_raw_artifacts_response": {
+      "$ref": "#/$defs/PerfRawArtifactsResponse"
     },
     "perf_requests_response": {
       "$ref": "#/$defs/PerfRequestsResponse"
@@ -11438,6 +11657,9 @@
     "list_perf_runs_response",
     "perf_detail_response",
     "perf_engines_response",
+    "perf_import_request",
+    "perf_import_response",
+    "perf_raw_artifacts_response",
     "perf_invoke_response",
     "perf_live_response",
     "perf_plan_response",

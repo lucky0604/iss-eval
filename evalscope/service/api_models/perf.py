@@ -1,7 +1,7 @@
 import math
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import AfterValidator, Field
+from pydantic import AfterValidator, Field, model_validator
 
 from evalscope.perf.experiments.orchestrator import CacheExperimentOutcome
 from evalscope.perf.experiments.planner import CacheExperimentPlan
@@ -19,7 +19,7 @@ from evalscope.perf.results.models import (
     PerfRunResult,
 )
 
-from .common import ApiResponseModel
+from .common import ApiRequestModel, ApiResponseModel
 from .reports import MetricSemantics
 from .tasks import PerfTestType, ResultCapabilities, TaskRawStatus
 
@@ -323,3 +323,54 @@ class CacheNodeMetricsResponse(ApiResponseModel):
     samples: List[NodeMetricSample]
     aggregation: Literal['raw'] = 'raw'
     downsample: Literal['none'] = 'none'
+
+
+class PerfImportRequest(ApiRequestModel):
+    """Import a server-local AIPerf artifact directory as a read-only archive."""
+
+    raw_dir: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    alias: Optional[str] = None
+    endpoint: Optional[str] = None
+    load_mode: Literal['closed_loop', 'open_loop'] = 'closed_loop'
+    concurrency: Optional[int] = Field(default=None, gt=0)
+    rate: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    planned_requests: Optional[int] = Field(default=None, gt=0)
+    output_token_limit: int = Field(gt=0)
+    task_id: Optional[str] = Field(default=None, pattern=r'^[A-Za-z0-9_.-]+$')
+
+    @model_validator(mode='after')
+    def validate_load(self) -> 'PerfImportRequest':
+        if self.load_mode == 'closed_loop' and (self.concurrency is None or self.rate is not None):
+            raise ValueError('Closed-loop import needs concurrency and no rate')
+        if self.load_mode == 'open_loop' and (self.rate is None or self.concurrency is not None):
+            raise ValueError('Open-loop import needs rate and no concurrency')
+        if self.task_id is not None and (self.task_id in {'.', '..'} or self.task_id.startswith('.')):
+            raise ValueError('task_id must not be a path traversal segment')
+        return self
+
+
+class PerfImportResponse(ApiResponseModel):
+    """Archive coordinates for one imported AIPerf run."""
+
+    task_id: str
+    subrun_id: str
+    root_path: str
+    path: str
+    quality: Literal['complete', 'partial', 'invalid']
+    quality_reasons: List[str] = Field(default_factory=list)
+    profiling_requests: int
+    metric_count: int
+
+
+class PerfRawArtifactFile(ApiResponseModel):
+    """One immutable raw AIPerf artifact file."""
+
+    name: str
+    size: int = Field(ge=0)
+
+
+class PerfRawArtifactsResponse(ApiResponseModel):
+    """Bounded listing of raw AIPerf artifacts for one run directory."""
+
+    files: List[PerfRawArtifactFile] = Field(default_factory=list)

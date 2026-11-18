@@ -31,6 +31,7 @@ export default function NodeWindowPanel({ analysis, taskId, subrunId, rootPath, 
   return <section className="space-y-3 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-[var(--shadow-sm)]" aria-label={zh ? '节点窗口指标' : 'Node-window metrics'}>
     <h3 className="type-label-xs">{zh ? '节点窗口指标' : 'Node-window metrics'}</h3>
     <p className="type-body-xs text-[var(--text-muted)]">{zh ? '范围是节点共享流量，不是逐请求 P/D 耗时；部署版本、标签和路由覆盖待核验。' : 'Node windows include shared traffic; they are not per-request P/D timings. Verify deployment version, labels and routing coverage.'}</p>
+    {(analysis?.series ?? []).some((row) => row.role === 'gpu') && <p className="type-body-xs text-[var(--text-muted)]">{zh ? 'GPU 序列来自 AIPerf GPU telemetry 或 DCGM Prometheus 快照，按设备时间线聚合，不代表逐请求归因。' : 'GPU series come from AIPerf GPU telemetry or DCGM Prometheus snapshots and are aggregated per device timeline, not attributed to individual requests.'}</p>}
     <p className="text-sm">{zh ? '状态 / 窗口来源' : 'Availability / window source'}: {analysis?.availability ?? '—'} / {analysis?.window_source ?? '—'}
       {analysis?.window && ` · ${analysis.window.start_ns}–${analysis.window.end_ns} ns`}</p>
     {analysis?.reason && <p className="text-sm">{analysis.reason}</p>}

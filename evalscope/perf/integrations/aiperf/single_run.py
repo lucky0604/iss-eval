@@ -107,7 +107,7 @@ def _validate_input(path: Path, root: Path, arguments: AIPerfArguments) -> None:
             ):
                 raise ValueError('Single-turn inputs must contain text and the configured output limit')
             count += 1
-    if count != arguments.load.request_count:
+    if count != arguments.load.active_request_count:
         raise ValueError('Input count must match the profiling request count')
 
 
@@ -144,11 +144,14 @@ def prepare_single_run(
     if artifacts.exists():
         raise ValueError('Artifact directory already exists')
     point = arguments.load.points[0]
-    phase = {'name': 'profiling', 'kind': 'profiling', 'requests': arguments.load.request_count}
+    requests = arguments.load.active_request_count
+    phase = {'name': 'profiling', 'kind': 'profiling', 'requests': requests}
     if arguments.load.mode == 'closed_loop':
         phase.update({'type': 'concurrency', 'concurrency': point.concurrency})
     else:
         phase.update({'type': 'poisson', 'rate': point.rate})
+    if arguments.failed_request_threshold is not None:
+        phase['failed_request_threshold'] = arguments.failed_request_threshold
     endpoint_config = {'urls': [base], 'path': endpoint, 'type': 'chat', 'streaming': True}
     environment = {'AIPERF_UI_REALTIME_METRICS_ENABLED': 'true'}
     if arguments.api_key is not None:
@@ -170,18 +173,25 @@ def prepare_single_run(
                     'type': 'file',
                     'path': str(Path(input_file).resolve()),
                     'format': 'single_turn',
-                    'entries': arguments.load.request_count,
+                    'entries': requests,
                 }
             ],
             'phases': [phase],
             'runtime': {'stats_interval': 2},
             'tokenizer': {'name': tokenizer_directory},
+            **({'slos': arguments.slos} if arguments.slos else {}),
             'server_metrics': {
                 'enabled': bool(targets),
                 'urls': [
                     relay.collector_urls.get(target.node_id, target.url) if relay else target.url for target in targets
                 ],
                 'formats': ['json', 'jsonl'],
+            },
+            'gpu_telemetry': {
+                'enabled': arguments.gpu_telemetry,
+                'collector': 'dcgm' if arguments.gpu_telemetry_urls else 'pynvml',
+                'mode': 'summary',
+                **({'urls': arguments.gpu_telemetry_urls} if arguments.gpu_telemetry_urls else {}),
             },
             'artifacts': {'dir': str(artifacts), 'records': ['jsonl'], 'raw': True, 'auto_plot': False},
         },

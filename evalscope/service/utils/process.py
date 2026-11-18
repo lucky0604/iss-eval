@@ -361,7 +361,10 @@ def _experiment_worker(
         if cancel_event.is_set():
             raise WorkloadCancelled()
         tokenizer = HuggingFacePrefixTokenizer(arguments.tokenizer_path)
-        pool = tokenizer.candidate_ids(max(16384, arguments.load.request_count), cancel_event)
+        pool = tokenizer.candidate_ids(
+            max(16384, max(arguments.load.effective_request_count(point) for point in arguments.load.points)),
+            cancel_event,
+        )
         return run_cache_experiment(
             arguments, context, tokenizer, pool, tokenizer.tokenizer_hash, tokenizer.template_hash, cancel_event
         )

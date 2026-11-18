@@ -8,6 +8,16 @@ export function fmtMs(ms: number | null | undefined): string {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
+/**
+ * Format a byte count with binary units: `512 B`, `2.0 KiB`, `4.0 MiB`, `1.50 GiB`.
+ */
+export function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`
+  if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MiB`
+  return `${(size / 1024 / 1024 / 1024).toFixed(2)} GiB`
+}
+
 /** How much of an ISO timestamp to keep. */
 export type TimestampPrecision = 'minutes' | 'seconds'
 

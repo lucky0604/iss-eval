@@ -6,6 +6,7 @@ from evalscope.report.report import ExecutionSummary
 
 from .common import (
     ActiveTaskInfo,
+    ApiRequestModel,
     ApiResponseModel,
     ConfigResponse,
     DataFrameResponse,
@@ -35,9 +36,13 @@ from .perf import (
     ListPerfRunsResponse,
     PerfDetailResponse,
     PerfEnginesResponse,
+    PerfImportRequest,
+    PerfImportResponse,
     PerfInvokeResponse,
     PerfLiveResponse,
     PerfPlanResponse,
+    PerfRawArtifactFile,
+    PerfRawArtifactsResponse,
     PerfRequestsResponse,
     PerfRunItem,
     PerfRunsListResponse,
@@ -130,6 +135,9 @@ class WebApiContracts(BaseModel):
     list_perf_runs_response: ListPerfRunsResponse
     perf_detail_response: PerfDetailResponse
     perf_engines_response: PerfEnginesResponse
+    perf_import_request: PerfImportRequest
+    perf_import_response: PerfImportResponse
+    perf_raw_artifacts_response: PerfRawArtifactsResponse
     perf_invoke_response: PerfInvokeResponse
     perf_live_response: PerfLiveResponse
     perf_plan_response: PerfPlanResponse
@@ -185,6 +193,7 @@ __all__ = [
     'ActiveTaskInfo',
     'AiPerfSingleConfigSnapshot',
     'AnalysisResponse',
+    'ApiRequestModel',
     'ApiResponseModel',
     'AvailabilityState',
     'BenchmarkEntry',
