@@ -6,12 +6,13 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import quote, urlsplit
 
 from evalscope.perf.executors.external import Cancellation
@@ -22,6 +23,7 @@ from evalscope.perf.results.models import (
     CacheRequestGroup,
     CacheRequestGroups,
     ImportManifest,
+    InferredRunIdentity,
     MetricStatistics,
     MetricTargetReference,
     NodeMetricSample,
@@ -185,6 +187,190 @@ def _owned_file(directory: Path, name: str) -> Path:
     if not path.is_relative_to(directory) or not path.is_file():
         raise ValueError('Result file escapes its generation')
     return path
+
+
+_RUN_RECORD = 'profile_export.jsonl'
+_RUN_SUMMARY = 'profile_export_aiperf.json'
+_RATE_PHASE_TYPES = frozenset({'rate', 'request_rate', 'fixed_schedule'})
+_CLI_IDENTITY_FLAGS = {
+    'model': '--model',
+    'concurrency': '--concurrency',
+    'rate': '--request-rate',
+    'planned_requests': '--request-count',
+    'output_token_limit': '--osl',
+}
+
+
+def discover_run_directories(raw: Path) -> List[Path]:
+    """Return one directory per AIPerf run under an artifact root.
+
+    A single run keeps its record file in the root; a batch job writes
+    ``exports/<run>/`` instead, so every directory that holds a record file is
+    one run. Paths outside the root are rejected before anything is read.
+    """
+    if (raw / _RUN_RECORD).is_file():
+        return [raw]
+    runs = sorted({item.parent.resolve() for item in raw.rglob(_RUN_RECORD) if item.is_file()})
+    for run in runs:
+        if not run.is_relative_to(raw):
+            raise ValueError('Raw artifact path escapes the run directory')
+    return runs
+
+
+def load_run_summary(raw: Path) -> Optional[dict]:
+    """Read the summary of one run directory; ``None`` when it was not exported."""
+    path = raw / _RUN_SUMMARY
+    if not path.is_file():
+        return None
+    return _json(path)
+
+
+def _text(value: Any) -> Optional[str]:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _positive_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float):
+        return int(value) if value.is_integer() and value > 0 else None
+    if isinstance(value, str) and re.fullmatch(r'\d+', value.strip()):
+        number = int(value.strip())
+        return number if number > 0 else None
+    return None
+
+
+def _positive_float(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def _cli_identity(summary: Optional[dict]) -> Dict[str, str]:
+    """Pull identity flags out of the recorded ``aiperf profile`` command."""
+    run_info = summary.get('run_info') if isinstance(summary, dict) else None
+    command = run_info.get('cli_command') if isinstance(run_info, dict) else None
+    if not isinstance(command, str):
+        return {}
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return {}
+    values = {}
+    for key, flag in _CLI_IDENTITY_FLAGS.items():
+        if flag not in tokens:
+            continue
+        index = tokens.index(flag)
+        if index + 1 < len(tokens) and not tokens[index + 1].startswith('-'):
+            values[key] = tokens[index + 1]
+    return values
+
+
+def _profiling_phase(phases: Any) -> Optional[dict]:
+    if not isinstance(phases, list):
+        return None
+    rows = [row for row in phases if isinstance(row, dict)]
+    return next((row for row in rows if row.get('kind') == 'profiling'), rows[0] if rows else None)
+
+
+def infer_run_identity(summary: Optional[dict]) -> InferredRunIdentity:
+    """Read the run identity an AIPerf summary already declares.
+
+    ``input_config`` is the structured record and wins; ``run_info.cli_command``
+    only fills the gaps it left, so renaming a field cannot silently redefine a
+    run. A field stays ``None`` when neither source declares it, which lets the
+    caller ask the operator instead of guessing.
+    """
+    identity = InferredRunIdentity()
+    config = summary.get('input_config') if isinstance(summary, dict) else None
+    config = config if isinstance(config, dict) else {}
+    cli = _cli_identity(summary)
+
+    models = config.get('models')
+    items = models.get('items') if isinstance(models, dict) else None
+    declared = _text(items[0].get('name')) if isinstance(items, list) and items and isinstance(items[0], dict) else None
+    identity.model = declared or _text(cli.get('model'))
+    if identity.model is not None:
+        identity.sources['model'] = 'input_config.models' if declared else 'run_info.cli_command'
+
+    endpoint = config.get('endpoint')
+    urls = endpoint.get('urls') if isinstance(endpoint, dict) else None
+    if isinstance(urls, list) and urls:
+        identity.endpoint = _text(urls[0])
+        if identity.endpoint is not None:
+            identity.sources['endpoint'] = 'input_config.endpoint'
+
+    phase = _profiling_phase(config.get('phases'))
+    if phase is not None:
+        if phase.get('type') == 'concurrency':
+            concurrency = _positive_int(phase.get('concurrency'))
+            if concurrency is not None:
+                identity.load_mode = 'closed_loop'
+                identity.concurrency = concurrency
+                identity.sources['load_mode'] = 'input_config.phases'
+                identity.sources['concurrency'] = 'input_config.phases'
+        elif phase.get('type') in _RATE_PHASE_TYPES:
+            rate = _positive_float(phase.get('rate', phase.get('request_rate')))
+            if rate is not None:
+                identity.load_mode = 'open_loop'
+                identity.rate = rate
+                identity.sources['load_mode'] = 'input_config.phases'
+                identity.sources['rate'] = 'input_config.phases'
+        requests = _positive_int(phase.get('requests'))
+        if requests is not None:
+            identity.planned_requests = requests
+            identity.sources['planned_requests'] = 'input_config.phases'
+
+    if identity.load_mode is None:
+        concurrency = _positive_int(cli.get('concurrency'))
+        rate = _positive_float(cli.get('rate'))
+        if concurrency is not None and rate is None:
+            identity.load_mode = 'closed_loop'
+            identity.concurrency = concurrency
+            identity.sources['load_mode'] = 'run_info.cli_command'
+            identity.sources['concurrency'] = 'run_info.cli_command'
+        elif rate is not None and concurrency is None:
+            identity.load_mode = 'open_loop'
+            identity.rate = rate
+            identity.sources['load_mode'] = 'run_info.cli_command'
+            identity.sources['rate'] = 'run_info.cli_command'
+
+    if identity.planned_requests is None:
+        requests = _positive_int(cli.get('planned_requests'))
+        if requests is not None:
+            identity.planned_requests = requests
+            identity.sources['planned_requests'] = 'run_info.cli_command'
+
+    mean = None
+    datasets = config.get('datasets')
+    if isinstance(datasets, list) and datasets and isinstance(datasets[0], dict):
+        prompts = datasets[0].get('prompts')
+        osl = prompts.get('osl') if isinstance(prompts, dict) else None
+        mean = osl.get('mean') if isinstance(osl, dict) else None
+    declared_osl = (
+        _positive_int(round(float(mean))) if isinstance(mean, (int, float)) and not isinstance(mean, bool) else None
+    )
+    if declared_osl is not None:
+        identity.output_token_limit = declared_osl
+        identity.sources['output_token_limit'] = 'input_config.datasets'
+    else:
+        limit = _positive_int(cli.get('output_token_limit'))
+        if limit is not None:
+            identity.output_token_limit = limit
+            identity.sources['output_token_limit'] = 'run_info.cli_command'
+
+    return identity
 
 
 def _number(value: Any) -> Optional[float]:

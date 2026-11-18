@@ -8,7 +8,7 @@ import tempfile
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from flask import Blueprint, current_app, jsonify, make_response, request, send_file, stream_template_string
 from pydantic import ValidationError
@@ -39,7 +39,10 @@ from evalscope.perf.plugin.registry import ApiRegistry, DatasetRegistry
 from evalscope.perf.results.aiperf_import import (
     NodeSeriesBudgetExceeded,
     NodeSeriesNotFound,
+    discover_run_directories,
     import_aiperf_run,
+    infer_run_identity,
+    load_run_summary,
     query_aiperf_requests,
     query_node_metric_series,
     query_node_metrics,
@@ -47,6 +50,7 @@ from evalscope.perf.results.aiperf_import import (
 )
 from evalscope.perf.results.models import (
     AIPerfImportArguments,
+    InferredRunIdentity,
     MetricTargetReference,
     NodeMetricSeriesQuery,
     PerfRequestRecord,
@@ -1616,12 +1620,173 @@ def _artifact_digest(root: Path) -> str:
     return digest.hexdigest()
 
 
+# Imported archives carry no telemetry interval, so 5 s is the fallback scrape
+# gap used to decide whether a GPU timeline is still contiguous.
+_IMPORT_NODE_GAP_NS = 5_000_000_000
+_IMPORT_RAW_LIMIT_BYTES = 512 * 1024 * 1024
+# ``inputs.json`` repeats the full prompt set that the record file already holds,
+# so keeping it would multiply the archive size without adding provenance.
+_IMPORT_RAW_EXCLUDES = frozenset({'inputs.json'})
+_MAX_IMPORT_RUNS = 200
+
+
+class _ImportConflict(ValueError):
+    """The requested task id already holds an archive."""
+
+
+def _source_dir(run_dir: Path, raw: Path) -> str:
+    """Path of one run relative to the imported root, for operator-facing reports."""
+    relative = run_dir.relative_to(raw).as_posix()
+    return relative or '.'
+
+
+def _import_task_id(run_dir: Path, raw: Path, batch: bool, requested: Optional[str], digest: str) -> str:
+    if requested:
+        return requested
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    if not batch:
+        return f'import_{stamp}_{digest[:8]}'
+    # A batch run is identified by its directory, since every run shares the
+    # same build timestamp and would otherwise collide on the digest alone.
+    slug = ''.join(char if char.isalnum() or char in '_.-' else '_' for char in _source_dir(run_dir, raw))
+    return f'import_{stamp}_{slug.strip("_")[:64]}'
+
+
+def _resolve_import_identity(identity: InferredRunIdentity, settings: PerfImportRequest) -> Dict[str, Any]:
+    """Merge explicit request values with the identity recorded in the artifacts.
+
+    A recorded value wins over nothing, but an explicit value that contradicts it
+    is an error: silently overriding would label the run with a load profile it
+    never executed.
+    """
+    inferred: List[str] = []
+
+    def resolve(field: str, explicit: Any, recorded: Any) -> Any:
+        if explicit is not None and recorded is not None and explicit != recorded:
+            raise ValueError(f'{field} conflicts with the artifacts: request={explicit!r} artifacts={recorded!r}')
+        if explicit is not None:
+            return explicit
+        if recorded is not None:
+            inferred.append(field)
+        return recorded
+
+    model = resolve('model', settings.model, identity.model)
+    if model is None:
+        raise ValueError('model is not recorded in the artifacts; pass model explicitly')
+    load_mode = resolve('load_mode', settings.load_mode, identity.load_mode)
+    if load_mode is None:
+        raise ValueError('load_mode is not recorded in the artifacts; pass load_mode explicitly')
+    if load_mode == 'closed_loop':
+        concurrency = resolve('concurrency', settings.concurrency, identity.concurrency)
+        if concurrency is None:
+            raise ValueError('concurrency is not recorded in the artifacts; pass concurrency explicitly')
+        rate = None
+    else:
+        rate = resolve('rate', settings.rate, identity.rate)
+        if rate is None:
+            raise ValueError('rate is not recorded in the artifacts; pass rate explicitly')
+        concurrency = None
+    output_token_limit = resolve('output_token_limit', settings.output_token_limit, identity.output_token_limit)
+    if output_token_limit is None:
+        raise ValueError('output_token_limit is not recorded in the artifacts; pass output_token_limit explicitly')
+    return {
+        'model': model,
+        'endpoint': settings.endpoint or sanitize_endpoint(identity.endpoint),
+        'load_mode': load_mode,
+        'concurrency': concurrency,
+        'rate': rate,
+        'output_token_limit': output_token_limit,
+        'planned_requests': settings.planned_requests or identity.planned_requests,
+        'inferred_fields': inferred,
+    }
+
+
+def _import_run_archive(run_dir: Path, raw: Path, settings: PerfImportRequest, batch: bool) -> Dict[str, Any]:
+    """Archive one run directory and return its coordinates."""
+    from ..utils import log
+
+    resolved = _resolve_import_identity(infer_run_identity(load_run_summary(run_dir)), settings)
+    digest = _artifact_digest(run_dir)
+    task_id = _import_task_id(run_dir, raw, batch, settings.task_id, digest)
+    root = Path(log.OUTPUT_DIR) / 'imports' / task_id
+    perf = root / 'perf'
+    if perf.exists():
+        raise _ImportConflict(f'Import task already exists: {task_id}')
+
+    try:
+        perf.mkdir(parents=True, exist_ok=False, mode=0o700)
+        # Keep the auditable JSON/JSONL artifacts inside the archive so raw
+        # downloads do not depend on the external source directory surviving.
+        raw_archive = perf / 'raw' / 'aiperf'
+        for source in run_dir.rglob('*'):
+            if (
+                source.is_file()
+                and not source.is_symlink()
+                and source.suffix in {'.json', '.jsonl'}
+                and source.name not in _IMPORT_RAW_EXCLUDES
+                and source.stat().st_size <= _IMPORT_RAW_LIMIT_BYTES
+            ):
+                target = raw_archive / source.relative_to(run_dir)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+        normalized = perf / 'normalized'
+        result = import_aiperf_run(AIPerfImportArguments(raw_dir=str(run_dir), normalized_dir=str(normalized)))
+        manifest = SingleRunManifest(
+            task_id=task_id,
+            model=resolved['model'],
+            alias=settings.alias,
+            endpoint=resolved['endpoint'],
+            load_mode=resolved['load_mode'],
+            concurrency=resolved['concurrency'],
+            rate=resolved['rate'],
+            planned_requests=resolved['planned_requests'] or result.profiling_requests,
+            output_token_limit=resolved['output_token_limit'],
+            input_sha256=digest,
+            status='completed',
+            artifact_status='available',
+            normalized='normalized',
+            quality=result.quality,
+            quality_reasons=result.quality_reasons,
+        )
+        write_single_manifest(str(perf), manifest)
+        analysis = analyze_node_metrics(str(normalized), _IMPORT_NODE_GAP_NS)
+        if analysis.availability != 'missing':
+            write_experiment_json(perf / 'node_analysis.json', analysis.model_dump(mode='json'))
+    except (OSError, ValueError):
+        # Roll back only what this request created: the task root may predate it.
+        shutil.rmtree(perf, ignore_errors=True)
+        try:
+            root.rmdir()
+        except OSError:
+            pass
+        raise
+
+    return {
+        'task_id': task_id,
+        'subrun_id': 'single',
+        'root_path': str(Path(log.OUTPUT_DIR)),
+        'path': f'imports/{task_id}/perf',
+        'source_dir': _source_dir(run_dir, raw),
+        'model': resolved['model'],
+        'load_mode': resolved['load_mode'],
+        'concurrency': resolved['concurrency'],
+        'rate': resolved['rate'],
+        'quality': result.quality,
+        'quality_reasons': result.quality_reasons,
+        'profiling_requests': result.profiling_requests,
+        'metric_count': len(result.metrics),
+        'inferred_fields': resolved['inferred_fields'],
+    }
+
+
 @bp_perf.route('/import', methods=['POST'])
 def import_perf_archive():
-    """Import a server-local AIPerf artifact directory without re-running it.
+    """Import one AIPerf run, or every run under a batch artifact directory.
 
     The archive is written under ``<outputs>/imports/<task_id>/perf`` so the
     existing run list, report detail and node-metrics views can discover it.
+    Model, load mode and token limits are read from the recorded summary; an
+    explicit request value may only confirm them.
     """
     from ..utils import log
 
@@ -1634,71 +1799,38 @@ def import_perf_archive():
     raw = Path(settings.raw_dir).expanduser().resolve()
     if not raw.is_dir():
         return jsonify({'error': 'raw_dir must be an existing directory'}), 400
-    digest = _artifact_digest(raw)
-    task_id = settings.task_id or f'import_{time.strftime("%Y%m%d_%H%M%S")}_{digest[:8]}'
-    root = Path(log.OUTPUT_DIR) / 'imports' / task_id
-    perf = root / 'perf'
-    if perf.exists():
-        return jsonify({'error': 'Import task already exists'}), 409
     try:
-        perf.mkdir(parents=True, exist_ok=False, mode=0o700)
-        # Keep the auditable JSON/JSONL artifacts inside the archive so raw
-        # downloads do not depend on the external source directory surviving.
-        raw_archive = perf / 'raw' / 'aiperf'
-        for source in raw.rglob('*'):
-            if (
-                source.is_file()
-                and not source.is_symlink()
-                and source.suffix in {'.json', '.jsonl'}
-                and source.stat().st_size <= 512 * 1024 * 1024
-            ):
-                target = raw_archive / source.relative_to(raw)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, target)
-        normalized = perf / 'normalized'
-        result = import_aiperf_run(AIPerfImportArguments(raw_dir=str(raw), normalized_dir=str(normalized)))
-        manifest = SingleRunManifest(
-            task_id=task_id,
-            model=settings.model,
-            alias=settings.alias,
-            endpoint=settings.endpoint,
-            load_mode=settings.load_mode,
-            concurrency=settings.concurrency,
-            rate=settings.rate,
-            planned_requests=settings.planned_requests or result.profiling_requests,
-            output_token_limit=settings.output_token_limit,
-            input_sha256=digest,
-            status='completed',
-            artifact_status='available',
-            normalized='normalized',
-            quality=result.quality,
-            quality_reasons=result.quality_reasons,
-        )
-        write_single_manifest(str(perf), manifest)
-        # Imported archives carry no telemetry interval, so 5 s is the fallback
-        # scrape gap used to decide whether a GPU timeline is still contiguous.
-        analysis = analyze_node_metrics(str(normalized), 5_000_000_000)
-        if analysis.availability != 'missing':
-            write_experiment_json(perf / 'node_analysis.json', analysis.model_dump(mode='json'))
-    except (OSError, ValueError) as error:
-        # Roll back only what this request created: the task root may predate it.
-        shutil.rmtree(perf, ignore_errors=True)
-        try:
-            root.rmdir()
-        except OSError:
-            pass
+        runs = discover_run_directories(raw)
+    except ValueError as error:
         return jsonify({'error': str(error)}), 400
+    if not runs:
+        return jsonify({'error': 'No AIPerf run found under raw_dir (profile_export.jsonl is required)'}), 400
+    if len(runs) > _MAX_IMPORT_RUNS:
+        return jsonify({'error': f'raw_dir holds more than {_MAX_IMPORT_RUNS} runs; import a subset'}), 400
+    if settings.task_id is not None and len(runs) > 1:
+        return jsonify({'error': 'task_id can only be used when raw_dir holds a single run'}), 400
+
+    imported: List[Dict[str, Any]] = []
+    failed: List[Dict[str, str]] = []
+    for run_dir in runs:
+        try:
+            imported.append(_import_run_archive(run_dir, raw, settings, len(runs) > 1))
+        except _ImportConflict as error:
+            if len(runs) == 1:
+                return jsonify({'error': str(error)}), 409
+            failed.append({'source_dir': _source_dir(run_dir, raw), 'error': str(error)})
+        except (OSError, ValueError) as error:
+            failed.append({'source_dir': _source_dir(run_dir, raw), 'error': str(error)})
+
+    if not imported:
+        detail = failed[0]['error'] if failed else 'No run could be imported'
+        return jsonify({'error': detail, 'failed': failed}), 400
     return json_response(
         PerfImportResponse,
         {
-            'task_id': task_id,
-            'subrun_id': 'single',
             'root_path': str(log.OUTPUT_DIR),
-            'path': f'imports/{task_id}/perf',
-            'quality': result.quality,
-            'quality_reasons': result.quality_reasons,
-            'profiling_requests': result.profiling_requests,
-            'metric_count': len(result.metrics),
+            'imported': imported,
+            'failed': failed,
         },
         status=201,
     )

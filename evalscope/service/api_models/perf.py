@@ -326,41 +326,69 @@ class CacheNodeMetricsResponse(ApiResponseModel):
 
 
 class PerfImportRequest(ApiRequestModel):
-    """Import a server-local AIPerf artifact directory as a read-only archive."""
+    """Import a server-local AIPerf artifact directory as a read-only archive.
+
+    Every identity field is optional: values recorded in ``profile_export_aiperf.json``
+    are used as-is, and an explicit value that disagrees with the artifact is
+    rejected instead of silently overriding the recorded run.
+    """
 
     raw_dir: str = Field(min_length=1)
-    model: str = Field(min_length=1)
+    model: Optional[str] = Field(default=None, min_length=1)
     alias: Optional[str] = None
     endpoint: Optional[str] = None
-    load_mode: Literal['closed_loop', 'open_loop'] = 'closed_loop'
+    load_mode: Optional[Literal['closed_loop', 'open_loop']] = None
     concurrency: Optional[int] = Field(default=None, gt=0)
     rate: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
     planned_requests: Optional[int] = Field(default=None, gt=0)
-    output_token_limit: int = Field(gt=0)
+    output_token_limit: Optional[int] = Field(default=None, gt=0)
     task_id: Optional[str] = Field(default=None, pattern=r'^[A-Za-z0-9_.-]+$')
 
     @model_validator(mode='after')
     def validate_load(self) -> 'PerfImportRequest':
-        if self.load_mode == 'closed_loop' and (self.concurrency is None or self.rate is not None):
-            raise ValueError('Closed-loop import needs concurrency and no rate')
-        if self.load_mode == 'open_loop' and (self.rate is None or self.concurrency is not None):
-            raise ValueError('Open-loop import needs rate and no concurrency')
+        if self.concurrency is not None and self.rate is not None:
+            raise ValueError('Import takes either concurrency or rate')
+        if self.load_mode == 'closed_loop' and self.rate is not None:
+            raise ValueError('Closed-loop import must not set rate')
+        if self.load_mode == 'open_loop' and self.concurrency is not None:
+            raise ValueError('Open-loop import must not set concurrency')
         if self.task_id is not None and (self.task_id in {'.', '..'} or self.task_id.startswith('.')):
             raise ValueError('task_id must not be a path traversal segment')
         return self
 
 
-class PerfImportResponse(ApiResponseModel):
-    """Archive coordinates for one imported AIPerf run."""
+class PerfImportedRun(ApiResponseModel):
+    """One run that was archived by an import request."""
 
     task_id: str
     subrun_id: str
     root_path: str
     path: str
+    source_dir: str
+    model: str
+    load_mode: Literal['closed_loop', 'open_loop']
+    concurrency: Optional[int] = None
+    rate: Optional[float] = None
     quality: Literal['complete', 'partial', 'invalid']
     quality_reasons: List[str] = Field(default_factory=list)
     profiling_requests: int
     metric_count: int
+    inferred_fields: List[str] = Field(default_factory=list)
+
+
+class PerfImportFailure(ApiResponseModel):
+    """One run that the import request could not archive."""
+
+    source_dir: str
+    error: str
+
+
+class PerfImportResponse(ApiResponseModel):
+    """Outcome of one import request: every archived run plus every failure."""
+
+    root_path: str
+    imported: List[PerfImportedRun] = Field(default_factory=list)
+    failed: List[PerfImportFailure] = Field(default_factory=list)
 
 
 class PerfRawArtifactFile(ApiResponseModel):

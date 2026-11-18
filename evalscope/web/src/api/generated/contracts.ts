@@ -1303,29 +1303,54 @@ export interface PerformanceResultEntry {
 }
 /**
  * Import a server-local AIPerf artifact directory as a read-only archive.
+ *
+ * Every identity field is optional: values recorded in ``profile_export_aiperf.json``
+ * are used as-is, and an explicit value that disagrees with the artifact is
+ * rejected instead of silently overriding the recorded run.
  */
 export interface PerfImportRequest {
   alias?: string | null;
   concurrency?: number | null;
   endpoint?: string | null;
-  load_mode?: "closed_loop" | "open_loop";
-  model: string;
-  output_token_limit: number;
+  load_mode?: ("closed_loop" | "open_loop") | null;
+  model?: string | null;
+  output_token_limit?: number | null;
   planned_requests?: number | null;
   rate?: number | null;
   raw_dir: string;
   task_id?: string | null;
 }
 /**
- * Archive coordinates for one imported AIPerf run.
+ * Outcome of one import request: every archived run plus every failure.
  */
 export interface PerfImportResponse {
+  failed?: PerfImportFailure[];
+  imported?: PerfImportedRun[];
+  root_path: string;
+}
+/**
+ * One run that the import request could not archive.
+ */
+export interface PerfImportFailure {
+  error: string;
+  source_dir: string;
+}
+/**
+ * One run that was archived by an import request.
+ */
+export interface PerfImportedRun {
+  concurrency?: number | null;
+  inferred_fields?: string[];
+  load_mode: "closed_loop" | "open_loop";
   metric_count: number;
+  model: string;
   path: string;
   profiling_requests: number;
   quality: "complete" | "partial" | "invalid";
   quality_reasons?: string[];
+  rate?: number | null;
   root_path: string;
+  source_dir: string;
   subrun_id: string;
   task_id: string;
 }

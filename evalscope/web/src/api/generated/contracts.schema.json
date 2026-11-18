@@ -5505,9 +5505,26 @@
       ],
       "type": "object"
     },
+    "PerfImportFailure": {
+      "additionalProperties": false,
+      "description": "One run that the import request could not archive.",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "source_dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_dir",
+        "error"
+      ],
+      "type": "object"
+    },
     "PerfImportRequest": {
       "additionalProperties": false,
-      "description": "Import a server-local AIPerf artifact directory as a read-only archive.",
+      "description": "Import a server-local AIPerf artifact directory as a read-only archive.\n\nEvery identity field is optional: values recorded in ``profile_export_aiperf.json``\nare used as-is, and an explicit value that disagrees with the artifact is\nrejected instead of silently overriding the recorded run.",
       "properties": {
         "alias": {
           "anyOf": [
@@ -5544,20 +5561,43 @@
           "default": null
         },
         "load_mode": {
-          "default": "closed_loop",
-          "enum": [
-            "closed_loop",
-            "open_loop"
+          "anyOf": [
+            {
+              "enum": [
+                "closed_loop",
+                "open_loop"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "type": "string"
+          "default": null
         },
         "model": {
-          "minLength": 1,
-          "type": "string"
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "output_token_limit": {
-          "exclusiveMinimum": 0,
-          "type": "integer"
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "planned_requests": {
           "anyOf": [
@@ -5601,18 +5641,68 @@
         }
       },
       "required": [
-        "raw_dir",
-        "model",
-        "output_token_limit"
+        "raw_dir"
       ],
       "type": "object"
     },
     "PerfImportResponse": {
       "additionalProperties": false,
-      "description": "Archive coordinates for one imported AIPerf run.",
+      "description": "Outcome of one import request: every archived run plus every failure.",
       "properties": {
+        "failed": {
+          "items": {
+            "$ref": "#/$defs/PerfImportFailure"
+          },
+          "type": "array"
+        },
+        "imported": {
+          "items": {
+            "$ref": "#/$defs/PerfImportedRun"
+          },
+          "type": "array"
+        },
+        "root_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root_path"
+      ],
+      "type": "object"
+    },
+    "PerfImportedRun": {
+      "additionalProperties": false,
+      "description": "One run that was archived by an import request.",
+      "properties": {
+        "concurrency": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "inferred_fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "load_mode": {
+          "enum": [
+            "closed_loop",
+            "open_loop"
+          ],
+          "type": "string"
+        },
         "metric_count": {
           "type": "integer"
+        },
+        "model": {
+          "type": "string"
         },
         "path": {
           "type": "string"
@@ -5634,7 +5724,21 @@
           },
           "type": "array"
         },
+        "rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "root_path": {
+          "type": "string"
+        },
+        "source_dir": {
           "type": "string"
         },
         "subrun_id": {
@@ -5649,6 +5753,9 @@
         "subrun_id",
         "root_path",
         "path",
+        "source_dir",
+        "model",
+        "load_mode",
         "quality",
         "profiling_requests",
         "metric_count"

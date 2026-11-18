@@ -111,6 +111,25 @@ class AIPerfImportArguments(BaseArgument):
     targets: List[MetricTargetReference] = Field(default_factory=list)
 
 
+class InferredRunIdentity(BaseArgument):
+    """Run identity read back from an AIPerf summary.
+
+    Every field is optional: ``None`` means the artifact did not declare it, so a
+    caller can tell "absent" apart from "declared as the same value the operator
+    typed". ``sources`` records which artifact field each value came from, which
+    is what the archive reports back as inferred.
+    """
+
+    model: Optional[str] = None
+    endpoint: Optional[str] = None
+    load_mode: Optional[Literal['closed_loop', 'open_loop']] = None
+    concurrency: Optional[int] = Field(default=None, gt=0)
+    rate: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    planned_requests: Optional[int] = Field(default=None, gt=0)
+    output_token_limit: Optional[int] = Field(default=None, gt=0)
+    sources: Dict[str, str] = Field(default_factory=dict)
+
+
 class NodeMetricSample(BaseArgument):
     """One source-attributed raw sample; no request-level PD inference is made."""
 
