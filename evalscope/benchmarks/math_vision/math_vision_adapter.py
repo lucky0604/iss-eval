@@ -11,7 +11,12 @@ from evalscope.api.registry import register_benchmark
 from evalscope.constants import Tags
 from evalscope.utils.io_utils import bytes_to_base64
 from evalscope.utils.logger import get_logger
-from evalscope.utils.multi_choices import MultipleChoiceTemplate, parse_answers, prompt
+from evalscope.utils.multi_choices import (
+    MULTI_CHOICE_ANSWER_PARSER_VERSION,
+    MultipleChoiceTemplate,
+    parse_answers,
+    prompt,
+)
 
 logger = get_logger()
 
@@ -24,7 +29,7 @@ SUBSET_LIST = ['level 1', 'level 2', 'level 3', 'level 4', 'level 5']
 
 @register_benchmark(
     BenchmarkMeta(
-        evaluation_version='v1.1',
+        evaluation_version='v1.2',
         name='math_vision',
         pretty_name='MathVision',
         dataset_id='evalscope/MathVision',
@@ -65,6 +70,8 @@ MATH-Vision (MATH-V) is a meticulously curated dataset of 3,040 high-quality mat
     )
 )
 class MathVisionAdapter(VisionLanguageAdapter):
+    answer_parser_version = MULTI_CHOICE_ANSWER_PARSER_VERSION
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.reformat_subset = True

@@ -9,7 +9,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { inputClass } from '@/components/ui/formStyles'
 import { AliasField, ApiUrlField, ModelField } from './TaskFormFields'
 import PresetToolbar from './PresetToolbar'
-import { DEFAULT_CONNECTION, displayEndpoint, type ModelConnection, type FieldErrors } from './taskConfig'
+import { CONNECTION_APIS, DEFAULT_CONNECTION, displayEndpoint, isConnectionApi, isRemoteApi, type ModelConnection, type FieldErrors } from './taskConfig'
 import type { ConnectionPreset } from './configStorage'
 
 interface Props {
@@ -113,11 +113,12 @@ export default function ModelConnectionEditor({
                 value={connection.api}
                 onChange={(event) => {
                   const api = event.target.value
-                  if (api === 'openai' || api === 'local') onChange({ api })
+                  if (isConnectionApi(api)) onChange({ api })
                 }}
               >
-                <option value="openai">OpenAI-compatible</option>
-                <option value="local">Local Transformers</option>
+                {Object.entries(CONNECTION_APIS).map(([api, label]) => (
+                  <option key={api} value={api}>{label}</option>
+                ))}
               </select>
             )}
           </Field>
@@ -127,7 +128,7 @@ export default function ModelConnectionEditor({
             error={errors.model ? t(errors.model) : undefined}
             onChange={(model) => onChange({ model })}
           />
-          {connection.api === 'openai' && (
+          {isRemoteApi(connection.api) && (
             <>
               <ApiUrlField
                 id="connection-url"

@@ -28,6 +28,7 @@ from .utils.async_client import LoopBoundAsyncClientPool
 from .utils.openai import (
     EmptyCompletionError,
     _NonRetryableEmptyCompletionError,
+    _uses_openai_reasoning_defaults,
     async_collect_stream_response,
     chat_choices_from_openai,
     collect_stream_response,
@@ -45,7 +46,8 @@ logger = get_logger()
 # Client errors (context length exceeded, invalid parameters, bad credentials, ...) are not
 # recoverable by retrying. generate()/generate_async() degrade them gracefully via
 # handle_bad_request(), so retry_call must let them through immediately instead of burning
-# retries * retry_interval on every failing sample.
+# the backoff ladder on every failing sample. Retryable failures use exponential backoff,
+# honoring Retry-After from the final SDK exception before starting another outer attempt.
 NON_RETRYABLE_OPENAI_ERRORS: Tuple[Type[Exception], ...] = (
     BadRequestError,
     AuthenticationError,
@@ -67,7 +69,6 @@ class OpenAICompatibleAPI(ModelAPI):
         config: GenerateConfig = GenerateConfig(),
         **model_args: Any,
     ) -> None:
-
         super().__init__(
             model_name=model_name,
             base_url=base_url,
@@ -165,6 +166,8 @@ class OpenAICompatibleAPI(ModelAPI):
                 retries=config.retries,
                 sleep_interval=config.retry_interval,
                 no_retry_exceptions=_NON_RETRYABLE_COMPLETION_ERRORS,
+                backoff='exponential',
+                max_total_wait=300,
             )
 
             total_time = time.monotonic() - t_start
@@ -249,6 +252,8 @@ class OpenAICompatibleAPI(ModelAPI):
                 retries=config.retries,
                 sleep_interval=config.retry_interval,
                 no_retry_exceptions=_NON_RETRYABLE_COMPLETION_ERRORS,
+                backoff='exponential',
+                max_total_wait=300,
             )
 
             total_time = time.monotonic() - t_start
@@ -282,11 +287,29 @@ class OpenAICompatibleAPI(ModelAPI):
         """Provides an opportunity for concrete classes to customize tool resolution."""
         return tools, tool_choice, config
 
+    def _warn_on_openai_reasoning_sampling(self, config: GenerateConfig) -> None:
+        if not _uses_openai_reasoning_defaults(self.model_name, self.base_url):
+            return
+        omitted = {name for name in ('temperature', 'top_p') if getattr(config, name) is not None}
+        if not omitted:
+            return
+        warned = getattr(self, '_openai_reasoning_sampling_warned', set())
+        new_parameters = omitted - warned
+        if not new_parameters:
+            return
+        logger.warning(
+            f'OpenAI reasoning model [{self.model_name}] on api.openai.com omits '
+            f'{", ".join(sorted(new_parameters))} from requests; their configured values will not affect generation.'
+        )
+        self._openai_reasoning_sampling_warned = warned | new_parameters
+
     def completion_params(self, config: GenerateConfig, tools: bool) -> Dict[str, Any]:
+        self._warn_on_openai_reasoning_sampling(config)
         return openai_completion_params(
             model=self.model_name,
             config=config,
             tools=tools,
+            base_url=self.base_url,
         )
 
     def validate_request_params(self, params: Dict[str, Any]):

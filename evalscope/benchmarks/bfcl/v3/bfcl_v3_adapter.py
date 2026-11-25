@@ -71,7 +71,7 @@ BFCL (Berkeley Function Calling Leaderboard) v3 is the first comprehensive and e
 
 ## Evaluation Notes
 
-- Requires `pip install bfcl-eval==2025.10.27.1` before evaluation
+- Requires `pip install 'evalscope[bfcl]'` before evaluation
 - Set `is_fc_model=True` for models with native function calling support
 - `underscore_to_dot` parameter controls function name formatting
 - See the [usage documentation](https://evalscope.readthedocs.io/en/latest/third_party/bfcl_v3.html) for detailed setup
@@ -80,7 +80,7 @@ BFCL (Berkeley Function Calling Leaderboard) v3 is the first comprehensive and e
         dataset_id='AI-ModelScope/bfcl_v3',
         subset_list=list(SUBJECT_MAPPING.keys()),
         metric_list=['acc'],
-        evaluation_version='v1.1',
+        evaluation_version='v1.2',
         eval_split='train',
         extra_params={
             'underscore_to_dot': {

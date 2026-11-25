@@ -7,15 +7,19 @@
 | 参数 | 类型 | 说明 | 默认值 |
 |------|------|------|--------|
 | `--model` | `str` | 测试模型名称，或模型路径 | - |
-| `--url` | `str` | API地址，支持`/chat/completions`、`/completions`和`/responses`端点 | - |
+| `--url` | `str` | API 地址，支持 `/chat/completions`、`/completions`、`/responses` 和 `/v1/messages` 端点 | - |
 | `--name` | `str` | wandb/swanlab数据库结果名称和结果数据库名称 | `{model_name}_{current_time}` |
 | `--alias` | `str` | 在 Web 界面列表与报告中展示的运行别名，用于区分同一模型的多次压测（仅展示用途） | `None` |
-| `--api` | `str` | 服务API类型<br>• `openai`: OpenAI兼容Chat Completions API（需提供`--url`）<br>• `openai_responses`: OpenAI官方Responses API<br>• `openai_embedding`: OpenAI兼容Embedding API<br>• `openai_rerank`: OpenAI/Cohere兼容Rerank API<br>• `local`: 启动本地transformers推理<br>• `local_vllm`: 启动本地vLLM推理服务<br>• 自定义：参考[自定义API指南](./custom.md/#自定义请求-api) | - |
+| `--api` | `str` | 服务API类型<br>• `openai`: OpenAI兼容Chat Completions API（需提供`--url`）<br>• `openai_responses`: OpenAI官方Responses API<br>• `anthropic`: Anthropic Messages API<br>• `openai_embedding`: OpenAI兼容Embedding API<br>• `openai_rerank`: OpenAI/Cohere兼容Rerank API<br>• `local`: 启动本地transformers推理<br>• `local_vllm`: 启动本地vLLM推理服务<br>• 自定义：参考[自定义API指南](./custom.md/#自定义请求-api) | - |
 | `--port` | `int` | 本地推理服务端口<br>仅对`local`和`local_vllm`有效 | `8877` |
 | `--attn-implementation` | `str` | Attention实现方式<br>仅在`api=local`时有效 | `None`<br>（可选：`flash_attention_2`、`eager`、`sdpa`） |
 | `--api-key` | `str` | API密钥 | `None` |
 | `--debug` | `bool` | 是否输出调试信息 | `False` |
 | `--scenario` | `str` | 外部 workload 场景。`agentx` 运行 AIPerf AgentX MVP，也接受 AgentX JSON；见 [AgentX MVP](./agentx.md)。 | `None` |
+
+使用 `--api anthropic` 时，`--url` 可填写服务根地址（例如 `https://api.anthropic.com`），也可填写完整的 `/v1/messages` 端点。EvalScope 通过 `x-api-key` 请求头发送 `--api-key`。对于要求使用服务端默认采样值的模型，请留空采样参数。
+
+Anthropic 压测使用服务端在 `usage` 中返回的输入和输出 token 数。缺少计数或计数无效时，该请求记为失败。分词器仍可用于生成压测数据和按输入长度筛选。
 
 ## 网络配置
 
@@ -32,6 +36,7 @@
 | 参数 | 类型 | 说明 | 默认值 |
 |------|------|------|--------|
 | `--parallel` | `list[int]` | 并发请求的数量<br>可传入多个值，空格分隔 | `1` |
+| `--device-count` | `int` | 服务该端点的推理设备总数，即 `tensor_parallel_size × pipeline_parallel_size × replica_count`（2 路 TP + 4 副本的部署应报 `8`）<br>声明后摘要会记录 `Device Count` 并新增 `Output Throughput per Device (tok/s)` / `Total Throughput per Device (tok/s)`，由聚合吞吐除以设备数派生<br>默认不声明：不记录任何值，也不渲染 per-device 行 | `None` |
 | `--number` | `list[int]` | 发出的请求总数量<br>可传入多个值（需与`parallel`一一对应） | `1000` |
 | `--rate` | `float` | 请求调度速率（请求/秒）<br>• `-1`: 不做速率节流；在默认 closed-loop 模式下，请求会尽快调度，但实际同时在飞的 HTTP 请求数仍受 `--parallel` 限制，并不会一次性全部发送到服务端<br>• `> 0`: 请求按泊松到达模型调度，间隔服从均值为 `1/rate` 的指数分布，即**平均**每秒调度 `rate` 个请求 | `-1` |
 | `--log-every-n-query` | `int` | 每N个查询记录日志 | `100` |
@@ -40,6 +45,7 @@
 | `--enable-pd-metrics` | `bool` | 启用可选的PD分离交接指标<br>开启后报告会基于输出chunk间隔展示 `Steady ITL`、`PD Handoff Latency` 和 `PD Handoff Overhead`<br>普通非PD压测建议保持关闭 | `False` |
 | `--open-loop` | `bool` | 启用开放环路（open-loop）模式：<br>请求按 `--rate` 指定的速率发出，无论服务端是否已处理完之前的请求。<br>• `--rate` 变为扫描变量（支持多值）<br>• `--number` 须与 `--rate` 等长，表示每轮发出的请求总数<br>• `--parallel` 在此模式下被忽略（内部设为 -1 / INF）<br>详见[使用示例](./examples.md#open-loop-开放环路) | `False` |
 | `--warmup-num` | `float` | 预热请求数量或比例：<br>• `0`：禁用预热（默认）<br>• `>= 1`：绝对数量，如 `--warmup-num 10` 表示预热 10 个请求<br>• `0 < value < 1`：比例模式，如 `--warmup-num 0.1` 表示预热数量为 `--number` 的 10%<br>预热请求使用与正式压测相同的并发/速率发送，但**不计入性能指标**<br>适用于消除冷启动影响（如 KV-cache 填充、JIT 编译等）<br>闭环模式下建议设为 `--parallel` 或更大，否则最初几个请求会拉高 `p99`<br>详见[使用示例](./examples.md#warmup-预热) | `0` |
+| `--exclude-warmup-overlap` | `bool` | 仅用于单轮闭环。保留连续交接，将最后一条预热完成前发出的过渡请求写入 SQLite 的 `transition` 表。补足 `--number` 条正式请求，受从首条正式请求发送时起算的 `--duration` 限制。正式测量开始时仍可能有在途过渡请求。随机数据集补发时沿用前缀池并重新采样后缀，其他数据集沿用循环取样。 | `False` |
 | `--duration` | `float` | 单次压测的墙钟时间预算（秒）<br>软退出语义：到点后**不再启动新请求**，但**已经在飞行中的请求会跑完**才退出<br>多轮模式下的"已在飞"指的是**已经 claim 的 trace 跑完所有剩余 turn**（trace-level soft exit，与上游 trie 一致）<br>与 `--number` 同时设置时取**先达到的那个**为停止条件 | `None` |
 
 ```{tip}
@@ -295,7 +301,7 @@ trace 文件为 JSONL，每行一条请求记录：
 | `--seed` | `int` | 随机种子 | `None` |
 | `--stop` | `str` | 停止生成的tokens | - |
 | `--stop-token-ids` | `list[int]` | 停止生成的token ID列表 | - |
-| `--temperature` | `float` | 采样温度 | `0` |
+| `--temperature` | `float` | 采样温度 | `anthropic` 使用服务端默认值，其他协议为 `0` |
 | `--top-p` | `float` | top_p采样 | - |
 | `--top-k` | `int` | top_k采样 | - |
 | `--extra-args` | `str` | 额外传入请求体的参数<br>JSON字符串格式<br>示例：`'{"ignore_eos": true}'` | - |

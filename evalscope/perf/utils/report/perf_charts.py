@@ -14,6 +14,7 @@ Design choices:
 
 from __future__ import annotations
 
+import math
 import re
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
@@ -55,6 +56,32 @@ _LAYOUT_BASE = dict(
 # ---------------------------------------------------------------------------
 
 
+def _is_fully_transparent(color: Any) -> bool:
+    """Return True when *color* renders fully transparent (alpha 0) in plotly.
+
+    Covers the ``rgba(r,g,b,0)`` family (spaces and float alpha allowed), the
+    ``transparent`` keyword, and 8-digit hex with a zero alpha channel.
+    """
+    if not isinstance(color, str):
+        return False
+    text = color.strip().lower()
+    if text == 'transparent':
+        return True
+    if text.startswith('rgba') and text.endswith(')'):
+        parts = [p.strip() for p in text[text.find('(') + 1 : text.rfind(')')].split(',')]
+        if len(parts) == 4:
+            try:
+                return float(parts[3]) == 0.0
+            except ValueError:
+                return False
+    if text.startswith('#') and len(text) == 9:
+        try:
+            return int(text[7:9], 16) == 0
+        except ValueError:
+            return False
+    return False
+
+
 class ChartBuilder:
     """Generic Plotly chart factory shared by all perf chart builders."""
 
@@ -79,8 +106,38 @@ class ChartBuilder:
         host surface on both themes. An explicit ``template`` in *overrides*
         takes precedence.
         """
+        import plotly.graph_objects as go
+        import plotly.io as pio
+
         merged = dict(_LAYOUT_BASE)
-        merged['template'] = 'plotly_white' if theme == 'light' else 'plotly_dark'
+        # An explicit `template` override wins over the theme pick, and the
+        # hoverlabel colors below must follow the *effective* template so a
+        # dark template never gets a light tooltip box (or vice versa).
+        template = overrides.get('template') or ('plotly_white' if theme == 'light' else 'plotly_dark')
+        merged['template'] = template
+        # Opaque unified-hover tooltip box. plotly.js defaults an unset
+        # hoverlabel.bgcolor to paper_bgcolor for legend-less charts, which is
+        # transparent here -> see-through tooltip. Resolve the colors
+        # dynamically from the effective chart background (explicit override
+        # > template > per-theme fallback) so future background changes are
+        # picked up automatically. Border follows the template's legend border
+        # (the plotly.js default for unified hover on charts with a legend),
+        # falling back to plotly.js's own default border color '#444'.
+        tpl_layout = (
+            pio.templates[template].layout if isinstance(template, str) else go.layout.Template(template).layout
+        )
+        paper = overrides.get('paper_bgcolor') or getattr(tpl_layout, 'paper_bgcolor', None)
+        if not paper or _is_fully_transparent(paper):  # unset or fully transparent
+            paper = '#ffffff' if theme == 'light' else 'rgb(17,17,17)'
+        border = getattr(getattr(tpl_layout, 'legend', None), 'bordercolor', None) or '#444444'
+        merged['hoverlabel'] = dict(bgcolor=paper, bordercolor=border)
+        if 'hoverlabel' in overrides:
+            # Merge a partial caller override into the computed hoverlabel
+            # instead of letting it replace the dict wholesale (which would
+            # drop bgcolor/bordercolor and reintroduce the see-through
+            # tooltip). Explicit caller keys still win per-key.
+            merged['hoverlabel'].update(overrides['hoverlabel'])
+            overrides = {key: value for key, value in overrides.items() if key != 'hoverlabel'}
         merged.update(overrides)
         return merged
 
@@ -397,42 +454,101 @@ def _compare_y(metric: str, r: 'RunData', is_embedding: bool) -> float:
     return 0.0
 
 
+def _finite_metric(value: float) -> Optional[float]:
+    return value if isinstance(value, (int, float)) and math.isfinite(value) else None
+
+
 def build_compare_chart(
     series: 'List[Tuple[str, List[RunData]]]',
     metric: str,
     is_embedding: bool = False,
     theme: str = 'dark',
+    series_details: Optional[List[str]] = None,
 ) -> str:
-    """Overlay one line per run directory for a single sweep *metric*.
-
-    Args:
-        series: list of ``(label, runs)`` where ``runs`` is the sweep sub-runs
-            of one perf-run directory.
-        metric: one of ``latency|ttft|tpot|rps|throughput|success``.
-        is_embedding: affects the ``throughput`` metric only.
-        theme: ``'dark'`` (default) or ``'light'``.
-    """
+    """Overlay one sweep metric with one trace per run directory."""
     y_title = _COMPARE_Y_TITLE.get(metric, metric)
     x_title = 'Concurrency'
     traces = []
-    sparse = sum(len(runs) for _, runs in series if runs) <= 2
     for i, (label, runs) in enumerate(series):
         if not runs:
             continue
         xs, x_title = _x_axis(runs)
-        ys = [_compare_y(metric, r, is_embedding) for r in runs]
+        ys = [_finite_metric(_compare_y(metric, run, is_embedding)) for run in runs]
+        detail = series_details[i] if series_details and i < len(series_details) else label
         color = _COMPARE_PALETTE[i % len(_COMPARE_PALETTE)]
         traces.append(
             dict(
                 x=xs,
                 y=ys,
-                mode='markers' if sparse else 'lines+markers',
+                mode='markers' if len(xs) <= 1 else 'lines+markers',
                 name=label,
                 line=dict(color=color, width=2),
                 marker=dict(size=8),
+                connectgaps=False,
+                customdata=[[detail, run.name, run.number] for run in runs],
+                hovertemplate=(
+                    f'{x_title}=%{{x}}<br>{y_title}=%{{y}}'
+                    '<br>Run=%{customdata[0]}<br>Workload=%{customdata[1]}'
+                    '<br>Requests=%{customdata[2]}<extra>%{fullData.name}</extra>'
+                ),
             )
         )
     return ChartBuilder.line(traces, x_title=x_title, y_title=y_title, div_id=f'chart-compare-{metric}', theme=theme)
+
+
+def build_input_length_compare_chart(
+    points: 'List[Tuple[int, int, RunData, str]]',
+    metric: str,
+    is_embedding: bool = False,
+    theme: str = 'dark',
+) -> str:
+    """Plot configured input length with one cross-run trace per concurrency."""
+    y_title = _COMPARE_Y_TITLE.get(metric, metric)
+    lengths = sorted({length for length, _, _, _ in points})
+    concurrencies = sorted({concurrency for _, concurrency, _, _ in points})
+    traces = []
+    for index, concurrency in enumerate(concurrencies):
+        by_length = {
+            length: (run, label) for length, point_concurrency, run, label in points if point_concurrency == concurrency
+        }
+        present = [(length, by_length[length]) for length in lengths if length in by_length]
+        customdata = [
+            [by_length[length][1], concurrency, by_length[length][0].number]
+            if length in by_length
+            else ['', concurrency, '']
+            for length in lengths
+        ]
+        color = _COMPARE_PALETTE[index % len(_COMPARE_PALETTE)]
+        traces.append(
+            dict(
+                x=lengths,
+                y=[
+                    _finite_metric(_compare_y(metric, by_length[length][0], is_embedding))
+                    if length in by_length
+                    else None
+                    for length in lengths
+                ],
+                mode='markers' if len(present) <= 1 else 'lines+markers',
+                name=f'C={concurrency}',
+                line=dict(color=color, width=2),
+                marker=dict(size=8),
+                connectgaps=False,
+                customdata=customdata,
+                hovertemplate=(
+                    f'Configured input length=%{{x}}<br>{y_title}=%{{y}}'
+                    '<br>Run=%{customdata[0]}<br>Concurrency=%{customdata[1]}'
+                    '<br>Requests=%{customdata[2]}<extra>%{fullData.name}</extra>'
+                ),
+            )
+        )
+    return ChartBuilder.line(
+        traces,
+        x_title='Configured input length',
+        y_title=y_title,
+        div_id=f'chart-compare-input-length-{metric}',
+        extra_layout={'xaxis': dict(**_GRID)},
+        theme=theme,
+    )
 
 
 # ---------------------------------------------------------------------------

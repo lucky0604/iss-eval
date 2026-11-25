@@ -13,6 +13,7 @@
 | `bfcl_v4` | [BFCL-v4](../../benchmarks/bfcl_v4.md) | `Agent`, `FunctionCalling` |
 | `browsecomp` | [BrowseComp](../../benchmarks/browsecomp.md) | `Agent`, `Knowledge`, `QA` |
 | `claw_eval` | [Claw-Eval](../../benchmarks/claw_eval.md) | `Agent`, `MultiModal`, `MultiTurn` |
+| `cybench` | [Cybench (Unguided)](../../benchmarks/cybench.md) | `Agent`, `Safety` |
 | `deep_swe` | [DeepSWE](../../benchmarks/deep_swe.md) | `Agent`, `Coding`, `MultiTurn` |
 | `deepsearchqa` | [DeepSearchQA](../../benchmarks/deepsearchqa.md) | `Agent`, `Knowledge`, `QA`, `Retrieval` |
 | `gaia` | [GAIA](../../benchmarks/gaia.md) | `Agent`, `MultiTurn`, `Reasoning` |
@@ -27,6 +28,7 @@
 | `officeqa` | [OfficeQA](../../benchmarks/officeqa.md) | `Agent`, `Knowledge`, `QA` |
 | `researchrubrics` | [ResearchRubrics](../../benchmarks/researchrubrics.md) | `Agent`, `MultiTurn`, `Reasoning`, `Retrieval` |
 | `skillsbench` | [SkillsBench](../../benchmarks/skillsbench.md) | `Agent`, `MultiTurn` |
+| `swe_atlas_qna` | [SWE-Atlas-QnA](../../benchmarks/swe_atlas_qna.md) | `Agent`, `Coding`, `MultiTurn` |
 | `swe_bench_lite_agentic` | [SWE-bench_Lite_Agentic](../../benchmarks/swe_bench_lite_agentic.md) | `Coding` |
 | `swe_bench_multilingual_agentic` | [SWE-bench_Multilingual_Agentic](../../benchmarks/swe_bench_multilingual_agentic.md) | `Coding` |
 | `swe_bench_pro` | [SWE-bench_Pro](../../benchmarks/swe_bench_pro.md) | `Coding` |
@@ -54,6 +56,7 @@
 ../../benchmarks/bfcl_v4.md
 ../../benchmarks/browsecomp.md
 ../../benchmarks/claw_eval.md
+../../benchmarks/cybench.md
 ../../benchmarks/deep_swe.md
 ../../benchmarks/deepsearchqa.md
 ../../benchmarks/gaia.md
@@ -68,6 +71,7 @@
 ../../benchmarks/officeqa.md
 ../../benchmarks/researchrubrics.md
 ../../benchmarks/skillsbench.md
+../../benchmarks/swe_atlas_qna.md
 ../../benchmarks/swe_bench_lite_agentic.md
 ../../benchmarks/swe_bench_multilingual_agentic.md
 ../../benchmarks/swe_bench_pro.md

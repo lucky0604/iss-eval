@@ -19,6 +19,7 @@ from .config_builder import (
     ensure_docker_image_built,
     merge_sandbox_config_dicts,
     normalize_docker_build_context,
+    resolve_sandbox_config,
     should_build_docker_image,
 )
 from .docker_image import (
@@ -28,7 +29,16 @@ from .docker_image import (
     hash_build_context,
     prepare_docker_image,
 )
-from .engine import SandboxEngine, get_enclave_types, resolve_engine
+from .engine import (
+    SandboxConfigError,
+    SandboxEngine,
+    get_enclave_types,
+    require_docker_engine,
+    resolve_engine,
+    resolve_task_engine,
+    sandbox_image_arch,
+    task_sandbox_env_kwargs,
+)
 from .service import (
     PoolHandle,
     SandboxHandle,
@@ -41,11 +51,17 @@ from .service import (
 __all__ = [
     'PoolHandle',
     'SandboxEngine',
+    'SandboxConfigError',
+    'resolve_task_engine',
+    'require_docker_engine',
+    'sandbox_image_arch',
+    'task_sandbox_env_kwargs',
     'SandboxHandle',
     'SandboxService',
     'build_and_acquire_pool_sync',
     'build_docker_image',
     'build_sandbox_config',
+    'resolve_sandbox_config',
     'DockerImageBuilder',
     'DockerImageResult',
     'DockerImageSpec',

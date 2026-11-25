@@ -1,7 +1,7 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 import copy
 import os
-from typing import Any, Dict, List
+from typing import Annotated, Any, Dict, List
 
 from pydantic import BaseModel, Field
 
@@ -36,7 +36,7 @@ LANGUAGE_LIST = ['en', 'cn']
 
 
 class GeditGrade(BaseModel):
-    score: List[int] = Field(min_length=1)
+    score: List[Annotated[int, Field(ge=0, le=10)]] = Field(min_length=2, max_length=2)
     reasoning: str = ''
 
 
@@ -81,6 +81,7 @@ GEdit-Bench (Grounded Edit Benchmark) is an image editing benchmark grounded in 
         subset_list=SUBSET_LIST,
         metric_list=['semantic_consistency', 'perceptual_similarity', 'normalized_score'],
         primary_metric='normalized_score',
+        evaluation_version='v1.2',
         few_shot_num=0,
         train_split=None,
         eval_split='train',
@@ -90,7 +91,22 @@ GEdit-Bench (Grounded Edit Benchmark) is an image editing benchmark grounded in 
                 'description': f'Language of the instruction. Choices: {LANGUAGE_LIST}.',
                 'value': 'en',
                 'choices': LANGUAGE_LIST,
-            }
+            },
+            'local_file': {
+                'type': 'str',
+                'description': 'JSONL manifest of locally generated images. Relative image paths use its directory.',
+                'value': None,
+            },
+            'id_key': {
+                'type': 'str',
+                'description': 'Manifest field containing the benchmark sample ID.',
+                'value': FileConstants.ID,
+            },
+            'image_key': {
+                'type': 'str',
+                'description': 'Manifest field containing the generated image path.',
+                'value': FileConstants.IMAGE_PATH,
+            },
         },
     )
 )

@@ -9,14 +9,11 @@ authors = [
   {email = "contact@modelscope.cn"}
 ]
 keywords = ["python", "llm", "evaluation"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
   "Development Status :: 4 - Beta",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
 ]
 
 [project.urls]
@@ -63,9 +60,11 @@ cc_ocr_v2        = {file = ["evalscope/benchmarks/cc_ocr_v2/requirements.txt"]}
 omnidoc_bench    = {file = ["evalscope/benchmarks/omnidoc_bench/legacy/requirements.txt"]}
 olmocr_bench     = {file = ["evalscope/benchmarks/olmocr_bench/requirements.txt"]}
 maritime_ocr_bench = {file = ["evalscope/benchmarks/maritime_ocr_bench/requirements.txt"]}
+cvtg_2k          = {file = ["evalscope/benchmarks/text2image/requirements-cvtg-2k.txt"]}
 miniwob          = {file = ["evalscope/benchmarks/miniwob/requirements.txt"]}
 ifeval           = {file = ["evalscope/benchmarks/ifeval/requirements.txt"]}
 ifbench          = {file = ["evalscope/benchmarks/ifbench/requirements.txt"]}
+lawbench         = {file = ["evalscope/benchmarks/lawbench/requirements.txt"]}
 multi_if         = {file = ["evalscope/benchmarks/multi_if/requirements.txt"]}
 olympiad_bench   = {file = ["evalscope/benchmarks/olympiad_bench/requirements.txt"]}
 needle_haystack  = {file = ["evalscope/benchmarks/needle_haystack/requirements.txt"]}
@@ -75,7 +74,8 @@ arena_hard       = {file = ["evalscope/benchmarks/arena_hard/requirements.txt"]}
 air_bench        = {file = ["evalscope/benchmarks/air_bench/requirements.txt"]}
 caption          = {file = ["evalscope/benchmarks/caption/requirements.txt"]}
 refcoco          = {file = ["evalscope/benchmarks/refcoco/requirements.txt"]}
-swe_bench        = {file = ["evalscope/benchmarks/swe_bench/requirements.txt"]}
+swe_bench        = {file = ["requirements/sandbox.txt", "evalscope/benchmarks/swe_bench/requirements.txt"]}
+swe_atlas_qna    = {file = ["evalscope/benchmarks/swe_atlas_qna/requirements.txt"]}
 wmt              = {file = ["evalscope/benchmarks/wmt/requirements.txt"]}
 torgo            = {file = ["evalscope/benchmarks/torgo/requirements.txt"]}
 terminal_bench   = {file = ["evalscope/benchmarks/terminal_bench/requirements.txt"]}
@@ -83,6 +83,7 @@ deep_swe         = {file = ["evalscope/benchmarks/deep_swe/requirements.txt"]}
 toolathlon       = {file = ["evalscope/benchmarks/toolathlon/requirements.txt"]}
 bfcl             = {file = ["evalscope/benchmarks/bfcl/requirements.txt"]}
 agentdojo        = {file = ["evalscope/benchmarks/agentdojo/requirements.txt"]}
+cybench          = {file = ["requirements/sandbox.txt", "evalscope/benchmarks/cybench/requirements.txt"]}
 wide_search      = {file = ["evalscope/benchmarks/wide_search/requirements.txt"]}
 vtcbench         = {file = ["evalscope/benchmarks/vtcbench/requirements.txt"]}
 all = {file = [
@@ -121,7 +122,7 @@ extend-exclude = [
 ]
 force-exclude = true
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
@@ -131,6 +132,8 @@ ignore = ["E501"]
 "tests/**/*.py" = ["E402"]
 "__init__.py" = ["F401"]
 "!evalscope/{utils,cli,report,perf}/**/*.py" = ["F401"]
+# Trailing whitespace in the official SWE-Atlas prompt text must be preserved.
+"evalscope/benchmarks/swe_atlas_qna/prompts.py" = ["W291", "W293"]
 
 [tool.ruff.format]
 exclude = ["tests/**/*.py"]

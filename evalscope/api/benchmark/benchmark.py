@@ -31,6 +31,9 @@ class DataAdapter(LLMJudgeMixin, ABC):
     aggregate_empty_scores: bool = False
     """Run official denominator-based aggregation even when every prediction is unavailable."""
 
+    answer_parser_version: Optional[str] = None
+    """Version of shared answer extraction semantics used by this adapter, if any."""
+
     def __init__(self, benchmark_meta: 'BenchmarkMeta', task_config: Optional['TaskConfig'] = None):
         self._benchmark_meta = benchmark_meta
         self._task_config = task_config
@@ -95,6 +98,14 @@ class DataAdapter(LLMJudgeMixin, ABC):
     def benchmark_meta(self) -> 'BenchmarkMeta':
         """Return the resolved benchmark metadata used by this adapter."""
         return self._benchmark_meta
+
+    def evaluation_dependencies(self) -> Dict[str, 'DataAdapter']:
+        """Return member adapters whose semantics contribute to this benchmark's cache identity.
+
+        Composite adapters may load their data here to discover the members actually used by the run.
+        Ordinary benchmarks have no dependencies and do not load data during identity resolution.
+        """
+        return {}
 
     @abstractmethod
     def load_dataset(self) -> DatasetDict:

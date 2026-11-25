@@ -9,7 +9,7 @@ from evalscope.perf.arguments import Arguments
 from evalscope.perf.plugin.api.base import ApiPluginBase
 from evalscope.perf.plugin.registry import ApiRegistry
 from evalscope.service.app import create_app
-from evalscope.service.blueprints.eval import _build_task_config
+from evalscope.service.blueprints.eval import RequestValidationError, _build_task_config
 from evalscope.service.utils import log
 
 
@@ -117,14 +117,20 @@ def test_aiperf_executor_is_explicitly_disabled_before_native_validation(client,
     execute.assert_not_called()
 
 
-@pytest.mark.parametrize('api', ['openai', 'local'])
+@pytest.mark.parametrize('api', ['openai', 'openai_responses', 'anthropic', 'local'])
 def test_every_perf_ui_option_has_http_and_request_implementation(api: str) -> None:
+    if api == 'anthropic':
+        pytest.importorskip('anthropic')
     args = Arguments(model='same-model', api=api, number=1)
     plugin = ApiRegistry.get_class(api)
     assert plugin.process_request is not ApiPluginBase.process_request
     assert plugin(args).build_request([{'role': 'user', 'content': '2+2?'}]) is not None
     if api == 'local':
         assert args.url == 'http://127.0.0.1:8877/v1/chat/completions'
+    elif api == 'openai_responses':
+        assert args.url == 'http://127.0.0.1:8877/v1/responses'
+    elif api == 'anthropic':
+        assert args.url == 'http://127.0.0.1:8877/v1/messages'
 
 
 @pytest.mark.parametrize('overrides', [
@@ -153,6 +159,37 @@ def test_invalid_eval_values_fail_before_execution(client, monkeypatch: pytest.M
                            headers={'EvalScope-Task-Id': 'eval_invalid'})
     assert response.status_code == 400
     execute.assert_not_called()
+
+
+def test_extra_config_keys_survive_actual_config_parsing() -> None:
+    config = _build_task_config({
+        'model': 'same-model',
+        'datasets': ['general_qa'],
+        'agent_config': {'max_steps': 20},
+        'judge': {'models': [{'model_id': 'judge', 'api_key': 'fake-secret'}]},
+        'sandbox': {'enabled': False},
+        'generation_config': {'temperature': 0.1},
+        'model_args': {'revision': 'v2'},
+        'dataset_args': {'general_qa': {'local_path': '/tmp/qa.jsonl'}},
+        'eval_config': {'limit': 2},
+    })
+
+    assert config.agent_config.max_steps == 20
+    assert config.judge.models[0].api_key.get_secret_value() == 'fake-secret'
+    assert config.sandbox.enabled is False
+    assert config.generation_config.temperature == 0.1
+    assert config.model_args == {'revision': 'v2'}
+    assert config.dataset_args == {'general_qa': {'local_path': '/tmp/qa.jsonl'}}
+    assert config.eval_config == {'limit': 2}
+
+
+def test_extra_config_rejects_unknown_nested_agent_keys() -> None:
+    base = {'model': 'same-model'}
+    config = _build_task_config({**base, 'agent_config': {'max_steps': 20}})
+    assert config.agent_config.max_steps == 20
+
+    with pytest.raises(RequestValidationError, match='Invalid evaluation configuration'):
+        _build_task_config({**base, 'agent_config': {'max_turns': 20}})
 
 
 @pytest.mark.parametrize('engine', ['docker', 'volcengine'])

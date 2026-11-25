@@ -9,12 +9,29 @@ import {
   validateRequestRate,
 } from '@/domain/form/validation'
 
+export const CONNECTION_APIS = {
+  openai: 'OpenAI-compatible',
+  openai_responses: 'OpenAI Responses',
+  anthropic: 'Anthropic Messages',
+  local: 'Local Transformers',
+} as const
+
+export type ConnectionApi = keyof typeof CONNECTION_APIS
+
+export function isConnectionApi(api: string): api is ConnectionApi {
+  return Object.hasOwn(CONNECTION_APIS, api)
+}
+
+export function isRemoteApi(api: ConnectionApi): boolean {
+  return api !== 'local'
+}
+
 export interface ModelConnection {
   model: string
   url: string
   apiKey: string
   alias: string
-  api: 'openai' | 'local'
+  api: ConnectionApi
 }
 
 export interface EvalDraft {
@@ -32,12 +49,23 @@ export interface EvalDraft {
   reasoningTokens: string
   enableThinking: boolean
   datasetArgs: string
+  extraConfig: string
   sandboxEnabled: boolean
   sandboxEngine: 'docker' | 'volcengine'
   sandboxUrl: string
   sandboxImage: string
   sandboxPool: string
 }
+
+/** TaskConfig keys allowed in Extra Config; unknown keys are ignored. */
+const EXTRA_CONFIG_TOP_LEVEL_KEYS = [
+  'agent_config',
+  'judge',
+  'sandbox',
+  'generation_config',
+  'model_args',
+  'eval_config',
+] as const
 
 export interface PerfDraft {
   parallel: string
@@ -67,6 +95,7 @@ export const DEFAULT_EVAL: EvalDraft = {
   reasoningTokens: '',
   enableThinking: false,
   datasetArgs: '',
+  extraConfig: '',
   sandboxEnabled: false,
   sandboxEngine: 'docker',
   sandboxUrl: '',
@@ -90,30 +119,69 @@ export type FieldErrors = Record<string, string>
 export function validateConnection(connection: ModelConnection): FieldErrors {
   const errors: FieldErrors = {}
   if (!connection.model.trim()) errors.model = FORM_MESSAGE_KEYS.required
-  if (connection.api === 'openai') {
+  if (isRemoteApi(connection.api)) {
     const error = validateApiUrl(connection.url, true)
     if (error) errors.url = error
   }
   return errors
 }
 
+function validateExtraConfig(
+  rawText: string,
+): { ok: true; value: Record<string, unknown> } | { ok: false; messageKey: string } {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(rawText)
+  } catch {
+    return { ok: false, messageKey: FORM_MESSAGE_KEYS.extraConfigInvalidJson }
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, messageKey: FORM_MESSAGE_KEYS.extraConfigInvalidStructure }
+  }
+
+  const raw = parsed as Record<string, unknown>
+  const value: Record<string, unknown> = {}
+  for (const key of EXTRA_CONFIG_TOP_LEVEL_KEYS) {
+    if (!(key in raw)) continue
+    const item = raw[key]
+    const nullable = key === 'agent_config' || key === 'sandbox' || key === 'eval_config'
+    if (item === null ? !nullable : typeof item !== 'object' || Array.isArray(item)) {
+      return {
+        ok: false,
+        messageKey: key === 'eval_config'
+          ? FORM_MESSAGE_KEYS.extraConfigEvalConfigObject
+          : FORM_MESSAGE_KEYS.extraConfigInvalidStructure,
+      }
+    }
+    value[key] = item
+  }
+  return { ok: true, value }
+}
+
 export function validateEvalDraft(draft: EvalDraft): FieldErrors {
+  const extra = draft.extraConfig.trim() ? validateExtraConfig(draft.extraConfig) : undefined
+  const overrides = extra?.ok ? extra.value : {}
+  const validateGeneration = !('generation_config' in overrides)
+  const validateSandbox = draft.sandboxEnabled && !('sandbox' in overrides)
   const errors = collectNumericErrors([
     { id: 'batchSize', value: draft.batchSize, min: 1, step: 1 },
     { id: 'repeats', value: draft.repeats, min: 1, step: 1 },
-    { id: 'timeout', value: draft.timeout, min: 0 },
-    { id: 'temperature', value: draft.temperature, min: 0, max: 2 },
-    { id: 'topP', value: draft.topP, min: 0, max: 1 },
-    { id: 'maxTokens', value: draft.maxTokens, min: 1, step: 1 },
-    { id: 'topK', value: draft.topK, step: 1 },
-    { id: 'reasoningTokens', value: draft.reasoningTokens, min: 1, step: 1 },
-    ...(draft.sandboxEnabled ? [{ id: 'sandboxPool', value: draft.sandboxPool, min: 1, step: 1 }] : []),
+    ...(validateGeneration ? [
+      { id: 'timeout', value: draft.timeout, min: 0 },
+      { id: 'temperature', value: draft.temperature, min: 0, max: 2 },
+      { id: 'topP', value: draft.topP, min: 0, max: 1 },
+      { id: 'maxTokens', value: draft.maxTokens, min: 1, step: 1 },
+      { id: 'topK', value: draft.topK, step: 1 },
+      { id: 'reasoningTokens', value: draft.reasoningTokens, min: 1, step: 1 },
+    ] : []),
+    ...(validateSandbox ? [{ id: 'sandboxPool', value: draft.sandboxPool, min: 1, step: 1 }] : []),
   ])
   if (!draft.datasets.split(',').some((name) => name.trim())) errors.datasets = FORM_MESSAGE_KEYS.required
   const limitError = validateDatasetLimit(draft.limit)
   if (limitError) errors.limit = limitError
-  if (draft.timeout.trim() && Number(draft.timeout) <= 0) errors.timeout = FORM_MESSAGE_KEYS.numericBelowMin
-  if (draft.sandboxEnabled && draft.sandboxEngine === 'docker' && draft.sandboxUrl.trim()) {
+  if (validateGeneration && draft.timeout.trim() && Number(draft.timeout) <= 0)
+    errors.timeout = FORM_MESSAGE_KEYS.numericBelowMin
+  if (validateSandbox && draft.sandboxEngine === 'docker' && draft.sandboxUrl.trim()) {
     const error = validateApiUrl(draft.sandboxUrl, false)
     if (error) errors.sandboxUrl = error
   }
@@ -121,6 +189,7 @@ export function validateEvalDraft(draft: EvalDraft): FieldErrors {
     const result = validateDatasetArgs(draft.datasetArgs)
     if (!result.ok) errors.datasetArgs = result.messageKey
   }
+  if (extra && !extra.ok) errors.extraConfig = extra.messageKey
   return errors
 }
 
@@ -150,11 +219,24 @@ export function validatePerfDraft(draft: PerfDraft): FieldErrors {
   return errors
 }
 
+/**
+ * Eval-side `eval_type` value for each remote API. `openai` is omitted so the
+ * backend applies its default (EvalType.OPENAI_API); the others must be sent
+ * explicitly so TaskConfig picks the right model api.
+ */
+const EVAL_TYPE_BY_API: Partial<Record<ConnectionApi, string>> = {
+  openai_responses: 'openai_responses_api',
+  anthropic: 'anthropic_api',
+}
+
 /** Only explicit connection fields can become transport parameters. */
 export function connectionPayload(connection: ModelConnection, kind: 'eval' | 'perf'): Record<string, unknown> {
   const payload: Record<string, unknown> = { model: connection.model.trim() }
   if (kind === 'perf') payload.api = connection.api
-  if (connection.api === 'openai') {
+  if (kind === 'eval' && connection.api in EVAL_TYPE_BY_API) {
+    payload.eval_type = EVAL_TYPE_BY_API[connection.api]
+  }
+  if (isRemoteApi(connection.api)) {
     payload[kind === 'eval' ? 'api_url' : 'url'] = connection.url.trim()
     if (connection.apiKey) payload.api_key = connection.apiKey
   }
@@ -201,6 +283,11 @@ export function buildEvalPayload(draft: EvalDraft): Record<string, unknown> {
     }
     if (draft.sandboxPool.trim()) sandbox.pool_size = Number(draft.sandboxPool)
     payload.sandbox = sandbox
+  }
+  // Recognized Extra Config keys override form-built values wholesale.
+  if (draft.extraConfig.trim()) {
+    const parsed = validateExtraConfig(draft.extraConfig)
+    if (parsed.ok) Object.assign(payload, parsed.value)
   }
   return payload
 }

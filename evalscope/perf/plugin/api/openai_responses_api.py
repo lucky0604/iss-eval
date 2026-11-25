@@ -106,6 +106,7 @@ class OpenAIResponsesPlugin(DefaultApiPlugin):
                     output.is_stream = True
                     handler = StreamedResponseHandler()
                     stream_failed = False
+                    stream_finished = False
                     async for chunk_bytes in response.content.iter_any():
                         if not chunk_bytes:
                             continue
@@ -126,14 +127,16 @@ class OpenAIResponsesPlugin(DefaultApiPlugin):
                             timestamp = time.perf_counter()
                             event_type = payload.get('type')
                             delta = payload.get('delta') or ''
-                            if event_type in _DELTA_EVENT_TYPES and delta:
+                            if event_type in _OUTPUT_EVENT_TYPES and delta:
                                 if last_output_timestamp is None:
                                     output.first_chunk_latency = timestamp - st
                                 else:
                                     output.inter_chunk_latency.append(timestamp - last_output_timestamp)
                                 last_output_timestamp = timestamp
-                                generated_text += delta
+                                if event_type in _DELTA_EVENT_TYPES:
+                                    generated_text += delta
                             elif event_type in ('response.completed', 'response.incomplete'):
+                                stream_finished = True
                                 response_payload = payload.get('response', {})
                                 usage = response_usage_from_dict(response_payload)
                                 if usage is not None:
@@ -147,6 +150,11 @@ class OpenAIResponsesPlugin(DefaultApiPlugin):
 
                             output.response_messages.append(payload)
                             most_recent_timestamp = timestamp
+
+                    if not stream_failed and not stream_finished:
+                        stream_failed = True
+                        output.error = 'Responses SSE stream ended without a terminal response event.'
+                        most_recent_timestamp = time.perf_counter()
 
                     output.generated_text = generated_text
                     output.success = not stream_failed
@@ -267,6 +275,8 @@ _DELTA_EVENT_TYPES = {
     'response.reasoning_text.delta',
     'response.reasoning_summary_text.delta',
 }
+# Tool-call arguments are output too, but they only affect timing: they are not text the model returned.
+_OUTPUT_EVENT_TYPES = _DELTA_EVENT_TYPES | {'response.function_call_arguments.delta'}
 
 
 def _extract_sse_data(message: str) -> str:

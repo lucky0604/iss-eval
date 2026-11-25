@@ -1,9 +1,11 @@
 """Smoke tests for migrated Native judge adapters."""
 
 import json
+from pathlib import Path
 from typing import Any, List
 
 import pytest
+from PIL import Image
 
 from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
@@ -14,24 +16,8 @@ from evalscope.benchmarks.mt_bench.mt_bench_adapter import MTBenchAdapter
 from evalscope.benchmarks.prbench.prbench_adapter import PRBenchAdapter
 from evalscope.config import TaskConfig
 from evalscope.constants import JudgeScoreType, ScoreStatus
-from evalscope.metrics.judge.llm_judge import DEFAULT_PROMPT_TEMPLATE, LLMJudge
-
-
-class ScriptedJudge:
-    score_type = JudgeScoreType.PATTERN
-    score_mapping = {'A': 1.0, 'B': 0.0}
-    prompt_template = DEFAULT_PROMPT_TEMPLATE
-    system_prompt = None
-    build_prompt = LLMJudge.build_prompt
-
-    def __init__(self, replies: List[str]) -> None:
-        self.replies = replies
-        self.judge_id = self.model_id = 'scripted'
-        self.calls: List[Any] = []
-
-    def generate(self, messages):
-        self.calls.append(messages)
-        return ModelOutput.from_content('scripted', self.replies[min(len(self.calls) - 1, len(self.replies) - 1)])
+from evalscope.metrics.judge.llm_judge import DEFAULT_NUMERIC_SCORE_TEMPLATE
+from tests.api.judge.helpers import ScriptedJudge, make_state
 
 
 class TransportFailingJudge(ScriptedJudge):
@@ -43,9 +29,107 @@ class TransportFailingJudge(ScriptedJudge):
         raise RuntimeError('judge transport unavailable')
 
 
-def make_state(prediction: str, target: str) -> TaskState:
-    sample = Sample(id=0, input='Who wrote Hamlet?', target=target, metadata={})
-    return TaskState(model='m', sample=sample, output=ModelOutput.from_content('m', prediction), completed=True)
+def test_qwen_image_bench_uses_chinese_prompts_without_task_config() -> None:
+    adapter = get_benchmark('qwen_image_bench')
+    sample = adapter.record_to_sample({
+        'ID': 1,
+        'prompt_cn': '红色立方体',
+        'prompt_en': 'a red cube',
+        'dims_en': 'Quality / Realism / Physical Logic',
+    })
+    assert sample.metadata['prompt'] == '红色立方体'
+
+
+@pytest.mark.parametrize(
+    ('replies', 'expected_status', 'expected'),
+    [
+        (['{"Physical Logic":{"score":0},"Detail":{"Noise":{"score":"N/A"}}}',
+          '```json\n{"Attributes":{"Color":{"score":2}}}\n```'], ScoreStatus.SUCCESS, 50.0),
+        (['not JSON', '{"Attributes":{"Color":{"score":1}}}'], ScoreStatus.DEGRADED, 60.0),
+        (['not JSON', '[ERROR] judge transport unavailable'], ScoreStatus.EXCLUDED, None),
+        (['{"Realism":{"Physical Logic":{"score":"N/A"}}}', '{"Attributes":{"Color":{"score":"N/A"}}}'],
+         ScoreStatus.EXCLUDED, None),
+    ],
+)
+def test_qwen_image_bench_contract(
+    tmp_path: Path, replies: list[str], expected_status: ScoreStatus, expected: float | None
+) -> None:
+    image = tmp_path / 'sample.png'
+    Image.new('RGB', (8, 12)).save(image)
+    manifest = tmp_path / 'dataset.jsonl'
+    manifest.write_text(json.dumps({
+        'ID': 1,
+        'prompt_cn': '红色立方体',
+        'prompt_en': 'a red cube',
+        'dims_en': 'Quality / Detail / Noise; Alignment / Attributes / Color; Quality / Realism / Physical Logic',
+        'image_path': str(image),
+    }) + '\n', encoding='utf-8')
+    adapter = get_benchmark('qwen_image_bench', TaskConfig(
+        datasets=['qwen_image_bench'],
+        dataset_args={'qwen_image_bench': {'dataset_id': str(manifest), 'extra_params': {'language': 'en'}}},
+        judge={'models': [{'model_id': 'Qwen/Qwen-Image-Bench'}]},
+        work_dir=str(tmp_path / 'evaluation'),
+    ))
+    judge = ScriptedJudge(replies)
+    adapter.llm_judge = judge
+    sample = adapter.load_dataset()['default'][0]
+    assert sample.metadata['prompt'] == 'a red cube'
+    task = TaskState(model='m', sample=sample, output=ModelOutput.from_content('m', ''), completed=True)
+
+    sample_score = adapter.calculate_metrics(task)
+    score = sample_score.score
+    assert score.status is expected_status
+    assert len(judge.calls) == 2
+    assert score.prediction == str(image)
+    artifacts = list((tmp_path / 'evaluation' / 'judge_images').rglob('*.png'))
+    assert len(artifacts) == 1
+    attempts = score.metadata['judge_attempts']
+    assert [attempt['messages'][1]['content'][1]['image'] for attempt in attempts] == [str(artifacts[0])] * 2
+    if expected is None:
+        assert score.value == {}
+        assert adapter.aggregate_scores([sample_score]) == []
+    else:
+        assert score.main_value == expected
+        by_component = {
+            item.dimensions.get('component'): item for item in adapter.aggregate_scores([sample_score])
+        }
+        assert by_component[None].score == expected and by_component[None].num == 1
+        assert by_component['alignment_attributes'].score == score.value['qwen_image_bench_score:alignment']
+        if expected_status is ScoreStatus.DEGRADED:
+            assert 'quality' not in by_component
+            assert score.judge_summary.failures == {'parse_error': 1}
+        else:
+            assert by_component['quality_realism'].score == 0.0
+            assert 'quality_detail' not in by_component
+
+
+@pytest.mark.parametrize(('judge', 'expected'), [
+    (ScriptedJudge(['{"explanation": "The condition is preserved.", "criteria_met": true}']), 1.0),
+    (ScriptedJudge(['{"explanation": "The condition is omitted.", "criteria_met": false}']), 0.0),
+    (ScriptedJudge(['not JSON']), None),
+    (ScriptedJudge(['[ERROR] judge transport unavailable']), None),
+    (TransportFailingJudge(), None),
+])
+def test_health_bench_contract_preserves_zero_verdicts_and_excludes_invalid_replies(
+    judge: ScriptedJudge, expected: float | None,
+) -> None:
+    config = TaskConfig(model='m', datasets=['health_bench'], judge={'strategy': 'llm', 'models': [{'model_id': 'j'}]})
+    adapter = get_benchmark('health_bench', config)
+    adapter.llm_judge = judge
+    state = make_state('The outcomes apply under different conditions.', '')
+    state.metadata = {
+        'prompt': [{'role': 'user', 'content': 'Explain the conditional recommendations.'}],
+        'rubrics': [{'criterion': 'Preserves each condition.', 'points': 5, 'tags': ['axis:accuracy']}],
+    }
+
+    score = adapter.score_with_judge_contracts(state.output.completion, state.output.completion, '', state)
+
+    assert len(judge.calls) == 1
+    if expected is None:
+        assert score.status is ScoreStatus.EXCLUDED and score.value == {}
+    else:
+        assert score.status is ScoreStatus.SUCCESS
+        assert score.value == {'overall_score': expected, 'accuracy': expected}
 
 
 @pytest.mark.parametrize('answers', [[], [''], [' '], [r'\frac{'], ['1', r'\frac{']])
@@ -256,6 +340,35 @@ def test_three_way_judge_transport_failure_excludes_the_sample(benchmark_name: s
 
 
 @pytest.mark.parametrize(
+    ('reply', 'expected_status', 'expected'),
+    [
+        ('{"reasoning": "The answers match.", "verdict": "C"}', ScoreStatus.SUCCESS, 1.0),
+        ('not JSON', ScoreStatus.EXCLUDED, None),
+        ('[ERROR] judge transport unavailable', ScoreStatus.EXCLUDED, None),
+    ],
+)
+def test_hle_diamond_judge_contract(reply: str, expected_status: ScoreStatus, expected: float | None) -> None:
+    config = TaskConfig(model='m', datasets=['hle_diamond'], judge={'strategy': 'llm', 'models': [{'model_id': 'j'}]})
+    adapter = get_benchmark('hle_diamond', config)
+    judge = ScriptedJudge([reply])
+    adapter.llm_judge = judge
+    state = make_state('Explanation: concise\nExact Answer: A\nConfidence: 87%', 'A')
+
+    sample_score = adapter.calculate_metrics(state)
+    score = sample_score.score
+
+    assert score.status is expected_status
+    assert len(judge.calls) == 1
+    if expected is None:
+        assert score.value == {}
+        assert adapter.aggregate_scores([sample_score]) == []
+    else:
+        assert score.value == {'acc': expected}
+        assert score.metadata['confidence'] == 87
+        assert adapter.aggregate_scores([sample_score])[0].score == expected
+
+
+@pytest.mark.parametrize(
     'benchmark_name',
     ['baby_vision', 'imo_answerbench', 'math_verse', 'minerva_math', 'world_vqa', 'zerobench'],
 )
@@ -268,6 +381,92 @@ def test_generic_pattern_contract_supports_simple_judge_benchmarks(benchmark_nam
 
     assert score.status is ScoreStatus.SUCCESS
     assert score.value == {'acc': 1.0}
+
+
+@pytest.mark.parametrize(('name', 'reply', 'field', 'legacy_instruction'), [
+    ('aime24', '{"verdict": "Yes"}', 'verdict', 'Respond with only "Yes" or "No"'),
+    ('aime25', '{"verdict": "Yes"}', 'verdict', 'Respond with only "Yes" or "No"'),
+    ('aime26', '{"verdict": "Yes"}', 'verdict', 'Respond with only "Yes" or "No"'),
+    ('aa_lcr', '{"verdict": "CORRECT"}', 'verdict', 'Reply only with CORRECT or INCORRECT'),
+    ('hle', '{"reasoning": "matches", "verdict": "C"}', 'reasoning', 'GRADE: C'),
+    ('drivel_writing', '{"reasoning": "matches", "rating": 4}', 'reasoning', 'After providing your explanation'),
+    ('alpaca_eval', '{"verdict": "M"}', 'verdict', 'no quotes, no spaces, no new lines'),
+    ('arena_hard', '{"reasoning": "equal", "verdict": "A=B"}', 'reasoning', 'After providing your explanation'),
+    ('general_arena', '{"reasoning": "equal", "verdict": "A=B"}', 'reasoning', 'After providing your explanation'),
+    ('docmath', '{"reasoning": "equal", "verdict": "YES"}', 'reasoning', 'Your output must follow'),
+    ('frames', '{"reasoning": "equal", "verdict": "YES"}', 'reasoning', 'Your output must follow'),
+    ('longmemeval', '{"verdict": "yes"}', 'verdict', 'Please answer yes'),
+])
+@pytest.mark.parametrize('envelope', ['{reply}', '```json\n{reply}\n```', 'Explanation first.\n{reply}'])
+def test_adapted_judge_prompts_and_reply_boundaries(
+    name: str, reply: str, field: str, legacy_instruction: str, envelope: str,
+) -> None:
+    config = TaskConfig(model='m', datasets=[name], judge={'strategy': 'llm', 'models': [{'model_id': 'j'}]})
+    adapter = get_benchmark(name, config)
+    raw = envelope.format(reply=reply)
+    judge = ScriptedJudge([raw])
+    adapter.llm_judge = judge
+    state = make_state('Shakespeare', 'Shakespeare')
+    state.metadata = {
+        'question': 'Who wrote Hamlet?', 'model_1': 'model-a', 'model_2': 'model-b', 'answer_1': 'Shakespeare',
+        'question_type': 'single-session-user',
+    }
+
+    score = adapter.score_with_judge_contracts('Shakespeare', 'Shakespeare', 'Shakespeare', state)
+
+    assert judge.calls
+    prompt = '\n'.join(message.text for message in judge.calls[0])
+    assert legacy_instruction not in prompt
+    assert f'JSON {field} field' in prompt
+    assert 'single JSON object and no other text' in prompt
+    if envelope == '{reply}':
+        assert score.status.is_usable
+        assert score.value
+    else:
+        assert score.status is ScoreStatus.EXCLUDED
+        assert score.value == {}
+        assert score.judge_summary.failures == {'parse_error': 1}
+        assert score.metadata['judge_attempts'][0]['raw_response'] == raw
+        assert len(judge.calls) == 1
+
+
+def test_generic_numeric_judge_keeps_explanation_inside_json() -> None:
+    config = TaskConfig(model='m', datasets=['general_qa'], judge={'strategy': 'llm', 'models': [{'model_id': 'j'}]})
+    adapter = get_benchmark('general_qa', config)
+    judge = ScriptedJudge(['{"reasoning": "helpful", "score": 0.8}'])
+    judge.score_type = JudgeScoreType.NUMERIC
+    judge.prompt_template = DEFAULT_NUMERIC_SCORE_TEMPLATE
+    adapter.llm_judge = judge
+
+    score = adapter.score_with_judge_contracts('answer', 'answer', 'reference', make_state('answer', 'reference'))
+
+    assert score.status.is_usable
+    assert score.main_value == 0.8
+    prompt = '\n'.join(message.text for message in judge.calls[0])
+    assert 'JSON reasoning field' in prompt
+    assert 'Begin your evaluation by providing a short explanation' not in prompt
+
+
+@pytest.mark.parametrize('envelope', ['{reply}', '```json\n{reply}\n```', 'The answers match.\n{reply}'])
+def test_math_recall_retains_rule_evidence_when_judge_format_fails(envelope: str) -> None:
+    config = TaskConfig(
+        model='m', datasets=['math_500'], judge={'strategy': 'llm_recall', 'models': [{'model_id': 'j'}]},
+    )
+    adapter = get_benchmark('math_500', config)
+    judge = ScriptedJudge([envelope.format(reply='{"verdict": "A"}')])
+    adapter.llm_judge = judge
+
+    score = adapter.calculate_metrics(make_state('It is one half.', r'\frac{1}{2}')).score
+
+    assert len(judge.calls) == 1
+    if envelope == '{reply}':
+        assert score.status is ScoreStatus.SUCCESS
+        assert score.main_value == 1.0
+    else:
+        assert score.status is ScoreStatus.FALLBACK
+        assert score.main_value == 0.0
+        assert score.judge_summary.failures == {'parse_error': 1}
+        assert score.metadata['judge_unavailable'] == 'excluded'
 
 
 def test_arena_hard_swap_is_driven_by_the_executor():
@@ -416,15 +615,26 @@ def test_mt_bench_valid_verdict_scores_both_turns() -> None:
     assert score.value == {'judge_score': 8.0, 'first_turn_judge_score': 9.0, 'second_turn_judge_score': 7.0}
 
 
-def test_mt_bench_invalid_judge_reply_excludes_the_sample() -> None:
+@pytest.mark.parametrize('reply', [
+    'not JSON',
+    '```json\n{"explanation": "correct", "score": 9}\n```',
+    'The answer is correct.\n{"score": 9}',
+    '<think>Correct.</think>\n{"score": 9}',
+    '{broken: {"score": 9}}',
+    '{"score": 9}\n{"score": 7}',
+])
+def test_mt_bench_invalid_judge_reply_excludes_the_sample(reply: str) -> None:
     adapter = make_mt_bench_adapter()
-    adapter.llm_judge = ScriptedJudge(['not JSON'])
+    judge = ScriptedJudge([reply])
+    adapter.llm_judge = judge
 
     score = adapter.calculate_metrics(make_mt_bench_state(adapter)).score
 
     assert score.status is ScoreStatus.EXCLUDED
     assert score.value == {}
     assert score.metadata['judge_attempts'][0]['status'] == 'parse_error'
+    assert score.metadata['judge_attempts'][0]['raw_response'] == reply
+    assert len(judge.calls) == 1
 
 
 def test_mt_bench_transport_failure_excludes_the_sample() -> None:
@@ -619,12 +829,16 @@ def make_mask_adapter():
 
 def test_mask_valid_verdict_scores_the_sample() -> None:
     adapter = make_mask_adapter()
-    adapter.llm_judge = ScriptedJudge(['{"reasoning": "denies the theft", "answer": "B"}'])
+    judge = ScriptedJudge(['{"reasoning": "denies the theft", "answer": "B"}'])
+    adapter.llm_judge = judge
 
     score = adapter.calculate_metrics(make_mask_state(adapter)).score
 
     assert score.status is ScoreStatus.SUCCESS
     assert score.value == {'honesty_score': 0.0, 'honest_rate': 0.0}
+    prompt = '\n'.join(message.text for message in judge.calls[0])
+    assert 'JSON reasoning field' in prompt and 'JSON answer field' in prompt
+    assert 'then provide your final answer' not in prompt
 
 
 @pytest.mark.parametrize('judge', [ScriptedJudge(['Answer: B']), TransportFailingJudge()])
@@ -662,3 +876,116 @@ def test_agentharm_judge_contract_excludes_invalid_cases(name: str, reply: str, 
         assert score.value['task_completion_score'] == 1 / 8
     else:
         assert score.value == {} and score.judge_summary.coverage == 0
+
+
+def make_swe_atlas_qna_adapter():
+    config = TaskConfig(
+        model='m',
+        datasets=['swe_atlas_qna'],
+        judge={'strategy': 'llm', 'models': [{'model_id': 'j'}]},
+    )
+    return get_benchmark('swe_atlas_qna', config)
+
+
+def make_swe_atlas_qna_state(adapter) -> TaskState:
+    sample = adapter.record_to_sample({
+        'task_id': 'task-1',
+        'prompt': 'Where is retries handled?',
+        'reference_answer': 'In retry.py.',
+        'repository_base_commit': 'abc123',
+        'docker_image': 'ghcr.io/scaleapi/swe-atlas:swe_atlas_QnA_kovidgoyal_kitty_1.0',
+        'rubric': [
+            {
+                'id': 'r1',
+                'title': 'Names retry.py.',
+                'annotations': {'type': 'positive hli verifier'},
+            }
+        ],
+    })
+    sample.id = 0
+    sample.metadata['_sandbox_state'] = {'setup_returncode': 0, 'check_returncode': 0, 'tree_status': ''}
+    return TaskState(
+        model='m', sample=sample, output=ModelOutput.from_content('m', 'Retries are in retry.py.'), completed=True
+    )
+
+
+def test_swe_atlas_qna_valid_official_verdict_scores_the_sample() -> None:
+    adapter = make_swe_atlas_qna_adapter()
+    adapter.llm_judge = ScriptedJudge([
+        json.dumps({
+            'ratings': [
+                {
+                    'rubric_statement': 'Names retry.py.',
+                    'status': 'YES',
+                    'score': '1',
+                    'justification': 'The answer names retry.py.',
+                }
+            ]
+        })
+    ])
+
+    score = adapter.calculate_metrics(make_swe_atlas_qna_state(adapter)).score
+
+    assert score.status is ScoreStatus.SUCCESS
+    assert score.value == {'resolved': 1.0, 'rubric_pass_rate': 1.0}
+
+
+@pytest.mark.parametrize(
+    'reply',
+    [
+        'not JSON',
+        '[ERROR] judge transport unavailable',
+        '{"status":"YES","justification":"missing ratings envelope"}',
+    ],
+)
+def test_swe_atlas_qna_invalid_judge_reply_excludes_the_sample(reply: str) -> None:
+    adapter = make_swe_atlas_qna_adapter()
+    adapter.llm_judge = ScriptedJudge([reply])
+
+    score = adapter.calculate_metrics(make_swe_atlas_qna_state(adapter)).score
+
+    assert score.status is ScoreStatus.EXCLUDED
+    assert score.value == {}
+    assert score.metadata['judge_attempts'][0]['status'] == 'parse_error'
+
+
+def test_swe_atlas_qna_transport_failure_excludes_the_sample() -> None:
+    adapter = make_swe_atlas_qna_adapter()
+    adapter.llm_judge = TransportFailingJudge()
+
+    score = adapter.calculate_metrics(make_swe_atlas_qna_state(adapter)).score
+
+    assert score.status is ScoreStatus.EXCLUDED
+    assert score.value == {}
+    assert score.metadata['judge_attempts'][0]['status'] == 'transport_error'
+
+
+def test_swe_atlas_qna_environment_failure_skips_judge_and_excludes() -> None:
+    adapter = make_swe_atlas_qna_adapter()
+    judge = ScriptedJudge(['not JSON'])
+    adapter.llm_judge = judge
+    state = make_swe_atlas_qna_state(adapter)
+    state.metadata['_sandbox_state'] = {'setup_returncode': 1, 'setup_error': 'unknown revision'}
+
+    score = adapter.calculate_metrics(state).score
+
+    assert score.status is ScoreStatus.EXCLUDED
+    assert score.value == {}
+    assert score.explanation == 'unknown revision'
+    assert judge.calls == []
+
+
+def test_swe_atlas_qna_empty_rubric_skips_judge_and_excludes() -> None:
+    adapter = make_swe_atlas_qna_adapter()
+    judge = ScriptedJudge(['not JSON'])
+    adapter.llm_judge = judge
+    state = make_swe_atlas_qna_state(adapter)
+    state.metadata['rubric'] = []
+
+    score = adapter.calculate_metrics(state).score
+
+    assert score.status is ScoreStatus.EXCLUDED
+    assert score.value == {}
+    assert score.explanation == 'rubric must contain at least one item'
+    assert score.metadata['excluded_reason'] == 'rubric must contain at least one item'
+    assert judge.calls == []

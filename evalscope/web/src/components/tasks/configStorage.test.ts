@@ -17,6 +17,7 @@ import {
   DEFAULT_EVAL,
   editConnection,
   connectionPayload,
+  validateConnection,
   validateEvalDraft,
   validatePerfDraft,
   DEFAULT_PERF,
@@ -138,6 +139,29 @@ describe('Browser configuration storage', () => {
     writeWorkspace(state)
     expect(localStorage.getItem(CONFIG_STORAGE_KEY)).not.toContain('fake-secret')
   })
+  it.each(['openai_responses', 'anthropic'] as const)('round-trips %s connections through storage and import', (api) => {
+    const state = savedWorkspace()
+    state.connection.api = api
+    state.connections[0].value.api = api
+    expect(writeWorkspace(state).ok).toBe(true)
+    expect(readWorkspace()).toMatchObject({
+      ok: true,
+      value: {
+        connection: { api, apiKey: 'fake-secret' },
+        connections: [{ value: { api, apiKey: 'fake-secret' } }],
+      },
+    })
+    const exported = exportLibrary(state, false)
+    expect(exported).not.toContain('fake-secret')
+    expect(parseImport(exported).connections[0]).toMatchObject({
+      rememberKey: false,
+      value: { api, apiKey: '' },
+    })
+    expect(parseImport(exportLibrary(state, true)).connections[0]).toMatchObject({
+      rememberKey: true,
+      value: { api, apiKey: 'fake-secret' },
+    })
+  })
   it('does not restore a cleared or unsaved replacement key', () => {
     const state = savedWorkspace()
     state.connection.apiKey = 'new-unsaved-key'
@@ -176,15 +200,47 @@ describe('Browser configuration storage', () => {
     expect(parseImport(exportLibrary(state, true)).connections[0].value.apiKey).toBe('fake-secret')
     expect(parseImport(exportLibrary(state, false)).connections[0].rememberKey).toBe(false)
   })
+  it('excludes Extra Config from drafts and all exports, including exports with saved connection keys', () => {
+    const state = savedWorkspace()
+    const extraConfig = JSON.stringify({
+      agent_config: { mcp_servers: [{ command: 'example', args: ['--api-key', 'fake-mcp-key'] }] },
+    })
+    state.eval.datasets = 'gsm8k'
+    state.eval.extraConfig = extraConfig
+    state.evalTemplates = [{ id: 'agent', name: 'Agent', value: { ...state.eval } }]
+
+    expect(writeWorkspace(state).ok).toBe(true)
+    expect(localStorage.getItem(CONFIG_STORAGE_KEY)).not.toContain('fake-mcp-key')
+    expect(readWorkspace()).toMatchObject({
+      ok: true,
+      value: { eval: { datasets: 'gsm8k', extraConfig: '' }, evalTemplates: [{ value: { extraConfig: '' } }] },
+    })
+    for (const includeKeys of [false, true]) {
+      const exported = exportLibrary(state, includeKeys)
+      expect(exported).not.toContain('fake-mcp-key')
+      expect(parseImport(exported).evalTemplates[0].value).toMatchObject({ datasets: 'gsm8k', extraConfig: '' })
+    }
+    expect(state.eval.extraConfig).toBe(extraConfig)
+
+    // Earlier builds could write the text into a workspace or exported template.
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(state))
+    expect(readWorkspace()).toMatchObject({ ok: true, value: { eval: { extraConfig: '' } } })
+    const imported = JSON.parse(exportLibrary(state, false))
+    imported.evalTemplates[0].value.extraConfig = extraConfig
+    expect(parseImport(JSON.stringify(imported)).evalTemplates[0].value.extraConfig).toBe('')
+  })
   it('imports older eval templates with missing fields', () => {
     const state = savedWorkspace()
-    const value = { ...DEFAULT_EVAL, datasets: 'gsm8k' }
+    const value = { ...DEFAULT_EVAL, datasets: 'gsm8k', datasetArgs: '{"gsm8k":{"few_shot_num":4}}' }
     state.evalTemplates = [{ id: 'old', name: 'Old template', value }]
     const raw = JSON.parse(exportLibrary(state, false))
     delete raw.evalTemplates[0].value.reasoningEffort
     delete raw.evalTemplates[0].value.reasoningTokens
     delete raw.evalTemplates[0].value.enableThinking
-    expect(parseImport(JSON.stringify(raw)).evalTemplates[0].value).toEqual(value)
+    delete raw.evalTemplates[0].value.extraConfig
+    const imported = parseImport(JSON.stringify(raw))
+    expect(imported.evalTemplates[0].value).toEqual(value)
+    expect(parseImport(exportLibrary(imported, false)).evalTemplates[0].value).toEqual(value)
   })
   it('imports version-1 libraries and round-trips nested version-2 presets without node secrets', () => {
     const state = savedWorkspace()
@@ -251,6 +307,31 @@ describe('Shared connection and template semantics', () => {
     })
     expect(connectionPayload({ ...connection, api: 'local' }, 'perf')).not.toHaveProperty('api_key')
   })
+  it('maps openai_responses and anthropic connections to the right backend fields', () => {
+    const connection = savedWorkspace().connection
+    expect(connectionPayload({ ...connection, api: 'openai_responses' }, 'eval')).toMatchObject({
+      eval_type: 'openai_responses_api',
+      api_url: connection.url,
+      api_key: 'fake-secret',
+    })
+    expect(connectionPayload({ ...connection, api: 'openai_responses' }, 'perf')).toMatchObject({
+      api: 'openai_responses',
+      url: connection.url,
+      api_key: 'fake-secret',
+    })
+    expect(connectionPayload({ ...connection, api: 'anthropic' }, 'eval')).toMatchObject({
+      eval_type: 'anthropic_api',
+      api_url: connection.url,
+      api_key: 'fake-secret',
+    })
+    expect(connectionPayload({ ...connection, api: 'anthropic' }, 'perf')).toMatchObject({
+      api: 'anthropic',
+      url: connection.url,
+      api_key: 'fake-secret',
+    })
+    // The default openai connection must not send eval_type so the backend keeps its default.
+    expect(connectionPayload(connection, 'eval')).not.toHaveProperty('eval_type')
+  })
   it('clears credentials when switching destinations, but not model or URL path', () => {
     const connection = savedWorkspace().connection
     expect(editConnection(connection, { url: 'http://server-b:8000/v1' }).apiKey).toBe('')
@@ -264,5 +345,13 @@ describe('Shared connection and template semantics', () => {
     expect(validatePerfDraft({ ...DEFAULT_PERF, parallel: '1,2', number: '4,8', rate: '2.5' })).toEqual({})
     expect(validatePerfDraft({ ...DEFAULT_PERF, parallel: '1,2' })).toHaveProperty('number')
     expect(validateEvalDraft({ ...DEFAULT_EVAL, datasets: 'gsm8k', timeout: '0' })).toHaveProperty('timeout')
+  })
+  it('requires an API URL for every remote protocol, never for local', () => {
+    const base = { ...DEFAULT_CONNECTION, model: 'm', apiKey: 'k' }
+    for (const api of ['openai', 'openai_responses', 'anthropic'] as const) {
+      expect(validateConnection({ ...base, api, url: '' })).toHaveProperty('url')
+      expect(validateConnection({ ...base, api, url: 'http://localhost:8000/v1' })).not.toHaveProperty('url')
+    }
+    expect(validateConnection({ ...base, api: 'local', url: '' })).not.toHaveProperty('url')
   })
 })

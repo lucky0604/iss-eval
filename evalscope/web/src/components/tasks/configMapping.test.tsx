@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { LocaleProvider } from '@/contexts/LocaleContext'
 import { EvalFormHarness as EvalConfigForm, PerfFormHarness as PerfConfigForm } from '@/test/TaskFormHarness'
 
@@ -63,6 +63,26 @@ describe('Evaluation form → TaskConfig payload', () => {
     expect(submit.mock.calls[0][0]).not.toHaveProperty('timeout')
     expect(submit.mock.calls[0][0]).not.toHaveProperty('stream')
   })
+  it.each([
+    ['openai_responses', 'openai_responses_api'],
+    ['anthropic', 'anthropic_api'],
+  ] as const)('validates and maps the %s evaluation connection', (api, evalType) => {
+    const submit = evalForm()
+    change('connection-api', api)
+    expect(screen.getByRole('textbox', { name: /Model API URL/ })).toBeVisible()
+    expect(screen.getByLabelText('Model API Key')).toBeVisible()
+    change('connection-url', '')
+    submitEval()
+    expect(submit).not.toHaveBeenCalled()
+    change('connection-url', ' http://localhost:18101/v1 ')
+    change('connection-apiKey', 'remote-key')
+    submitEval()
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      eval_type: evalType,
+      api_url: 'http://localhost:18101/v1',
+      api_key: 'remote-key',
+    }))
+  })
   it('routes the thinking switch into generation_config.extra_body', () => {
     const submit = evalForm()
     fireEvent.click(screen.getByLabelText('Enable Thinking'))
@@ -76,6 +96,73 @@ describe('Evaluation form → TaskConfig payload', () => {
     expect(generation).not.toHaveProperty('reasoning_effort')
     expect(generation).not.toHaveProperty('reasoning_tokens')
     expect(generation).not.toHaveProperty('extra_body')
+  })
+  it('hoists recognized Extra Config keys to the payload top level', () => {
+    const submit = evalForm()
+    change('eval-extraConfig', '{"agent_config":{"max_steps":20},"model_args":{"revision":"v2"}}')
+    submitEval()
+    expect(submit.mock.calls[0][0].agent_config).toEqual({ max_steps: 20 })
+    expect(submit.mock.calls[0][0].model_args).toEqual({ revision: 'v2' })
+  })
+  it('groups advanced inputs and takes dataset_args only from Dataset Args', () => {
+    const submit = evalForm()
+    const advanced = within(screen.getByRole('region', { name: 'Advanced Configuration' }))
+    expect(advanced.getByRole('textbox', { name: 'Dataset Args (JSON)' })).toBeVisible()
+    expect(advanced.getByRole('textbox', { name: 'Extra Config (JSON)' })).toBeVisible()
+    change('eval-temperature', '3')
+    change('eval-datasetArgs', '{"gsm8k":{"few_shot_num":4}}')
+    change('eval-extraConfig', '{"generation_config":{"temperature":0.1},"dataset_args":{"gsm8k":{"few_shot_num":9}}}')
+    submitEval()
+    expect(submit.mock.calls[0][0].generation_config).toEqual({ temperature: 0.1 })
+    expect(submit.mock.calls[0][0].dataset_args).toEqual({ gsm8k: { few_shot_num: 4 } })
+  })
+  it('ignores Extra Config keys outside the allowed top-level set', () => {
+    const submit = evalForm()
+    change('eval-extraConfig', '{"not_a_task_field":{"x":1},"dataset_args":{"gsm8k":{}}}')
+    submitEval()
+    expect(submit.mock.calls[0][0]).not.toHaveProperty('not_a_task_field')
+    expect(submit.mock.calls[0][0]).not.toHaveProperty('dataset_args')
+  })
+  it.each([
+    '{"eval_config":{"limit":2}}',
+    '{"eval_config":null}',
+    '{"agent_config":null}',
+    '{"sandbox":null}',
+  ])('accepts valid Extra Config value shapes %s', (raw) => {
+    const submit = evalForm()
+    change('eval-extraConfig', raw)
+    submitEval()
+    expect(submit).toHaveBeenCalledOnce()
+  })
+  it('ignores unknown keys before validating their values', () => {
+    const submit = evalForm()
+    change('eval-extraConfig', '{"agent_config":{"max_steps":20},"unknown":"value"}')
+    submitEval()
+    expect(submit.mock.calls[0][0].agent_config).toEqual({ max_steps: 20 })
+  })
+  it.each([
+    ['{"judge":null}', 'Extra Config contains a value with an unsupported type.'],
+    ['{"eval_config":"/tmp/eval.yaml"}', 'Use an inline JSON object or null for eval_config.'],
+    ['{"eval_config":"{\\"limit\\":2}"}', 'Use an inline JSON object or null for eval_config.'],
+  ])('rejects unsupported Extra Config values %s', (raw, message) => {
+    const submit = evalForm()
+    change('eval-extraConfig', raw)
+    submitEval()
+    expect(submit).not.toHaveBeenCalled()
+    expect(screen.getByText(message)).toBeInTheDocument()
+  })
+  it('expands More Parameters when Extra Config is invalid after collapsing it', () => {
+    const submit = evalForm()
+    change('eval-extraConfig', '{invalid')
+    const more = screen.getByRole('button', { name: /More Parameters.*Extra Config entered/ })
+    fireEvent.click(more)
+    expect(more).toHaveAttribute('aria-expanded', 'false')
+    expect(document.getElementById('eval-extraConfig')).toBeNull()
+    submitEval()
+    expect(submit).not.toHaveBeenCalled()
+    expect(more).toHaveAttribute('aria-expanded', 'true')
+    expect(document.getElementById('eval-extraConfig')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByText('Extra Config must be valid JSON.')).toBeInTheDocument()
   })
   it('maps both states of the stream switch', () => {
     const submit = evalForm()
@@ -178,9 +265,9 @@ describe('Performance form → Arguments payload', () => {
       max_prompt_length: 100, min_prompt_length: 0, tokenizer_path: '/tmp/tokenizer',
     })
   })
-  it('offers only the protocols the form can execute and omits unused local connection fields', () => {
+  it('offers every protocol and omits unused local connection fields', () => {
     const submit = perfForm()
-    expect([...document.querySelectorAll('#connection-api option')].map((item) => (item as HTMLOptionElement).value)).toEqual(['openai', 'local'])
+    expect([...document.querySelectorAll('#connection-api option')].map((item) => (item as HTMLOptionElement).value)).toEqual(['openai', 'openai_responses', 'anthropic', 'local'])
     change('connection-apiKey', 'must-not-leak')
     change('connection-api', 'local')
     expect(screen.queryByRole('textbox', { name: /Model API URL/ })).not.toBeInTheDocument()
@@ -189,6 +276,26 @@ describe('Performance form → Arguments payload', () => {
     expect(submit.mock.calls[0][0].api).toBe('local')
     expect(submit.mock.calls[0][0]).not.toHaveProperty('url')
     expect(submit.mock.calls[0][0]).not.toHaveProperty('api_key')
+  })
+  it('maps Anthropic and OpenAI Responses performance connections', () => {
+    const submit = perfForm()
+    change('connection-api', 'anthropic')
+    change('connection-apiKey', 'anthropic-key')
+    expect(screen.getByRole('button', { name: 'Start Performance Test' })).toBeEnabled()
+    submitPerf()
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      api: 'anthropic',
+      url: 'http://localhost:18101/v1',
+      api_key: 'anthropic-key',
+    }))
+    change('connection-api', 'openai_responses')
+    change('connection-apiKey', 'responses-key')
+    submitPerf()
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      api: 'openai_responses',
+      url: 'http://localhost:18101/v1',
+      api_key: 'responses-key',
+    }))
   })
   it.each(['', '-1', '.1', '2.5'])('accepts supported rate %j', (value) => {
     const submit = perfForm()

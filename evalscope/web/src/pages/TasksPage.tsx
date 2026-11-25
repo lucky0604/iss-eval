@@ -10,7 +10,13 @@ import ModelConnectionEditor from '@/components/tasks/ModelConnectionEditor'
 import PresetToolbar from '@/components/tasks/PresetToolbar'
 import ConfigLibraryTools from '@/components/tasks/ConfigLibraryTools'
 import { useTaskWorkspace } from '@/components/tasks/useTaskWorkspace'
-import { createPresetId, mergeLibrary, readWorkspace, savePreset } from '@/components/tasks/configStorage'
+import {
+  createPresetId,
+  mergeLibrary,
+  readWorkspace,
+  savePreset,
+  withoutExtraConfig,
+} from '@/components/tasks/configStorage'
 import { DEFAULT_AIPERF, sanitizedAIPerfDraft, validateAIPerfDraft } from '@/components/tasks/aiperfDraft'
 import {
   DEFAULT_CONNECTION,
@@ -111,11 +117,12 @@ export default function TasksPage() {
   }
 
   function saveEval(name: string, asNew: boolean): boolean {
-    if (Object.keys(validateEvalDraft(workspace.eval)).length) {
+    const template = withoutExtraConfig(workspace.eval)
+    if (Object.keys(validateEvalDraft(template)).length) {
       setMessage('invalidTemplate')
       return false
     }
-    const saved = savePreset(workspace.evalTemplates, workspace.selectedEval, name, workspace.eval, asNew)
+    const saved = savePreset(workspace.evalTemplates, workspace.selectedEval, name, template, asNew)
     return commit({ ...workspace, evalTemplates: saved.entries, selectedEval: saved.selectedId })
   }
 

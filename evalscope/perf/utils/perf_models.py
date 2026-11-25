@@ -56,6 +56,9 @@ class BenchmarkSummary(BaseModel):
     # --- LLM-specific ---
     output_token_throughput: float = Field(0.0, alias=Metrics.OUTPUT_TOKEN_THROUGHPUT)
     total_token_throughput: float = Field(0.0, alias=Metrics.TOTAL_TOKEN_THROUGHPUT)
+    device_count: Optional[int] = Field(None, alias=Metrics.DEVICE_COUNT)
+    output_token_throughput_per_device: Optional[float] = Field(None, alias=Metrics.OUTPUT_TOKEN_THROUGHPUT_PER_DEVICE)
+    total_token_throughput_per_device: Optional[float] = Field(None, alias=Metrics.TOTAL_TOKEN_THROUGHPUT_PER_DEVICE)
     avg_ttft: float = Field(0.0, alias=Metrics.AVERAGE_TIME_TO_FIRST_TOKEN)
     avg_tpot: float = Field(0.0, alias=Metrics.AVERAGE_TIME_PER_OUTPUT_TOKEN)
     avg_itl: float = Field(0.0, alias=Metrics.AVERAGE_INTER_TOKEN_LATENCY)
@@ -70,6 +73,8 @@ class BenchmarkSummary(BaseModel):
     # --- Multi-turn (optional) ---
     avg_turns: Optional[float] = Field(None, alias=Metrics.AVERAGE_INPUT_TURNS_PER_REQUEST)
     avg_cached_percent: Optional[float] = Field(None, alias=Metrics.AVERAGE_CACHED_PERCENT)
+    cache_request_coverage_percent: Optional[float] = Field(None, alias=Metrics.CACHE_REQUEST_COVERAGE_PERCENT)
+    cache_token_coverage_percent: Optional[float] = Field(None, alias=Metrics.CACHE_TOKEN_COVERAGE_PERCENT)
     avg_first_turn_ttft: Optional[float] = Field(None, alias=Metrics.AVERAGE_FIRST_TURN_TTFT)
     avg_subsequent_turn_ttft: Optional[float] = Field(None, alias=Metrics.AVERAGE_SUBSEQUENT_TURN_TTFT)
 
@@ -196,6 +201,22 @@ class BenchmarkSummary(BaseModel):
             rows.append(
                 (Metrics.TOTAL_TOKEN_THROUGHPUT, _fmt(Metrics.TOTAL_TOKEN_THROUGHPUT, self.total_token_throughput))
             )
+        if self.device_count is not None:
+            rows.append((Metrics.DEVICE_COUNT, _fmt(Metrics.DEVICE_COUNT, self.device_count)))
+            if self.output_token_throughput_per_device is not None:
+                rows.append(
+                    (
+                        Metrics.OUTPUT_TOKEN_THROUGHPUT_PER_DEVICE,
+                        _fmt(Metrics.OUTPUT_TOKEN_THROUGHPUT_PER_DEVICE, self.output_token_throughput_per_device),
+                    )
+                )
+            if self.total_token_throughput_per_device is not None:
+                rows.append(
+                    (
+                        Metrics.TOTAL_TOKEN_THROUGHPUT_PER_DEVICE,
+                        _fmt(Metrics.TOTAL_TOKEN_THROUGHPUT_PER_DEVICE, self.total_token_throughput_per_device),
+                    )
+                )
         if self.input_token_throughput:
             rows.append(
                 (Metrics.INPUT_TOKEN_THROUGHPUT, _fmt(Metrics.INPUT_TOKEN_THROUGHPUT, self.input_token_throughput))
@@ -223,6 +244,20 @@ class BenchmarkSummary(BaseModel):
             if self.avg_cached_percent is not None:
                 rows.append(
                     (Metrics.AVERAGE_CACHED_PERCENT, _fmt(Metrics.AVERAGE_CACHED_PERCENT, self.avg_cached_percent))
+                )
+            if self.cache_request_coverage_percent is not None:
+                rows.append(
+                    (
+                        Metrics.CACHE_REQUEST_COVERAGE_PERCENT,
+                        _fmt(Metrics.CACHE_REQUEST_COVERAGE_PERCENT, self.cache_request_coverage_percent),
+                    )
+                )
+            if self.cache_token_coverage_percent is not None:
+                rows.append(
+                    (
+                        Metrics.CACHE_TOKEN_COVERAGE_PERCENT,
+                        _fmt(Metrics.CACHE_TOKEN_COVERAGE_PERCENT, self.cache_token_coverage_percent),
+                    )
                 )
             if self.avg_first_turn_ttft is not None:
                 rows.append(

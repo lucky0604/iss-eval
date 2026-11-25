@@ -115,7 +115,7 @@ class SandboxTaskConfig(BaseArgument):
     """Whether to enable the sandbox subsystem for this task."""
 
     engine: str = 'docker'
-    """Sandbox engine name.  One of ``'docker'`` / ``'volcengine'`` (or aliases
+    """Sandbox engine name.  One of ``'docker'`` / ``'volcengine'`` / ``'e2b'`` (or aliases
     accepted by :func:`evalscope.api.sandbox.resolve_engine`)."""
 
     default_config: Dict[str, Any] = Field(default_factory=dict)
@@ -130,6 +130,11 @@ class SandboxTaskConfig(BaseArgument):
     pool_size: Optional[int] = None
     """Warm-pool size for pooled execution.  Defaults to ``eval_batch_size``
     when ``None``."""
+
+    @field_validator('default_config', 'manager_config', mode='before')
+    @classmethod
+    def _secretize_settings(cls, value: Any) -> Any:
+        return _secretize_api_keys(value)
 
 
 class JudgeModelConfig(BaseArgument):
@@ -271,7 +276,7 @@ class TaskConfig(BaseArgument):
     """Additional evaluation configuration parameters."""
 
     limit: Optional[Union[int, float]] = None
-    """Maximum number of samples to evaluate. Can be int (count) or float (fraction)."""
+    """Maximum samples to evaluate: int (count) or float (fraction). Zero selects none; None selects all."""
 
     eval_batch_size: int = 1
     """Batch size / concurrency for evaluation, applied across all stages:
@@ -398,8 +403,6 @@ class TaskConfig(BaseArgument):
         if v is not None:
             v = parse_int_or_float(v)
             v = validate_dataset_limit(v)
-            if v == 0:
-                return None
         return v
 
     @field_validator('eval_config', mode='before')
@@ -503,6 +506,11 @@ class TaskConfig(BaseArgument):
     def _validate_sandbox(cls, v: Any) -> Any:
         return cls._coerce_sandbox_config(v)
 
+    @field_validator('sandbox_manager_config', mode='before')
+    @classmethod
+    def _secretize_sandbox_manager_config(cls, value: Any) -> Any:
+        return _secretize_api_keys(value)
+
     # --- Model validator (cross-field logic, replaces __post_init__) ---
 
     @model_validator(mode='after')
@@ -576,7 +584,8 @@ class TaskConfig(BaseArgument):
 
     def _infer_model_id(self) -> str:
         if isinstance(self.model, str):
-            return safe_filename(os.path.basename(self.model))
+            # A trailing separator (as shell completion adds to a directory) must not leave an empty name.
+            return safe_filename(os.path.basename(self.model.rstrip('/\\')))
         elif isinstance(self.model, Model):
             return safe_filename(self.model.name)
         elif isinstance(self.model, ModelAPI):
@@ -676,6 +685,9 @@ class TaskConfig(BaseArgument):
                 'removed in v2.0.0.',
             )
 
+        from evalscope.api.sandbox.e2b import check_e2b_task_config
+
+        check_e2b_task_config(self.sandbox, external_agent=isinstance(self.agent_config, ExternalAgentConfig))
         if not self.sandbox.enabled:
             return
 

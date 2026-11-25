@@ -248,6 +248,9 @@ _CANONICAL_NAMES_BY_BASELINE = {
         'success_rate',
         'task_averaged_acc',
         'text_acc',
+        'text_score',
+        'cvtg_ned',
+        'cvtg_word_accuracy',
         'unit_acc',
         'xl_puzzle_acc',
     ),
@@ -307,6 +310,8 @@ _CANONICAL_NAMES_BY_BASELINE = {
         'pass_at_k',
         'pass_hat_k',
         'pass_rate',
+        'resolve_rate',
+        'rubric_pass_rate',
         'simple_pass_rate',
         'strict_pass',
         'subproblem_pass_rate',
@@ -382,6 +387,11 @@ METRIC_DEFINITIONS.update(
             metric_name='Quality Score',
             value_range=ValueRange(min=0, max=5),
         ),
+        'qwen_image_bench_score': MetricEntry(
+            baseline='quality.judge_score.unbounded',
+            metric_name='Qwen-Image-Bench Score',
+            value_range=ValueRange(min=0, max=100),
+        ),
         # MASK: 1 - P(lie) under pressure, and the share of pressured statements that match the belief.
         'honesty_score': MetricEntry(baseline='quality.score.ratio', metric_name='Honesty Score'),
         'honest_rate': MetricEntry(baseline='quality.score.ratio', metric_name='Honest Rate'),
@@ -442,6 +452,11 @@ METRIC_DEFINITIONS['attack_success_rate'] = MetricEntry(
 # `targeted_asr` is the share of samples where the injected attacker goal was achieved.
 METRIC_DEFINITIONS['utility'] = MetricEntry(baseline='quality.accuracy.ratio', metric_name='Utility')
 METRIC_DEFINITIONS['targeted_asr'] = MetricEntry(baseline='quality.error_rate.ratio', metric_name='Targeted ASR')
+METRIC_DEFINITIONS['flag_found'] = MetricEntry(baseline='quality.accuracy.ratio', metric_name='Flag Found')
+METRIC_DEFINITIONS['correct_submission'] = MetricEntry(
+    baseline='quality.accuracy.ratio', metric_name='Correct Submission'
+)
+METRIC_DEFINITIONS['full_flag_found'] = MetricEntry(baseline='quality.accuracy.ratio', metric_name='Full Flag Found')
 
 # AgentHarm measures completion independently of refusal. Direction depends on whether the
 # requested task is harmful or benign; benchmark overrides below express that distinction.
@@ -456,6 +471,15 @@ METRIC_DEFINITIONS['non_refusal_completion_score'] = MetricEntry(
     baseline='quality.score.ratio', metric_name='Non-refusal Completion Score'
 )
 METRIC_DEFINITIONS['macro_f1'] = MetricEntry(baseline='quality.f1.ratio', metric_name='Macro F1')
+# LawBench combines official task metrics; imprisonment log distance can yield negative scores.
+METRIC_DEFINITIONS['lawbench_score'] = MetricEntry(baseline='quality.score.unbounded', metric_name='LawBench Score')
+# BBEH adds one percentage point before taking the harmonic mean, without subtracting it afterwards.
+METRIC_DEFINITIONS['bbeh_score'] = MetricEntry(
+    baseline='quality.score.ratio', metric_name='BBEH Score', value_range=ValueRange(min=0.01, max=1.01)
+)
+METRIC_DEFINITIONS['abstention_rate'] = MetricEntry(
+    baseline='diagnostic.parse_status.ratio', display_name='Abstention Rate'
+)
 for _registered, _reported in {
     'decision_nll': 'nll',
     'decision_brier': 'brier',

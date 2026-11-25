@@ -8,7 +8,9 @@ from evalscope.api.metric.decision import decision_score, read_decision_answer
 from evalscope.api.model.decision import DECISION_EVAL_TYPES, DecisionInput
 from evalscope.api.registry import get_aggregation
 from evalscope.utils.multi_choices import (
+    CHINESE_FEW_SHOT_TEMPLATE,
     FEW_SHOT_TEMPLATE,
+    MULTI_CHOICE_ANSWER_PARSER_VERSION,
     MultipleChoiceTemplate,
     answer_character,
     answer_index,
@@ -36,6 +38,7 @@ class MultiChoiceAdapter(DefaultDataAdapter):
     This adapter formats the input for multi-choice questions and handles few-shot examples.
     """
 
+    answer_parser_version = MULTI_CHOICE_ANSWER_PARSER_VERSION
     decision_noul_positive_choice: str | None = None
     """Choice text that represents yes for an audited Noul conversion."""
     decision_fixed_classes: bool = False
@@ -205,7 +208,10 @@ class MultiChoiceAdapter(DefaultDataAdapter):
             str: The complete formatted input with few-shot context
         """
 
-        few_shot_prompt_template = self.few_shot_prompt_template or (FEW_SHOT_TEMPLATE + self.prompt_template)
+        few_shot_header = (
+            CHINESE_FEW_SHOT_TEMPLATE if self.prompt_template in CHINESE_ANSWER_TEMPLATES else FEW_SHOT_TEMPLATE
+        )
+        few_shot_prompt_template = self.few_shot_prompt_template or (few_shot_header + self.prompt_template)
 
         assert valid_template(few_shot_prompt_template), 'Few-shot prompt template is not valid'
 
@@ -223,6 +229,10 @@ class MultiChoiceAdapter(DefaultDataAdapter):
         Returns:
             str: The formatted few-shot example string
         """
+        if self.prompt_template in CHINESE_ANSWER_TEMPLATES:
+            # Demonstrate the '答案：' line that the Chinese template asks for and parse_answers_zh reads.
+            choices = answer_options(Choices(sample.choices))
+            return f'问题：{sample.input}\n选项：\n{choices}\n答案：{Target(sample.target).compact()}'
         return format_example(question=sample.input, choices=Choices(sample.choices), answer=Target(sample.target))
 
     def extract_answer(self, prediction: str, task_state: TaskState) -> str:

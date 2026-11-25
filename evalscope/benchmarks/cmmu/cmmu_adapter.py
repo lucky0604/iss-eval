@@ -12,7 +12,13 @@ from evalscope.api.registry import register_benchmark
 from evalscope.constants import ScoringPolicy, Tags
 from evalscope.utils.io_utils import bytes_to_base64
 from evalscope.utils.logger import get_logger
-from evalscope.utils.multi_choices import MultipleChoiceTemplate, answer_character, parse_answers_zh, prompt
+from evalscope.utils.multi_choices import (
+    MULTI_CHOICE_ANSWER_PARSER_VERSION,
+    MultipleChoiceTemplate,
+    answer_character,
+    parse_answers_zh,
+    prompt,
+)
 
 logger = get_logger()
 
@@ -46,7 +52,7 @@ FILL_IN_BLANK_TYPE = 'fill-in-the-blank'
 
 @register_benchmark(
     BenchmarkMeta(
-        evaluation_version='v1.1',
+        evaluation_version='v1.2',
         name='cmmu',
         pretty_name='CMMU',
         dataset_id='evalscope/CMMU',
@@ -87,6 +93,7 @@ CMMU is a novel Chinese multi-modal benchmark designed to evaluate domain-specif
     )
 )
 class CMMUAdapter(VisionLanguageAdapter):
+    answer_parser_version = MULTI_CHOICE_ANSWER_PARSER_VERSION
     scoring_policy = ScoringPolicy.JUDGE_DEFAULT
 
     def __init__(self, *args, **kwargs):

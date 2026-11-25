@@ -42,6 +42,7 @@ from evalscope.api.messages import (
 )
 from evalscope.api.model import ChatCompletionChoice, GenerateConfig, ModelOutput, ModelUsage, StopReason
 from evalscope.api.tool import ToolCall, ToolChoice, ToolFunction, ToolInfo, parse_tool_call
+from evalscope.utils import get_secret_value
 from evalscope.utils.uri_utils import data_uri_mime_type, data_uri_to_base64, file_as_data_uri, is_http_url
 
 BASE_64_DATA_REMOVED = '<base64-data-removed>'
@@ -325,7 +326,7 @@ def anthropic_chat_messages(
     for message in messages:
         if message.role == 'system':
             # Anthropic requires system message as a separate parameter
-            system_message = _merge_system_message(system_message, _system_param_from_message(message))
+            system_message = merge_anthropic_system_messages(system_message, _system_param_from_message(message))
         else:
             message_params.append(anthropic_message_param(message))
 
@@ -364,10 +365,11 @@ def _system_param_from_message(message: ChatMessage) -> AnthropicSystemParam:
     return blocks if blocks else message.text
 
 
-def _merge_system_message(
+def merge_anthropic_system_messages(
     current: Optional[AnthropicSystemParam],
     new_value: AnthropicSystemParam,
 ) -> AnthropicSystemParam:
+    """Combine Anthropic system messages, preserving any structured text blocks."""
     if current is None:
         return new_value
     if isinstance(current, str) and isinstance(new_value, str):
@@ -491,16 +493,19 @@ def anthropic_completion_params(model: str, config: GenerateConfig) -> Dict[str,
         max_tokens=max_tokens,
     )
 
+    # Extended thinking rejects temperature != 1 and top_k, so both are left out when it is enabled.
+    thinking_enabled = config.reasoning_tokens is not None
+
     # Temperature (not compatible with extended thinking)
-    if config.temperature is not None:
+    if config.temperature is not None and not thinking_enabled:
         params['temperature'] = config.temperature
 
     # Top P
     if config.top_p is not None:
         params['top_p'] = config.top_p
 
-    # Top K
-    if config.top_k is not None:
+    # Top K (not compatible with extended thinking)
+    if config.top_k is not None and not thinking_enabled:
         params['top_k'] = config.top_k
 
     # Stop sequences
@@ -512,12 +517,18 @@ def anthropic_completion_params(model: str, config: GenerateConfig) -> Dict[str,
         params['timeout'] = config.timeout
 
     # Extended thinking / reasoning
-    if config.reasoning_tokens is not None:
+    if thinking_enabled:
         params['thinking'] = dict(type='enabled', budget_tokens=config.reasoning_tokens)
 
     # Anthropic top-level automatic prompt caching.
     if config.anthropic_cache_control and config.anthropic_cache_strategy == 'recent_messages':
         params['cache_control'] = config.anthropic_cache_control.model_dump(exclude_none=True)
+
+    # Extra request options (same as the OpenAI path)
+    if config.extra_query:
+        params['extra_query'] = config.extra_query
+    if config.extra_headers:
+        params['extra_headers'] = get_secret_value(config.extra_headers)
 
     # Extra body parameters
     if config.extra_body:
@@ -581,6 +592,8 @@ def message_stop_reason(message: Message) -> StopReason:
         case 'tool_use':
             return 'tool_calls'
         case 'max_tokens':
+            return 'max_tokens'
+        case 'model_context_window_exceeded':
             return 'model_length'
         case 'refusal':
             return 'content_filter'
@@ -702,6 +715,9 @@ def collect_stream_response(
           from function entry when ``request_start`` is ``None``) until the first chunk
           carrying non-empty content or tool-call data arrives.
           ``None`` if no content chunk was observed.
+
+    Raises:
+        RuntimeError: If the stream ends without a stop reason, so the reply may be partial.
     """
     from anthropic.types import (
         ContentBlockDeltaEvent,
@@ -806,6 +822,9 @@ def collect_stream_response(
                     event.usage,
                     'cache_read_input_tokens',
                 )
+
+    if stop_reason is None:
+        raise RuntimeError('Stream ended without a stop reason')
 
     # Append the last block
     if current_block_index >= 0:
@@ -995,6 +1014,9 @@ async def async_collect_stream_response(
                     event.usage,
                     'cache_read_input_tokens',
                 )
+
+    if stop_reason is None:
+        raise RuntimeError('Stream ended without a stop reason')
 
     # Append the last block
     if current_block_index >= 0:

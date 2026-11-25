@@ -9,11 +9,18 @@ warms up.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from pydantic import ValidationError
+
+from evalscope.utils.argument_utils import get_secret_value
 from evalscope.utils.logger import get_logger
 
-from .engine import SandboxEngine, get_enclave_types
+from .compat import adapt_sandbox_config
+from .engine import SandboxConfigError, SandboxEngine, get_enclave_types, resolve_engine
+
+if TYPE_CHECKING:
+    from evalscope.config import SandboxTaskConfig
 
 logger = get_logger()
 
@@ -32,10 +39,44 @@ def merge_sandbox_config_dicts(*sources: Optional[Dict[str, Any]]) -> Dict[str, 
     return merged
 
 
-def build_sandbox_config(engine: SandboxEngine, cfg_dict: Optional[Dict[str, Any]]) -> Any:
+def resolve_sandbox_config(defaults: Dict[str, Any], sandbox: Optional['SandboxTaskConfig']) -> Dict[str, Any]:
+    """Merge task overrides and select Aliyun's base template for default Python execution."""
+    overrides = sandbox.default_config if sandbox is not None else {}
+    config = merge_sandbox_config_dicts(defaults, overrides)
+    if (
+        sandbox is None
+        or not sandbox.enabled
+        or resolve_engine(sandbox.engine) is not SandboxEngine.E2B
+        or defaults.get('image') != 'python:3.11-slim'
+        or config.get('template')
+        or any(key in overrides for key in ('image', 'template'))
+    ):
+        return config
+
+    _, _, _, manager_config_cls = get_enclave_types(SandboxEngine.E2B)
+    manager = manager_config_cls.model_validate(sandbox.manager_config)
+    if manager.provider != 'aliyun':
+        return config
+
+    from ms_enclave.sandbox.utils.e2b_helpers import normalize_image_ref
+
+    image = normalize_image_ref(defaults['image'])
+    if not any(normalize_image_ref(source) == image for source in manager.image_mapping):
+        config.pop('image')
+        config['template'] = 'base'
+    return config
+
+
+def build_sandbox_config(
+    engine: SandboxEngine, cfg_dict: Optional[Dict[str, Any]], *, expected_duration: Optional[float] = None
+) -> Any:
     """Instantiate the engine-specific ``SandboxConfig`` from a dict."""
     _, config_cls, _, _ = get_enclave_types(engine)
-    return config_cls.model_validate(cfg_dict or {})
+    adapted = adapt_sandbox_config(engine, get_secret_value(cfg_dict or {}), expected_duration=expected_duration)
+    try:
+        return config_cls.model_validate(adapted)
+    except ValidationError as exc:
+        raise SandboxConfigError(f'Invalid {engine.value} sandbox config: {exc}') from exc
 
 
 def should_build_docker_image(image: str) -> bool:
@@ -117,6 +158,7 @@ __all__ = [
     'default_docker_build_context',
     'ensure_docker_image_built',
     'merge_sandbox_config_dicts',
+    'resolve_sandbox_config',
     'normalize_docker_build_context',
     'should_build_docker_image',
 ]

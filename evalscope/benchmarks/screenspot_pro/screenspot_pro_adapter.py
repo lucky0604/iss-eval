@@ -1,4 +1,5 @@
 # flake8: noqa: E501
+import json
 from typing import Any, Dict, List, Optional
 
 from evalscope.api.benchmark import BenchmarkMeta, VisionLanguageAdapter
@@ -40,9 +41,9 @@ UI element on the screen, which stresses fine-grained localization on large, den
 - Secondary metrics: **text_acc** and **icon_acc**, each averaged over the samples of the corresponding `ui_type`
 - Predictions are read from the answer line that the prompt requires (`Answer: [x, y]`), so reasoning traces cannot be mistaken for the answer. Replies ignoring the format fall back to scanning for unambiguous point notation only (`[x, y]` pairs or `<bbox>` tags); loose notation such as `x=.., y=..` and bare numbers is accepted only on the answer line, because in free prose it harvests layout bounds and ordinals instead of a click point
 - A reply truncated before its answer line yields no prediction and scores 0 rather than a coordinate invented from its reasoning, so allow enough `max_tokens` for the model to finish answering
-- Ground truth is normalized to [0, 1], and predictions are mapped into the same space by magnitude: values in [0, 1] are taken as normalized, values up to 1000 as the thousandths grid many VLMs emit, and larger values as pixels of the image the model received (every screenshot is at least 1920 px wide, so genuine pixel answers are classified correctly)
+- Ground truth is normalized to [0, 1], and predictions are mapped into the same space. By default (`coordinate_format: auto` in `extra_params`) the convention is inferred by magnitude: values in [0, 1] are taken as normalized, values up to 1000 as the thousandths grid many VLMs emit, and larger values as pixels of the image the model received. A pixel answer with both coordinates at most 1000 (the top-left 1000x1000 px of a screenshot) is therefore read as thousandths; for a model with a fixed convention, set `coordinate_format` to `normalized`, `thousandths` or `pixel`
 - The dataset ships a single `train` split, which is used as the evaluation split
-- Images are large; `max_image_bytes` in `dataset_args` can cap the request size, and pixel-space predictions are normalized with the size of the image actually sent
+- Images are large; `max_image_bytes` in `dataset_args` can cap the request size, and pixel-space predictions are normalized with the size of the image actually sent. If that image is 1000 px or less on both sides, `auto` reads every pixel answer as thousandths, so set `coordinate_format: pixel` for pixel-answering models
 - [Paper](https://arxiv.org/abs/2504.07981) | [GitHub](https://github.com/likaixin2000/ScreenSpot-Pro-GUI-Grounding)
 """
 
@@ -67,7 +68,17 @@ PROMPT_TEMPLATE = (
         subset_list=['CAD', 'Creative', 'Dev', 'OS', 'Office', 'Scientific'],
         metric_list=['acc', 'text_acc', 'icon_acc'],
         primary_metric='accuracy',
+        evaluation_version='v1.1',
         eval_split='train',
+        extra_params={
+            'coordinate_format': {
+                'type': 'str',
+                'description': 'Convention of predicted click points: "auto" infers it from magnitude; '
+                '"normalized" (0-1), "thousandths" (0-1000) or "pixel" (of the image sent) fixes it.',
+                'value': 'auto',
+                'choices': ['auto', 'normalized', 'thousandths', 'pixel'],
+            }
+        },
     )
 )
 class ScreenSpotProAdapter(VisionLanguageAdapter):
@@ -135,8 +146,10 @@ class ScreenSpotProAdapter(VisionLanguageAdapter):
         if point is None:
             return ''
 
-        point = to_normalized_point(point, task_state.metadata['sent_size'])
-        return f'[{point[0]:.6f}, {point[1]:.6f}]'
+        point = to_normalized_point(
+            point, task_state.metadata['sent_size'], self.extra_params.get('coordinate_format', 'auto')
+        )
+        return json.dumps(point)
 
     def match_score(
         self,
@@ -150,13 +163,12 @@ class ScreenSpotProAdapter(VisionLanguageAdapter):
         Returns a Score with ``acc`` plus ``text_acc`` or ``icon_acc`` depending on the
         sample's ``ui_type``, so that both breakdowns are averaged over their own samples.
         """
-        from .utils import parse_point, point_in_bbox
+        from .utils import point_in_bbox
 
         score = Score(extracted_prediction=filtered_prediction, prediction=original_prediction)
 
-        # ``filtered_prediction`` is the already-normalized ``[x, y]`` produced by
-        # ``extract_answer``; re-parse it (empty string means nothing was extracted).
-        point = parse_point(filtered_prediction) if filtered_prediction else None
+        # Read the normalized point at the same precision used for the target box.
+        point = json.loads(filtered_prediction) if filtered_prediction else None
         metadata = task_state.metadata or {}
         correct = float(point is not None and point_in_bbox(point, metadata['bbox_norm']))
 

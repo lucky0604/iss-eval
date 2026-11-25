@@ -22,10 +22,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           cache: 'pip'
 
       - name: Install dependencies
@@ -34,7 +34,6 @@ jobs:
           pip install -e '.[dev,ifeval,ifbench,multi_if,needle_haystack,arena_hard]'
           pip install litellm==1.95.0
           pip install git+https://github.com/sierra-research/tau-bench
-          pip install bfcl-eval==2025.10.27.1
           python -c "import tau_bench"
 
       - name: Create .env file
@@ -55,10 +54,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           cache: 'pip'
 
       - name: Install dependencies

@@ -13,6 +13,7 @@ endpoints never pull entire historical request tables into memory.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -33,11 +34,13 @@ from evalscope.perf.utils.report.summary import (
 from evalscope.utils.logger import get_logger
 from evalscope.utils.uri_utils import sanitize_endpoint
 
+from .utils import recorded_start_time
+
 logger = get_logger()
 
 # Recognized perf run-directory markers (mirror perf_data.py).
 _PARALLEL_RE = re.compile(r'^parallel_(\d+)_number_(\d+)$')
-_RATE_RE = re.compile(r'^rate_([\d.]+)_number_(\d+)$')
+_RATE_RE = re.compile(r'^rate_(-?[\d.]+)_number_(\d+)$')
 # Bound recursive scan depth so large output trees stay cheap to walk.
 MAX_SCAN_DEPTH = 3
 
@@ -145,8 +148,20 @@ def scan_perf_runs(root: str) -> List[str]:
 
 
 def extract_timestamp(rel_path: str, abs_path: str) -> str:
-    """Parse a timestamp from a path segment (YYYYMMDD_HHMMSS) or fall back to mtime."""
-    for seg in rel_path.replace('\\', '/').split('/'):
+    """Return when a perf run started: its task manifest, its id, a dated path segment, or finally its mtime.
+
+    Service-launched runs live in ``<task_id>/perf``: the task manifest and the ``perf_<epoch ms>`` id are one
+    level above the run directory. The directory mtime changes when outputs are copied or restored, so it is
+    only a last resort.
+    """
+    segments = rel_path.replace('\\', '/').split('/')
+    task_dir = os.path.normpath(abs_path)
+    for _ in segments[1:]:
+        task_dir = os.path.dirname(task_dir)
+    recorded = recorded_start_time(segments[0], task_dir if os.path.basename(task_dir) == segments[0] else None)
+    if recorded:
+        return recorded
+    for seg in segments:
         for fmt in ('%Y%m%d_%H%M%S', '%Y%m%d'):
             try:
                 return datetime.strptime(seg, fmt).isoformat()
@@ -557,15 +572,56 @@ def render_chart(root: str, rel_path: str, chart_type: str, run_name: Optional[s
     return wrap_chart_html(div)
 
 
-def render_compare_chart(root: str, rel_paths: List[str], chart_type: str, theme: str) -> str:
+def _positive_int(value) -> Optional[int]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number <= 0 or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _fixed_input_length(runs, rel_path: str) -> int:
+    lengths = set()
+    for run in runs:
+        args = run.args or {}
+        if str(args.get('dataset', '')).strip().lower() != 'random':
+            raise PerfArchiveError(f'Input-length comparison requires the random dataset: {rel_path}', 400)
+        if run.is_open_loop or run.parallel <= 0:
+            raise PerfArchiveError(f'Input-length comparison requires closed-loop concurrency runs: {rel_path}', 400)
+        min_length = _positive_int(args.get('min_prompt_length'))
+        max_length = _positive_int(args.get('max_prompt_length'))
+        if min_length is None or min_length != max_length:
+            raise PerfArchiveError(
+                f'Input-length comparison requires equal positive prompt-length limits: {rel_path}', 400
+            )
+        lengths.add(min_length)
+    if len(lengths) != 1:
+        raise PerfArchiveError(f'Input-length configuration is inconsistent within: {rel_path}', 400)
+    return lengths.pop()
+
+
+def render_compare_chart(
+    root: str,
+    rel_paths: List[str],
+    chart_type: str,
+    theme: str,
+    x_axis: str = 'workload',
+) -> str:
     """Overlay a single sweep metric across multiple perf-run directories."""
     if chart_type not in SWEEP_CHARTS:
         raise PerfArchiveError(f'Unknown chart_type: {chart_type}', 400)
+    if x_axis not in ('workload', 'input_length'):
+        raise PerfArchiveError(f'Unknown x_axis: {x_axis}', 400)
 
     from evalscope.perf.utils.report import perf_charts
 
     series = []
+    series_details = []
+    input_length_points = []
     input_modes = set()
+    point_keys = set()
     for rel in rel_paths:
         run_dir = resolve_run_dir(root, rel)
         if run_dir is None:
@@ -576,16 +632,30 @@ def render_compare_chart(root: str, rel_paths: List[str], chart_type: str, theme
             raise PerfArchiveError('AIPerf comparison requires verified metric compatibility', 400)
         runs = _load_runs(run_dir, with_requests=False)
         if not runs:
+            if x_axis == 'input_length':
+                raise PerfArchiveError(f'No perf runs found under: {rel}', 404)
             continue
         first_args = runs[0].args or {}
         input_modes.add(Metrics.is_input_only(first_args.get('api', '')))
         model = first_args.get('model', first_args.get('model_id', rel))
         ts = extract_timestamp(rel, run_dir)
         identity = _build_identity_metadata(first_args)
-        label = ' · '.join(
-            str(value) for value in (identity.get('alias') or model, identity.get('api_host'), ts) if value
-        )
-        series.append((label, runs))
+        display_name = identity.get('alias') or model
+        detail = ' · '.join(str(value) for value in (display_name, identity.get('api_host'), ts, rel) if value)
+        series.append((f'R{len(series) + 1} · {display_name}', runs))
+        series_details.append(detail)
+
+        if x_axis == 'input_length':
+            input_length = _fixed_input_length(runs, rel)
+            for run in runs:
+                key = (input_length, run.parallel)
+                if key in point_keys:
+                    raise PerfArchiveError(
+                        f'Duplicate input-length and concurrency combination: {input_length}, C={run.parallel}',
+                        400,
+                    )
+                point_keys.add(key)
+                input_length_points.append((input_length, run.parallel, run, detail))
     if not series:
         raise PerfArchiveError('No perf runs found for the given paths', 404)
     if len(input_modes) > 1:
@@ -594,7 +664,21 @@ def render_compare_chart(root: str, rel_paths: List[str], chart_type: str, theme
     if input_only and chart_type in ('ttft', 'tpot'):
         raise PerfArchiveError('Token-generation timings are not applicable to input-only APIs', 404)
 
-    div = perf_charts.build_compare_chart(series, chart_type, is_embedding=input_only, theme=theme)
+    if x_axis == 'input_length':
+        div = perf_charts.build_input_length_compare_chart(
+            input_length_points,
+            chart_type,
+            is_embedding=input_only,
+            theme=theme,
+        )
+    else:
+        div = perf_charts.build_compare_chart(
+            series,
+            chart_type,
+            is_embedding=input_only,
+            theme=theme,
+            series_details=series_details,
+        )
     return wrap_chart_html(div)
 
 
